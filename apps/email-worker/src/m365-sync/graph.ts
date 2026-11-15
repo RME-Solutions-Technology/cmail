@@ -162,7 +162,7 @@ export class GraphClient {
     }
   }
 
-  private async accessToken(): Promise<string> {
+  protected async accessToken(): Promise<string> {
     if (this.token && this.token.expiresAt - 120_000 > this.now()) return this.token.value;
     const body = new URLSearchParams({
       client_id: this.options.clientId,

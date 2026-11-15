@@ -29,7 +29,7 @@ describe('copy-back Graph client', () => {
     expect(url.searchParams.get('$filter')).toBe(
       `singleValueExtendedProperties/Any(ep: ep/id eq '${COPYBACK_MARKER_PROPERTY}' and ep/value eq '00000000-0000-4000-8000-000000000001')`,
     );
-    expect(url.searchParams.get('$select')).toBe('id');
+    expect(url.searchParams.get('$select')).toBe('id,isDraft');
   });
 
   it('refuses unsafe ids and folders before any request', async () => {
@@ -43,7 +43,7 @@ describe('copy-back Graph client', () => {
 
   it('returns the created id and rejects a malformed answer', async () => {
     const { graph } = client(() => Response.json({ id: 'ex-1' }, { status: 201 }));
-    expect(await graph.createMessage(USER, 'inbox', '{}')).toBe('ex-1');
+    expect(await graph.createMessage(USER, 'inbox', '{}')).toEqual({ id: 'ex-1', isDraft: false });
     const bad = client(() => Response.json({ value: [{ id: 42 }] }));
     await expect(bad.graph.findCopy(USER, 'abc')).rejects.toMatchObject({ code: 'bad_response' });
   });

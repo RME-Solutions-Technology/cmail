@@ -16,6 +16,8 @@ import {
   paramsKey,
   parseCopyBackParams,
   parseDryRunRecord,
+  sameDryRunCounts,
+  dbTime,
   selectionSql,
   type CopyBackDryRunRecord,
   type CopyBackJobRow,
@@ -203,23 +205,38 @@ export async function applyCopyBackAction(
     const job = await latestJob(db).catch(() => null);
     if (!job) return { ok: false, status: 409, error: 'There is no copy job.' };
     if (job.status === 'cancelled') return { ok: false, status: 409, error: 'That job was cancelled. Start a new one instead.' };
-    const params = jobParams(job);
-    const sel = selectionSql(params);
-    const reset = await db.prepare(
+    if (job.status === 'halted') {
+      return { ok: false, status: 409, error: 'This job was halted because Exchange created a draft. Read the runbook, remove those drafts in Exchange, then start a new job.' };
+    }
+    const sel = selectionSql(jobParams(job));
+    const failedRow = await db.prepare(
+      `SELECT COUNT(*) AS n FROM ${sel.from}
+       JOIN standby_copyback_items i ON i.message_id = m.id AND i.target_object_id = l.object_id
+       WHERE ${sel.where} AND i.state = 'failed'`,
+    ).bind(...sel.binds).first<{ n: number }>();
+    const failed = Number(failedRow?.n ?? 0);
+    if (!failed) return { ok: false, status: 409, error: 'There are no failed messages to retry.' };
+    // Reopen first and reset in the same transaction: either both happen or
+    // neither, so items are never reset under a job that cannot run.
+    const reset = db.prepare(
       `UPDATE standby_copyback_items SET state = 'pending', attempts = 0, next_attempt_at = NULL, reason = '', updated_at = datetime('now')
        WHERE state = 'failed' AND (message_id, target_object_id) IN (SELECT m.id, l.object_id FROM ${sel.from} WHERE ${sel.where})`,
-    ).bind(...sel.binds).run();
-    if (!reset.meta.changes) return { ok: false, status: 409, error: 'There are no failed messages to retry.' };
-    if (job.status === 'done') {
-      try {
-        await db.prepare(`UPDATE standby_copyback_jobs SET status = 'running', finished_at = NULL, backoff_until = NULL, backoff_streak = 0, updated_at = datetime('now')
-          WHERE id = ? AND status = 'done'`).bind(job.id).run();
-      } catch {
-        return { ok: false, status: 409, error: 'Another copy job is running. Retry when it has finished.' };
+    ).bind(...sel.binds);
+    try {
+      if (job.status === 'done') {
+        await db.batch([
+          db.prepare(`UPDATE standby_copyback_jobs SET status = 'running', finished_at = NULL, backoff_until = NULL, backoff_streak = 0, updated_at = datetime('now')
+            WHERE id = ? AND status = 'done'`).bind(job.id),
+          reset,
+        ]);
+      } else {
+        await reset.run();
       }
+    } catch {
+      return { ok: false, status: 409, error: 'Another copy job is running. Retry when it has finished.' };
     }
-    await audit(db, { event_type: 'org.copyback_retry', actor_id: manager.id, actor_role: 'manager', detail: `Retrying ${reset.meta.changes} failed copy-back messages` });
-    return { ok: true, message: `${reset.meta.changes} failed messages will be tried again within 15 minutes.` };
+    await audit(db, { event_type: 'org.copyback_retry', actor_id: manager.id, actor_role: 'manager', detail: `Retrying ${failed} failed copy-back messages` });
+    return { ok: true, message: `${failed} failed messages will be tried again within 15 minutes.` };
   }
 
   const parsed = parseCopyBackParams(input, now.getTime());
@@ -256,14 +273,20 @@ export async function applyCopyBackAction(
   if (!dry || dry.key !== paramsKey(params) || now.getTime() - Date.parse(dry.at) > DRY_RUN_MAX_AGE_MS || Date.parse(dry.at) > now.getTime()) {
     return { ok: false, status: 409, error: 'Run a dry run with exactly these settings first (it is valid for 24 hours).' };
   }
+  // Compare the selection itself, not only the parameters: a mailbox linked or
+  // unlinked, a message moved or already copied since the dry run changes it.
   const counts = await copyBackDryRun(db, params);
+  if (!sameDryRunCounts(counts, dry.counts)) {
+    return { ok: false, status: 409, error: 'The messages selected have changed since the dry run. Run the dry run again and check the counts.' };
+  }
   if (counts.toCopy === 0) return { ok: false, status: 409, error: 'Nothing to copy: every selected message was already handled.' };
   const id = newId();
   try {
+    // as_of freezes the selection: mail or links created after Start are not part of this job.
     await db.prepare(
-      `INSERT INTO standby_copyback_jobs (id, status, window_from, window_to, target_object_id, folders, created_by)
-       VALUES (?, 'running', ?, ?, ?, ?, ?)`,
-    ).bind(id, params.from, params.to, params.target, params.folders.join(','), manager.id).run();
+      `INSERT INTO standby_copyback_jobs (id, status, window_from, window_to, target_object_id, folders, as_of, created_by)
+       VALUES (?, 'running', ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, params.from, params.to, params.target, params.folders.join(','), dbTime(now.getTime()), manager.id).run();
   } catch {
     return { ok: false, status: 409, error: 'A copy job is already running. Cancel it or wait for it to finish.' };
   }

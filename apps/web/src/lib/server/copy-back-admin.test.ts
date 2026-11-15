@@ -13,15 +13,17 @@ function setup(config: { configured: boolean; problems?: string[] } | 'none' = {
   sqlite.exec(`
     INSERT INTO users (id, email, role, status) VALUES ('manager-1', 'manager@example.test', 'manager', 'active'), ('u-alice', 'alice@example.test', 'standard', 'active');
     INSERT INTO mailboxes (id, address, type, owner_user_id) VALUES ('mb-alice', 'alice@example.test', 'personal', 'u-alice');
-    INSERT INTO m365_sync_links (object_id, kind, user_id) VALUES ('${ALICE}', 'person', 'u-alice');
+    INSERT INTO m365_sync_links (object_id, kind, user_id, created_at) VALUES ('${ALICE}', 'person', 'u-alice', '2026-11-01 00:00:00');
   `);
   const fetch = vi.fn(async () => Response.json(config));
   const env = { DB: d1, EMAIL_SERVICE: config === 'none' ? undefined : ({ fetch } as unknown as Fetcher) };
   let n = 0;
-  const addMessage = (at: string, folder = 'inbox') => {
-    const id = `msg-${++n}`;
-    sqlite.prepare(`INSERT INTO messages (id, mailbox_id, direction, from_address, folder, received_at, size_bytes) VALUES (?, 'mb-alice', 'inbound', 'sender@example.test', ?, ?, 100)`)
-      .run(id, folder, at);
+  const addMessage = (at: string, folder = 'inbox', mailbox = 'mb-alice') => {
+    n += 1;
+    const id = `inbound-${n.toString(16).padStart(64, '0')}`;
+    // Real id shape for inbound mail with a Message-ID: 'inbound-' + 64 hex.
+    sqlite.prepare(`INSERT INTO messages (id, mailbox_id, direction, from_address, folder, received_at, created_at, size_bytes) VALUES (?, ?, 'inbound', 'sender@example.test', ?, ?, ?, 100)`)
+      .run(id, mailbox, folder, at, at);
     return id;
   };
   const audits = () => sqlite.prepare('SELECT event_type, detail FROM audit_log ORDER BY rowid').all() as Array<{ event_type: string; detail: string }>;
@@ -96,6 +98,37 @@ describe('copy back to Exchange admin', () => {
     // Only one job at a time.
     expect(await act(t, 'start', { confirm: 'yes' })).toMatchObject({ ok: false, status: 409 });
     expect(t.audits().map((row) => row.event_type)).toEqual(['org.copyback_toggled', 'org.copyback_dry_run', 'org.copyback_started']);
+  });
+
+  it('refuses to start when the selection changed after the dry run (a mailbox linked since)', async () => {
+    const t = setup();
+    t.addMessage('2026-11-14 01:00:00');
+    t.sqlite.exec(`
+      INSERT INTO users (id, email, role, status) VALUES ('u-bob', 'bob@example.test', 'standard', 'active');
+      INSERT INTO mailboxes (id, address, type, owner_user_id) VALUES ('mb-bob', 'bob@example.test', 'personal', 'u-bob');
+    `);
+    t.addMessage('2026-11-14 02:00:00', 'inbox', 'mb-bob');
+    await act(t, 'enable');
+    await act(t, 'dry_run');
+    t.sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id, created_at) VALUES ('00000000-0000-0000-0000-000000000b0b', 'person', 'u-bob', '2026-11-01 00:00:00')`).run();
+    expect(await act(t, 'start', { confirm: 'yes' })).toMatchObject({ ok: false, error: expect.stringContaining('changed since the dry run') });
+    // A message moved out of the chosen folders changes it too.
+    await act(t, 'dry_run');
+    t.sqlite.prepare(`UPDATE messages SET folder = 'archive' WHERE mailbox_id = 'mb-alice'`).run();
+    expect(await act(t, 'start', { confirm: 'yes' })).toMatchObject({ ok: false, error: expect.stringContaining('changed since the dry run') });
+    await act(t, 'dry_run');
+    expect(await act(t, 'start', { confirm: 'yes' })).toMatchObject({ ok: true });
+    expect(t.sqlite.prepare('SELECT as_of FROM standby_copyback_jobs').get()).toEqual({ as_of: '2026-11-15 00:00:00' });
+  });
+
+  it('refuses Retry failed on a halted job', async () => {
+    const t = setup();
+    t.addMessage('2026-11-14 01:00:00');
+    await act(t, 'enable');
+    await act(t, 'dry_run');
+    await act(t, 'start', { confirm: 'yes' });
+    t.sqlite.prepare(`UPDATE standby_copyback_jobs SET status = 'halted'`).run();
+    expect(await act(t, 'retry_failed')).toMatchObject({ ok: false, error: expect.stringContaining('draft') });
   });
 
   it('refuses to start when everything selected was already handled', async () => {

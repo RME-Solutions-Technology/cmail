@@ -58,27 +58,45 @@ flowchart LR
    The dry run is stored and audited.
 2. **Start copy** is accepted only with the switch on, the Worker's settings
    present, no other job running, the confirmation ticked, and a dry run of
-   **exactly the same** window, scope and folders from the last 24 hours. The
-   window must lie in the past, so the same input always selects the same
-   messages.
-3. Every 15 minutes the email Worker takes a lease on the running job and
-   queues its messages as `pending` items in chunks (`INSERT OR IGNORE`, so an
-   existing item keeps its state). Then it works due items, bounded per run
-   (5 minutes, 300 items, 1,200 Graph requests).
-4. When nothing is left to try, the job is `done`.
+   **exactly the same** window, scope and folders from the last 24 hours.
+   Start then counts again and refuses if **the selection itself** has changed
+   (every count and the per-mailbox breakdown must match), for example a
+   mailbox linked or unlinked since, or mail moved between folders. The
+   window must lie in the past.
+3. Start freezes the selection (`as_of`): mail and Microsoft 365 links created
+   after Start are not part of the job.
+4. Every 15 minutes the email Worker takes a lease on the running job, gets
+   its token, and queues the job's messages as `pending` items in chunks
+   (`INSERT OR IGNORE`; an existing item keeps its state). Then it works due
+   items, fewest attempts first, then oldest, bounded per run (5 minutes, 300
+   items, 1,200 Graph requests). It re-reads the job status and the switch
+   before every item, so **Cancel** and switching off take effect at once.
+5. When nothing is left to try, the job is `done`.
 
 ### Each message
 
 | Step | Graph call | Why |
 |---|---|---|
 | a | `GET /users/{id}/messages?$filter=singleValueExtendedProperties/Any(ep: ep/id eq '<marker>' and ep/value eq '<cmail id>')&$select=id&$top=1` | Did an earlier attempt already create it (for example the run was cut off after Exchange accepted it)? Then it is recorded as copied, not created again. The filter covers the whole mailbox, so a copy the user has moved is still found. |
-| b | `GET /users/{id}/messages?$filter=internetMessageId eq '<Message-ID>'&$select=id&$top=1` | Did Exchange receive this message itself (for example some mail still reached it)? Then it is skipped as `already_in_exchange`. Not done for Sent. |
+| b | `GET /users/{id}/messages?$filter=internetMessageId eq '<Message-ID>'&$select=id&$expand=singleValueExtendedProperties($filter=id eq '<marker>')&$top=10` | Did Exchange receive this message itself (for example some mail still reached it)? Then it is skipped as `already_in_exchange`. Our own copies carry the marker and are ignored here, so a message someone sent to themselves is copied to both Sent and Inbox. Not done for Sent items. |
 | c | none | Build the message from D1 and R2. Over the size cap: skipped as `too_large`. |
-| d | `POST /users/{id}/mailFolders/{inbox\|archive\|sentitems}/messages` | Create the copy. |
+| d | `POST /users/{id}/mailFolders/{inbox\|archive\|sentitems}/messages` | Create the copy. **Draft canary:** if the answer says `isDraft: true`, the job halts at once (see below). |
 | e | `PATCH /users/{id}/messages/{id}` `{ "isRead": false }` | Only when the message was unread in cmail (see below). |
 
 The item is recorded only after the last call succeeds, and step (a) makes
 any retry safe.
+
+### Draft canary
+
+The design depends on Exchange storing the copy as a received item, not a
+draft. Every create answer, and every copy found by its marker, is checked:
+if Exchange reports `isDraft: true`, that item is recorded as failed
+(`created_as_draft`, no retry), the job is set to **halted**, and nothing more
+is created. A draft is never counted as copied, so a later job that finds it
+by its marker halts too instead of treating it as done. To recover: find the
+drafts in Outlook by the category "cmail standby copy", remove them (cmail
+never deletes anything in Exchange), find the cause (see
+[Permissions](#which-permission)), then start a new job.
 
 ## Choosing the Graph method
 
@@ -136,7 +154,14 @@ at most 3 MB, in line with Microsoft's
 [attachment guidance](https://learn.microsoft.com/en-us/graph/outlook-large-attachments)
 (single POST "under 3 MB"; larger needs an upload session, not used here).
 Larger messages are skipped as `too_large`; the dry run shows a first
-estimate. They stay in cmail, where the user can forward them.
+estimate. The Worker checks the real stored size of the body and of each
+attachment before reading it into memory, so nothing over the cap is
+buffered. They stay in cmail, where the user can forward them.
+
+**Skipped is final.** Skipped items (`too_large`, `already_in_exchange`,
+`body_missing`, `attachment_missing`, `message_gone`, `folder_not_in_scope`)
+are not retried by Retry failed: each describes the message, not a passing
+fault.
 
 ## Never twice, and safe to stop at any point
 
@@ -147,6 +172,12 @@ estimate. They stay in cmail, where the user can forward them.
 - The marker lookup (step a) covers the gap between Exchange accepting a
   create and cmail recording it: a retry finds the copy and records it instead
   of creating a second one.
+- An insert of any kind for a key that is already copied, including
+  `INSERT OR REPLACE` (whose implicit delete does not fire delete triggers),
+  is dropped by a `BEFORE INSERT` trigger, and no item can ever be re-keyed,
+  so `UPDATE OR REPLACE` cannot overwrite a copied row either.
+- Ids allow up to 128 characters: cmail message ids are UUIDs (36) or, for
+  inbound mail with a Message-ID, `inbound-` plus 64 hex characters (72).
 - There is no foreign key to `messages`, so a message deleted in cmail later
   (retention, a manager) neither blocks anything nor erases the record.
 - One job runs at a time (unique index), and a lease stops overlapping cron
@@ -154,19 +185,25 @@ estimate. They stay in cmail, where the user can forward them.
 
 ## Failures, throttling and bounded work
 
-| Graph answer | What happens |
+| Answer | What happens |
 |---|---|
-| 429, 503, 504 | `Retry-After` up to 5 s is retried in place; longer stops the run and the job waits (`backoff`) until then. The item stays due and is retried with step (a) first. Outlook allows 10,000 requests per 10 minutes, 4 concurrent requests and 150 MB of uploads per 5 minutes per app and mailbox ([limits](https://learn.microsoft.com/en-us/graph/throttling-limits#outlook-service-limits)); the Worker makes one request at a time. |
-| Network error, other 5xx | As above, with exponential backoff up to an hour. |
-| 401, token refused | The run stops; the job waits an hour (`unauthorized` / `credentials_rejected`). |
+| Token endpoint refused or throttled | The run stops before any mailbox call; the job waits (`credentials_rejected` an hour, throttling per `Retry-After`). |
+| 401 from Graph | The run stops; the job waits an hour (`unauthorized`). |
+| 429 on a mailbox | Throttling is per app and mailbox in Outlook ([limits](https://learn.microsoft.com/en-us/graph/throttling-limits#outlook-service-limits): 10,000 requests per 10 minutes, 4 concurrent, 150 MB of uploads per 5 minutes). A `Retry-After` up to 5 s is retried in place; longer defers **that mailbox only** to the next run, with no attempt counted. Other mailboxes carry on. |
 | 403 on a mailbox | The item fails as `access_denied` (usually: mailbox not in the scoping group, or the role assignment is still in Exchange's cache); the rest of that mailbox waits for the next run. |
-| 404 on a mailbox | The item fails as `mailbox_not_found` (no Exchange mailbox, or not enabled for REST); the rest of that mailbox waits. |
+| 404 on a mailbox | The item fails as `mailbox_not_found`; the rest of that mailbox waits. A 404 on the unread update right after creating is `copy_not_found` (the new copy itself vanished). |
+| 5xx | The item fails as `server_error` (an attempt counted); the rest of that mailbox waits. |
+| Network error | The item fails as `network`; three in one run stop the run (the network, not the item). |
 | 400, 422 | The item fails as `rejected`. |
 | 413 | The item is skipped as `too_large`. |
+| cmail could not read the message (D1 or R2 error) | The item fails as `internal` (an attempt counted); the run carries on. |
 
 A failed item is retried after 5, 10, 20, 40 and 80 minutes; after 6 attempts
 it stays failed ("gave up") until a manager presses **Retry failed**, which
-resets only failed items in that job's selection and reopens a finished job.
+resets only failed items in that job's selection and, for a finished job,
+reopens it in the same transaction (refused while another job runs, and for
+a halted or cancelled job). Because items are worked fewest attempts first,
+one item that keeps failing never holds up the others.
 **Cancel** stops a running job; copies already made stay in Exchange.
 
 ## Setup (least privilege)
@@ -206,6 +243,54 @@ Connect-ExchangeOnline
 (Get-Group "cmail copy-back mailboxes").DistinguishedName
 ```
 
+### Which permission
+
+Two Graph application permissions can create mail
+([permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference)):
+
+- `Mail.ReadWrite`: "Allows the app to create, read, update, and delete mail
+  in all mailboxes without a signed-in user."
+- `Mail-Advanced.ReadWrite.All`: "Allows the app to create, read, update, and
+  delete all email, including contents of non-draft emails in user
+  mailboxes". Microsoft added it for the change announced on 26 March 2026:
+  **from 31 December 2026**, updating sensitive properties (subject, body,
+  recipients and others that the
+  [Update message](https://learn.microsoft.com/en-us/graph/api/message-update?view=graph-rest-1.0)
+  reference marks "updatable only if isDraft = true") of **existing
+  non-draft** messages needs one of the Mail-Advanced permissions; drafts and
+  management properties such as read state stay with `Mail.ReadWrite`
+  ([Microsoft 365 Developer Blog](https://devblogs.microsoft.com/microsoft365dev/graph-api-updates-to-sensitive-email-properties/),
+  [Exchange Team Blog](https://techcommunity.microsoft.com/blog/exchange/upcoming-breaking-changes-to-modifying-sensitive-email-properties-via-graph-api/4505227)).
+  A Microsoft PM notes in that post's comments that it is a superset of
+  `Mail.ReadWrite`.
+
+What copy-back does: it **creates** each message once, with every property
+set in that one create call, and afterwards only updates `isRead`, which the
+Update message reference lists without the draft restriction. It never
+updates the subject, body, recipients or extended properties of an existing
+message. So by Microsoft's published rules **`Mail.ReadWrite` is enough**,
+and it is what this guide assigns, through the Exchange role
+**`Application Mail.ReadWrite`**.
+
+What is unproven, honestly:
+
+- Microsoft's posts describe updates and say nothing about a create that
+  sets `PidTagMessageFlags` so the new item is born non-draft. Whether the
+  31 December 2026 enforcement treats that as a sensitive change is not
+  documented.
+- Exchange RBAC for Applications lists a role **`Application
+  Mail-Advanced.ReadWrite.All`** ("including contents of non-draft emails"),
+  but Microsoft has not said (asked in the blog comments, no answer) whether
+  the Mail-Advanced permissions are enforced through RBAC for Applications in
+  the same way.
+
+So: test on a test tenant with `Application Mail.ReadWrite` now, and again
+**after 31 December 2026**. If creates are then refused (403, or items come
+back as drafts and the canary halts the job), assign the role
+`Application Mail-Advanced.ReadWrite.All` with the same scope instead (step
+3, replace the role name), which is still limited to the group, and test
+again. Do not consent either permission in Entra.
+
 ### 3. Exchange RBAC for Applications
 
 Microsoft now recommends RBAC for Applications, which "replaces Application
@@ -236,8 +321,9 @@ to apply, because of Exchange's permission cache; the test cmdlet bypasses the
 cache, Graph calls do not.
 
 `Application Mail.ReadWrite` is the least role that can create messages and
-set read state. `Mail.ReadBasic` and `Mail.Read` cannot write, and
-`Mail-Advanced.ReadWrite.All` or the full-access roles grant more than needed.
+set read state. `Mail.ReadBasic` and `Mail.Read` cannot write, and the
+full-access roles also send mail. `Application Mail-Advanced.ReadWrite.All`
+is the fallback described under [Which permission](#which-permission).
 
 ### 4. The email Worker
 
@@ -254,7 +340,8 @@ Workers Paid like the sync (subrequests per invocation).
 
 ### 5. Database and switch
 
-Apply migration `0024` (additive: two tables, one index, three triggers) with
+Apply migration `0024` (additive: two tables, three indexes including one on
+`messages.received_at`, four triggers) with
 `pnpm db:migrate` (live databases: the owner's yes first). Then, in
 **Admin > Copy back to Exchange**, check that no settings are listed as
 missing and turn the switch on.
@@ -285,6 +372,8 @@ with attachments, read state and the "cmail standby copy" category.
 | `mailbox_not_found` | No Exchange mailbox for that object | Check the person's license and mailbox; **Retry failed**. |
 | `backoff` | Microsoft throttled | Nothing; it resumes. |
 | `too_large` | Over 3 MB | The message stays in cmail; the user forwards it. |
+| Job `halted`, `created_as_draft` | Exchange stored a copy as a draft | See [Draft canary](#draft-canary) and [Which permission](#which-permission). |
+| `server_error`, `network`, `internal` | A passing fault on one item | Nothing: it is retried with backoff; Retry failed after it gives up. |
 | `body_missing`, `attachment_missing` | The R2 object is gone | Check backups; the message is otherwise readable in cmail. |
 
 To undo copies in Exchange, search by the category "cmail standby copy" in
@@ -295,7 +384,11 @@ Outlook, or by the marker property with Graph. cmail never deletes them.
 - End to end against a real tenant: not done.
 - That `PidTagMessageFlags = 1` on create gives `isDraft: false` comes from
   community practice (Glen Scales), not Microsoft's reference pages; the
-  reference only says creates make drafts by default.
+  reference only says creates make drafts by default. The draft canary
+  stops a job at the first copy where this does not hold.
+- Whether `Mail.ReadWrite` still allows that create after the 31 December 2026
+  enforcement, and whether `Application Mail-Advanced.ReadWrite.All` works
+  through RBAC for Applications (see [Which permission](#which-permission)).
 - That `internetMessageId`, `In-Reply-To` and `References` are accepted on
   create, and threading follows, is not documented for app-created items.
 - That an Entra app with **no** consented mail permission gets a usable token
@@ -315,6 +408,7 @@ Outlook, or by the marker property with Graph. cmail never deletes them.
   [Import a mailbox item](https://learn.microsoft.com/en-us/graph/import-exchange-mailbox-item),
   [Throttling limits: Outlook](https://learn.microsoft.com/en-us/graph/throttling-limits#outlook-service-limits),
   [RBAC for Applications in Exchange Online](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac).
-- Microsoft Q&A: [create a non-draft message from MIME](https://learn.microsoft.com/en-gb/answers/questions/2106197/microsoft-graph-api)is-any-option-create-message-f).
+- Microsoft Q&A: [create a non-draft message from MIME](https://learn.microsoft.com/en-gb/answers/questions/2106197/microsoft-graph-api%29is-any-option-create-message-f).
+- Microsoft: [Graph API updates to sensitive email properties](https://devblogs.microsoft.com/microsoft365dev/graph-api-updates-to-sensitive-email-properties/) (26 March 2026) and the [Exchange Team Blog post](https://techcommunity.microsoft.com/blog/exchange/upcoming-breaking-changes-to-modifying-sensitive-email-properties-via-graph-api/4505227); [Update message](https://learn.microsoft.com/en-us/graph/api/message-update?view=graph-rest-1.0); [permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference).
 - Glen Scales: [How to upload an email using the Microsoft Graph API into the Inbox](https://dev.to/gscales/how-to-upload-an-email-using-the-microsoft-graph-api-into-the-inbox-36o8).
 - Cloudflare: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) (Cron Triggers: 15 minutes wall time per invocation).

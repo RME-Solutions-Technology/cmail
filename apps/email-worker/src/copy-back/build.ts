@@ -122,11 +122,18 @@ export async function buildGraphMessage(
   const attachmentBytes = attachments.reduce((total, item) => total + Math.max(0, Number(item.size_bytes) || 0), 0);
   if (Math.ceil(attachmentBytes / 3) * 4 > maxBytes) return { ok: false, reason: 'too_large' };
 
+  // Running estimate of the encoded request, from the real stored sizes, checked
+  // before each object is read into memory: nothing over the cap is buffered.
+  let estimate = 0;
   let html = '';
   if (message.body_r2_key) {
     const object = await storage.get(message.body_r2_key);
     if (!object) return { ok: false, reason: 'body_missing' };
-    if (object.size > maxBytes) return { ok: false, reason: 'too_large' };
+    estimate += object.size;
+    if (estimate > maxBytes) {
+      await object.body?.cancel().catch(() => undefined);
+      return { ok: false, reason: 'too_large' };
+    }
     html = await object.text();
   }
 
@@ -134,6 +141,11 @@ export async function buildGraphMessage(
   for (const item of attachments) {
     const object = await storage.get(item.r2_key);
     if (!object) return { ok: false, reason: 'attachment_missing' };
+    estimate += Math.ceil(object.size / 3) * 4;
+    if (estimate > maxBytes) {
+      await object.body?.cancel().catch(() => undefined);
+      return { ok: false, reason: 'too_large' };
+    }
     const bytes = new Uint8Array(await object.arrayBuffer());
     const inline = item.disposition === 'inline' && Boolean(item.content_id);
     files.push({

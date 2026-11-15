@@ -59,6 +59,11 @@ export interface CopyBackParams {
   target: string | null;
   /** Sorted, distinct, non-empty subset of COPYBACK_FOLDERS. */
   folders: CopyBackFolder[];
+  /**
+   * Jobs only: the selection is frozen at Start. Messages and Microsoft 365
+   * links created after this UTC 'YYYY-MM-DD HH:MM:SS' time are not selected.
+   */
+  asOf?: string | null;
 }
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -107,6 +112,9 @@ export function parseCopyBackParams(input: { from: unknown; to: unknown; target:
   return { ok: true, params: { from: dbTime(from), to: dbTime(to), target: rawTarget || null, folders } };
 }
 
+/** cmail message ids: UUIDs, or 'inbound-' + 64 hex characters for inbound mail with a Message-ID. */
+export const COPYBACK_MESSAGE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
 export function paramsKey(params: CopyBackParams): string {
   return `${params.from}|${params.to}|${params.target ?? '*'}|${params.folders.join(',')}`;
 }
@@ -138,8 +146,13 @@ export function selectionSql(params: CopyBackParams): { from: string; where: str
       OR (l.kind = 'shared' AND l.mailbox_id = mb.id))`;
   const where = `m.received_at >= ? AND m.received_at < ?
     AND m.folder IN (${folderMarks}) AND m.folder <> 'drafts' AND m.draft_owner_id IS NULL
-    ${params.target ? 'AND l.object_id = ?' : ''}`;
-  const binds: unknown[] = [params.from, params.to, ...params.folders, ...(params.target ? [params.target] : [])];
+    ${params.target ? 'AND l.object_id = ?' : ''}
+    ${params.asOf ? 'AND m.created_at <= ? AND l.created_at <= ?' : ''}`;
+  const binds: unknown[] = [
+    params.from, params.to, ...params.folders,
+    ...(params.target ? [params.target] : []),
+    ...(params.asOf ? [params.asOf, params.asOf] : []),
+  ];
   return { from, where, binds };
 }
 
@@ -158,6 +171,8 @@ export interface CopyBackDryRunCounts {
   pending: number;
   /** Messages in the window and folders whose mailbox has no Microsoft 365 link (never copied). */
   unlinked: number;
+  /** Per target mailbox (Entra object id): selected and to copy. Start compares this exactly. */
+  perMailbox: Array<{ objectId: string; selected: number; toCopy: number }>;
 }
 
 /** Counts only. Reads D1, writes nothing, never calls Microsoft. */
@@ -191,8 +206,16 @@ export async function copyBackDryRun(db: D1Database, params: CopyBackParams): Pr
     ).bind(params.from, params.to, ...params.folders).first<{ n: number }>();
     unlinked = other?.n ?? 0;
   }
+  const { results: breakdown } = await db.prepare(
+    `SELECT l.object_id AS objectId, COUNT(*) AS selected, SUM(CASE WHEN i.state IS NULL THEN 1 ELSE 0 END) AS toCopy
+     FROM ${sel.from}
+     LEFT JOIN standby_copyback_items i ON i.message_id = m.id AND i.target_object_id = l.object_id
+     WHERE ${sel.where}
+     GROUP BY l.object_id ORDER BY l.object_id`,
+  ).bind(...sel.binds).all<{ objectId: string; selected: number; toCopy: number | null }>();
   const n = (key: string) => Number(row?.[key] ?? 0);
   return {
+    perMailbox: (breakdown ?? []).map((item) => ({ objectId: String(item.objectId), selected: Number(item.selected), toCopy: Number(item.toCopy ?? 0) })),
     selected: n('selected'),
     mailboxes: n('mailboxes'),
     toCopy: n('to_copy'),
@@ -210,6 +233,15 @@ export interface CopyBackDryRunRecord {
   params: CopyBackParams;
   counts: CopyBackDryRunCounts;
   at: string;
+}
+
+/** True when two dry runs select exactly the same work (every count and every mailbox). */
+export function sameDryRunCounts(a: CopyBackDryRunCounts, b: CopyBackDryRunCounts): boolean {
+  const canonical = (c: CopyBackDryRunCounts) => JSON.stringify([
+    c.selected, c.mailboxes, c.toCopy, c.likelyTooLarge, c.alreadyCopied, c.previouslySkipped, c.previouslyFailed, c.pending, c.unlinked,
+    [...(c.perMailbox ?? [])].sort((x, y) => x.objectId.localeCompare(y.objectId)).map((x) => [x.objectId, x.selected, x.toCopy]),
+  ]);
+  return canonical(a) === canonical(b);
 }
 
 export function parseDryRunRecord(raw: string | null | undefined): CopyBackDryRunRecord | null {
@@ -260,7 +292,7 @@ export function copyBackConfig(env: CopyBackEnv): CopyBackConfigCheck {
 
 // ─── Jobs and progress ───────────────────────────────────────────────────
 
-export type CopyBackJobStatus = 'running' | 'done' | 'cancelled';
+export type CopyBackJobStatus = 'running' | 'done' | 'cancelled' | 'halted';
 
 export interface CopyBackJobRow {
   id: string;
@@ -269,6 +301,7 @@ export interface CopyBackJobRow {
   window_to: string;
   target_object_id: string | null;
   folders: string;
+  as_of: string;
   plan_cursor: string;
   plan_done: number;
   lease_until: number;
@@ -281,8 +314,8 @@ export interface CopyBackJobRow {
   finished_at: string | null;
 }
 
-export function jobParams(job: Pick<CopyBackJobRow, 'window_from' | 'window_to' | 'target_object_id' | 'folders'>): CopyBackParams {
-  return { from: job.window_from, to: job.window_to, target: job.target_object_id, folders: foldersFromColumn(job.folders) };
+export function jobParams(job: Pick<CopyBackJobRow, 'window_from' | 'window_to' | 'target_object_id' | 'folders' | 'as_of'>): CopyBackParams {
+  return { from: job.window_from, to: job.window_to, target: job.target_object_id, folders: foldersFromColumn(job.folders), asOf: job.as_of };
 }
 
 export interface CopyBackProgress {

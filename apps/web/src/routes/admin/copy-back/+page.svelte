@@ -18,6 +18,11 @@
     mailbox_not_found: 'No Exchange mailbox',
     rejected: 'Rejected by Exchange',
     bad_response: 'Unexpected answer from Microsoft',
+    server_error: 'Microsoft server error',
+    network: 'Network error',
+    internal: 'cmail could not read the message',
+    copy_not_found: 'Copy disappeared before it could be set unread',
+    created_as_draft: 'Exchange created a draft (job halted)',
   };
 
   function when(value: string | null | undefined): string {
@@ -142,7 +147,10 @@
 
     {#if job}
       <section class="card" aria-labelledby="job-heading">
-        <h2 id="job-heading">{job.status === 'running' ? 'Copy in progress' : job.status === 'done' ? 'Last copy: finished' : 'Last copy: cancelled'}</h2>
+        <h2 id="job-heading">{job.status === 'running' ? 'Copy in progress' : job.status === 'done' ? 'Last copy: finished' : job.status === 'halted' ? 'Last copy: halted' : 'Last copy: cancelled'}</h2>
+        {#if job.status === 'halted'}
+          <div class="notice notice-error" role="alert">Exchange stored a copy as a draft instead of a received message, so the job stopped before copying anything else. Find the drafts in Outlook by the category "cmail standby copy", remove them, and follow the copy-back guide before starting again.</div>
+        {/if}
         <dl class="facts">
           <div><dt>Window</dt><dd>{job.params.from} to {job.params.to} UTC</dd></div>
           <div><dt>Scope</dt><dd>{mailboxLabel(job.params.target)}, {folders(job.params.folders)}</dd></div>
@@ -166,7 +174,7 @@
               <button type="submit" class="btn btn-outline-danger">Cancel copy</button>
             </form>
           {/if}
-          {#if job.status !== 'cancelled' && job.progress.failed > 0}
+          {#if (job.status === 'running' || job.status === 'done') && job.progress.failed > 0}
             <form method="POST">
               <input type="hidden" name="action" value="retry_failed" />
               <button type="submit" class="btn">Retry failed</button>
