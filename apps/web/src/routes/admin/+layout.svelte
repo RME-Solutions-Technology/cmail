@@ -35,6 +35,7 @@
         { href: '/admin/quarantine', label: 'Quarantine', description: 'Spam review and sender rules', icon: 'junk' },
         { href: '/admin/copy-back', label: 'Copy back to Exchange', description: 'After a standby outage', icon: 'outbound' },
         { href: '/admin/standby', label: 'Standby test', description: 'Standby address and daily test', icon: 'clock' },
+        { href: '/admin/exchange-mirror', label: 'Exchange mirror', description: 'Live copy from Exchange journaling', icon: 'refresh' },
       ],
     },
     {

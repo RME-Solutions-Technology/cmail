@@ -41,7 +41,9 @@ a domain's incoming mail to cmail and back in one DNS change each, see
 
 To give every mailbox a second address on a standby subdomain and test it
 daily (off by default), see
-[Standby test address and daily probe](standby-probe.md).
+[Standby test address and daily probe](standby-probe.md). To keep cmail a
+live copy of an Exchange Online tenant with no setup per address (one
+Exchange journal rule), see [Exchange mirror](exchange-mirror.md).
 
 For staff-portal links and optional provider-session reuse, see the
 [staff sign-in contract](staff-sign-in.md), including the Cloudflare Access

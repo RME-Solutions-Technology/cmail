@@ -22,10 +22,11 @@
     "./m365-sync": "./src/m365-sync.ts",
     "./account-lockout": "./src/account-lockout.ts",
     "./copy-back": "./src/copy-back.ts",
-    "./standby": "./src/standby.ts"
+    "./standby": "./src/standby.ts",
+    "./exchange-mirror": "./src/exchange-mirror.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --types @cloudflare/workers-types --strict --skipLibCheck src/types.ts src/push.ts src/sanitize-email.ts src/compose-html.ts src/compose-style.ts src/compose-paste.ts src/link-risk.ts src/link-blocklist.ts src/inbound-risk.ts src/mailbox-storage.ts src/message-importance.ts src/message-participants.ts src/ics.ts src/contacts.ts src/inbox-rules.ts src/m365-sync.ts src/account-lockout.ts src/copy-back.ts src/standby.ts",
+    "check": "tsc --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --types @cloudflare/workers-types --strict --skipLibCheck src/types.ts src/push.ts src/sanitize-email.ts src/compose-html.ts src/compose-style.ts src/compose-paste.ts src/link-risk.ts src/link-blocklist.ts src/inbound-risk.ts src/mailbox-storage.ts src/message-importance.ts src/message-participants.ts src/ics.ts src/contacts.ts src/inbox-rules.ts src/m365-sync.ts src/account-lockout.ts src/copy-back.ts src/standby.ts src/exchange-mirror.ts",
     "lint": "pnpm check",
     "test": "node --test"
   },

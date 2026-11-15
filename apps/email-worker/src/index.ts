@@ -16,6 +16,9 @@ import {
   type ProbeDecision,
 } from './standby/standby';
 import type { StandbyEnv } from '@cmail/shared/standby';
+import { isJournalAddress, type ExchangeMirrorEnv } from '@cmail/shared/exchange-mirror';
+import { exchangeMirrorConfigDiagnostic, handleJournalDelivery, type InboundTools } from './exchange-mirror/ingest';
+import { runAliasSyncTick } from './m365-sync/aliases';
 import PostalMime from 'postal-mime';
 import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
@@ -63,7 +66,9 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv, StandbyEnv {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv {
+  /** Subrequests one Exchange journal report may use for filing (docs/exchange-mirror.md). */
+  M365_JOURNAL_SUBREQUEST_BUDGET?: string | number;
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
   EMAIL?: SendEmail;
   /**
@@ -806,6 +811,11 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/standby/config' && request.method === 'GET') {
     return Response.json(standbyConfigDiagnostic(env));
   }
+  // Exchange mirror (docs/exchange-mirror.md): configuration by setting name
+  // only; the journal address is shown masked, never in full.
+  if (url.pathname === '/internal/exchange-mirror/config' && request.method === 'GET') {
+    return Response.json(exchangeMirrorConfigDiagnostic(env));
+  }
   if (url.pathname === '/internal/standby/run' && request.method === 'POST') {
     try {
       return Response.json(await runStandbyProbeNow(env));
@@ -862,6 +872,34 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   }
 }
 
+// The inbound path's own content helpers, shared with the Exchange mirror so
+// a mirrored copy is cleaned and limited exactly like a delivered one.
+const INBOUND_TOOLS: InboundTools = {
+  getInboundLimit,
+  getAttachmentLimit,
+  getDecodedBodyLimit,
+  prepareInboundBody,
+  flattenParsedParticipants,
+  inboundFromParticipant,
+  normalizeMessageIdHeader,
+  normalizeReferencesHeader,
+  extractInboundSnippet,
+  lookupSenderRule,
+  messageBodyR2Key,
+  attachmentR2Key,
+  stableInboundId,
+  sanitizeFilename,
+  sanitizeContentType,
+  normalizeContentId,
+  extractExtension,
+  blockedExtensions: BLOCKED_EXTENSIONS,
+  cleanHeaderValue,
+  deleteR2Objects,
+  logTrace,
+  maxTotalAttachmentBytes: MAX_TOTAL_ATTACHMENT_BYTES,
+  maxSubjectChars: MAX_SUBJECT_CHARS,
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return handleOutboundServiceRequest(request, env);
@@ -889,6 +927,15 @@ export default {
         else if (result.status !== 'off' && result.status !== 'idle') console.warn('Microsoft 365 sync', { status: result.status });
       }, (caught: unknown) => {
         console.error('Microsoft 365 sync failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      // Microsoft 365 alias import for the Exchange mirror: returns at once
+      // unless a manager turned it on (and the sync is on, not in dry run).
+      ctx.waitUntil(runAliasSyncTick(env).then((result) => {
+        // Codes and counts only, never addresses.
+        if (result.status === 'worked') console.log('Microsoft 365 alias import ran', result.counts);
+        else if (result.status !== 'off' && result.status !== 'idle' && result.status !== 'sync_off') console.warn('Microsoft 365 alias import', { status: result.status });
+      }, (caught: unknown) => {
+        console.error('Microsoft 365 alias import failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
       }));
       // Standby copy-back into Exchange shares this schedule: returns at once
       // unless switched on and a manager started a job. See docs/copy-back.md.
@@ -927,6 +974,14 @@ export default {
     const recipientAddress = normalizeEnvelopeAddress(message.to);
     const senderAddress = normalizeEnvelopeAddress(message.from);
     const messageSize = message.rawSize;
+
+    // Exchange mirror (docs/exchange-mirror.md). Only mail to the exact
+    // configured journal address, and only while a manager has the mirror
+    // switched on, is handled there. With M365_JOURNAL_ADDRESS empty this is
+    // a string comparison and nothing else; with the switch off the address
+    // continues below like any other (and is refused as unknown).
+    if (isJournalAddress(env, recipientAddress) && await handleJournalDelivery(message, env, INBOUND_TOOLS)) return;
+
     // Trusted transport facts come only from the parsed header list (below).
     // The joined message.headers value is not used: sender text could hide the
     // comma between the boundary's record and a forged one. Before parsing,

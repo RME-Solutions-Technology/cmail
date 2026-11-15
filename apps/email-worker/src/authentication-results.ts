@@ -146,3 +146,68 @@ export function parseAuthenticationResults(
 
   return facts;
 }
+
+export interface AuthenticationIdentities {
+  /** DMARC verdict of the trusted record, as in parseAuthenticationResults. */
+  dmarc: string | null;
+  /** Lower-case `header.d` (or the domain of `header.i`) of every `dkim=pass` in the trusted record. */
+  dkimPassDomains: string[];
+}
+
+/** Split on `;` outside quoted strings (comments are already stripped). */
+function resultSegments(body: string): string[] {
+  const segments: string[] = [];
+  let quoted = false;
+  let start = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (quoted) {
+      if (char === '\\') index += 1;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ';') {
+      segments.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  segments.push(body.slice(start));
+  return segments;
+}
+
+const DKIM_DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/**
+ * Which domains passed DKIM, from the same trusted record (and the same
+ * trust rule) as parseAuthenticationResults. Used by the Exchange mirror to
+ * tie a journal report to the tenant's own domains. Returns nothing unless
+ * the topmost record's authserv-id is the configured one.
+ */
+export function parseAuthenticationIdentities(
+  headerValue: string | null | undefined,
+  trustedAuthservId: string | null | undefined,
+): AuthenticationIdentities {
+  const facts = parseAuthenticationResults(headerValue, trustedAuthservId);
+  const none: AuthenticationIdentities = { dmarc: facts.dmarc, dkimPassDomains: [] };
+  const trusted = (trustedAuthservId || '').trim().toLowerCase();
+  const raw = (headerValue || '').trim();
+  if (!trusted || !raw || raw.length > 4096) return none;
+  const record = stripComments(firstRecord(raw)).trim();
+  const separator = record.indexOf(';');
+  if (separator < 0) return none;
+  const identifier = record.slice(0, separator).trim().split(/\s+/)[0] || '';
+  if (identifier.toLowerCase() !== trusted) return none;
+
+  const domains = new Set<string>();
+  for (const segment of resultSegments(record.slice(separator + 1))) {
+    const match = /^\s*dkim\s*=\s*([A-Za-z]+)\b([\s\S]*)$/i.exec(segment);
+    if (!match || (match[1] || '').toLowerCase() !== 'pass') continue;
+    const properties = match[2] || '';
+    const d = /(?:^|\s)header\.d\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(properties)?.[1];
+    const i = /(?:^|\s)header\.i\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(properties)?.[1];
+    const fromI = i ? unquote(i).split('@').pop() : '';
+    const domain = (d ? unquote(d) : fromI || '').toLowerCase().replace(/\.$/, '');
+    if (DKIM_DOMAIN.test(domain)) domains.add(domain);
+  }
+  return { dmarc: facts.dmarc, dkimPassDomains: [...domains] };
+}
