@@ -218,7 +218,8 @@ describe('Microsoft 365 sync: delta rounds', () => {
     expect(alex).toMatchObject({ email: 'alex.new@example.test', display_name: 'Alex New', status: 'active' });
     expect(t.mailboxes().map((mailbox) => mailbox.address)).toContain('alex.new@example.test');
     expect(t.users()).toHaveLength(3);
-    expect(t.audits('m365_sync.user_updated')).toBe(1);
+    // One audit row for the address, one for the name.
+    expect(t.audits('m365_sync.user_updated')).toBe(2);
   });
 
   it('pauses a disabled account once, revokes its sessions, and keeps the mailbox', async () => {

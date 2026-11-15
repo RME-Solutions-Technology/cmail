@@ -48,11 +48,11 @@ over the private `EMAIL_SERVICE` binding whether its settings are present
 | Change feed | **`GET /users/delta`** with a stored `@odata.deltaLink` | Delta query is Microsoft's recommended way to track directory changes without re-reading everything, and it lowers the chance of throttling ([delta query overview](https://learn.microsoft.com/en-us/graph/delta-query-overview), [throttling guidance](https://learn.microsoft.com/en-us/graph/throttling)). It reports deletions as `@removed` (`changed` = soft-deleted, `deleted` = gone). |
 | Safety net | A **full reconciliation** daily, on "Sync now", after any resync-required answer, and whenever the delta link is six days old | Directory delta tokens last seven days ([token duration](https://learn.microsoft.com/en-us/graph/delta-query-overview#token-duration)); Graph can also return `410 Gone` and ask for a full resync ([synchronization reset](https://learn.microsoft.com/en-us/graph/delta-query-overview#synchronization-reset)). Group membership changes do not appear in the users delta, so the daily pass also picks those up. A reconciliation is a fresh `users/delta` enumeration (the first round returns every current object) followed by a **sweep** that pauses linked accounts the enumeration never returned. It ends with a fresh delta link, so the same code serves both. |
 | Properties | `$select=id,displayName,mail,userPrincipalName,accountEnabled,userType,assignedPlans`, once, in the first request of each round | `accountEnabled` and `assignedPlans` are only returned when selected ([user resource](https://learn.microsoft.com/en-us/graph/api/resources/user)). The delta token carries the `$select` forward, and by default every later page returns all selected properties, so each object can be judged on its own ([user: delta](https://learn.microsoft.com/en-us/graph/api/user-delta)). |
-| Mailbox test | An `assignedPlans` entry with `service` `exchange` and `capabilityStatus` `Enabled` or `Warning` | That is the Exchange Online service plan from the user's licence. `Warning` is the grace period and still a working mailbox; `Suspended`, `LockedOut` and `Deleted` are not ([assignedPlan](https://learn.microsoft.com/en-us/graph/api/resources/assignedplan)). |
+| Mailbox test | An `assignedPlans` entry whose `servicePlanId` is an Exchange Online **mailbox** plan (list below) and whose `capabilityStatus` is `Enabled` or `Warning` | The service name alone is not enough: Exchange Foundation (`EXCHANGE_S_FOUNDATION`) also reports service `exchange` and comes with many SKUs that have no mailbox. `Warning` is the grace period and still a working mailbox; `Suspended`, `LockedOut` and `Deleted` are not ([assignedPlan](https://learn.microsoft.com/en-us/graph/api/resources/assignedplan)). |
 | Group scope | `POST /users/{id}/checkMemberGroups`, 20 objects per JSON `$batch` | Transitive (nested groups count), and works with application permissions `User.Read.All` + `GroupMember.Read.All` ([checkMemberGroups](https://learn.microsoft.com/en-us/graph/api/directoryobject-checkmembergroups)). Only objects whose address is on `MAIL_DOMAIN` are checked. |
 | Throttling | Honour `Retry-After` on 429, 503 and 504. Waits of 5 s or less are retried in place (twice at most); longer ones end the run and the next cron resumes | Microsoft's guidance: wait the `Retry-After` seconds, retry, and use exponential backoff when there is no header ([throttling](https://learn.microsoft.com/en-us/graph/throttling)). Without a header the wait doubles from 60 s up to an hour. |
 | Replays | Every write is keyed on the object id and guarded, and repeats are expected | Delta can return the same change more than once ([replays](https://learn.microsoft.com/en-us/graph/delta-query-overview#replays)). Repeats within one page are de-duplicated (last copy wins). |
-| Bounded work | Each run stops starting new work after 60 s, 600 D1 statements or 60 Graph requests, and applies objects in chunks of 25 | Keeps every invocation well inside the Workers subrequest limits, which count D1 queries and Graph calls ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests): 10,000 per invocation on Workers Paid). A fetched page is stored in the status row and applied over as many runs as it takes, so a large page never has to fit in one run and a Graph page is never fetched twice. |
+| Bounded work | Each run stops starting new work after 60 s, 600 D1 statements or 60 Graph requests, and applies objects in chunks of 25 | Keeps every invocation well inside the Workers subrequest limits, which count D1 queries and Graph calls ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests): 10,000 per invocation on Workers Paid). A fetched page is stored in the status row and applied over as many runs as it takes, so a large page never has to fit in one run. A page is fetched a second time only when its group check was throttled (the page is saved only once it is classified); nothing is applied twice. |
 | Resumable | The round (next page link, unapplied objects, counts, report) is saved after every step | A crash, timeout or throttle loses nothing; the next run continues where this one stopped. A round older than a day, or one started in the other mode, is dropped and started again. |
 | One at a time | A 10-minute lease on the status row | Two overlapping cron invocations never run a round together. |
 
@@ -75,9 +75,32 @@ An Entra object becomes a cmail **person** when all of these hold:
    Admin could create (letters, digits, `.`, `_`, `-`);
 3. `userType` is `Member` (guests are left out);
 4. `accountEnabled` is `true`;
-5. it has a usable Exchange service plan (above);
+5. it has a usable Exchange Online mailbox plan (below);
 6. if `M365_SCOPE_GROUP_ID` is set, it is a member of that group (nested
    groups count).
+
+### Exchange Online mailbox plans
+
+Matched by service plan id (`EXCHANGE_MAILBOX_PLANS` in
+`packages/shared/src/m365-sync.ts`), from Microsoft's
+[Product names and service plan identifiers for licensing](https://learn.microsoft.com/en-us/entra/identity/users/licensing-service-plan-reference):
+
+| Service plan | Id |
+|---|---|
+| `EXCHANGE_S_STANDARD` (Exchange Online Plan 1) | `9aaf7827-d63c-4b61-89c3-182f06f82e5c` |
+| `EXCHANGE_S_ENTERPRISE` (Exchange Online Plan 2) | `efb87545-963c-4e0d-99df-69c6916d9eb0` |
+| `EXCHANGE_S_DESKLESS` (Exchange Online Kiosk) | `4a82b400-a79f-41a4-b4e2-e94f5787b113` |
+| `EXCHANGE_S_ESSENTIALS` (Exchange Essentials) | `1126bef5-da20-4f07-b45e-ad25d2581aa8` |
+| `EXCHANGE_S_STANDARD_GOV` (Plan 1 for Government) | `e9b4930a-925f-45e2-ac2a-3f7788ca6fdd` |
+| `EXCHANGE_S_ENTERPRISE_GOV` (Plan 2 for Government) | `8c3069c0-ccdb-44be-ab77-986203a67df2` |
+| `EXCHANGE_S_DESKLESS_GOV` (Kiosk for Government) | `88f4d7ef-a73b-4246-8047-516022144c9f` |
+
+Not mailbox plans, so never enough on their own: `EXCHANGE_S_FOUNDATION`
+(`113feb6c-3fe4-4440-bddc-54d774bf0318`), `EXCHANGE_S_FOUNDATION_GOV`,
+Exchange Online Archiving (`EXCHANGE_S_ARCHIVE_ADDON`, `EXCHANGE_S_ARCHIVE`)
+and MyAnalytics (`EXCHANGE_ANALYTICS`). Microsoft adds plans over time: to
+accept another one, add its id to `M365_EXTRA_MAILBOX_PLAN_IDS` (comma
+separated) after checking it in that reference. Run a dry run first.
 
 Anything else is **out of scope**, with a reason: `deleted`, `disabled`,
 `guest`, `no_mailbox_plan`, `no_address`, `other_domain`,
@@ -120,9 +143,9 @@ Their personal mailbox stays; no second mailbox is created.
 | New in-scope person, address free | Creates a **pending** standard account, a personal mailbox at that address and the owner's Full assignment, in one batch with `user.provisioned` and `mailbox.created` audit rows |
 | New in-scope person, a standard account with that address exists (pending or active) | **Adopts** it: links it, no new account (`m365_sync.user_adopted`) |
 | Primary address changed | Updates the account email, and the personal mailbox address when it still carries the old address (`m365_sync.user_updated`). Never recreates |
-| Display name changed | Updates the account display name |
-| Leaves scope (disabled, unlicensed, deleted, out of the scope group, not seen) | **Pauses** the account once, on that change: status `paused`, sessions and AI app (MCP) tokens and grants revoked, the same steps as Admin > People > Pause (`m365_sync.user_paused`). The mailbox and its mail stay |
-| Back in scope | **Resumes** only an account the sync itself paused, to its earlier status (`m365_sync.user_resumed`). The person signs in again |
+| Display name changed | Updates the account display name (`m365_sync.user_updated`) |
+| Leaves scope (disabled, unlicensed, deleted, out of the scope group, not seen) | **Pauses** the account once, on that change, after the [mass-pause brake](#mass-pause-brake) check: status `paused`, sessions and AI app (MCP) tokens and grants revoked with the same shared function Admin > People > Pause uses (`pausedAccountLockoutStatements`), and `m365_sync.user_paused`. The mailbox and its mail stay |
+| Back in scope | **Resumes** only an account the sync itself paused and nobody has changed since, to its earlier status (`m365_sync.user_resumed`). The person signs in again |
 
 Rules that always hold:
 
@@ -131,10 +154,18 @@ Rules that always hold:
 - **Managers are untouchable.** The sync never creates, adopts, pauses,
   resumes or renames a manager account. An address that belongs to a manager
   is reported as `manager_not_adopted`.
-- **A manager's choice stands.** An account a manager paused is never
-  resumed. An account a manager reactivated while it is still out of scope
-  is not paused again until Microsoft 365 changes again (pausing happens on
-  the change into "out of scope", not on every run).
+- **A manager's choice stands.** Any status change to an account, by Admin
+  or anything else, clears the sync's "paused by sync" mark in the same
+  statement (trigger `trg_m365_sync_status_change`, migration `0022`). So an
+  account a manager paused, or reactivated and paused again, is never
+  resumed by the sync. An account a manager reactivated while it is still
+  out of scope is not paused again until Microsoft 365 changes again
+  (pausing happens on the change into "out of scope", not on every run).
+- **Status changes are conditional.** A pause or resume only changes an
+  account from the status the sync just read, and stamps `updated_at` with a
+  marker no other writer produces. The "paused by sync" mark and the audit
+  row are written only if that marker landed. A manager action at the same
+  moment wins, and the sync reports `changed_concurrently`.
 - **Paused and offboarded accounts are not adopted** (`account_paused_or_offboarded`),
   and a linked account that a manager offboarded is never edited again.
 - **Conflicts are reported, not forced.** An address already used by another
@@ -145,6 +176,34 @@ Rules that always hold:
   identity: the person enrols by invitation, or the Access bridge adopts the
   account on their first visit. The sync never decides who can sign in.
 
+## Mass-pause brake
+
+A wrong tenant, a removed licence group, an outage that returns an empty
+list, or a bad scope-group change can make it look as if everyone left. The
+sync therefore queues every pause during a round and checks the queue before
+applying any of them. A live round is **held** when:
+
+- it would pause at least 5 people **and** more than
+  `M365_SYNC_MAX_PAUSE_PERCENT` (default 20) percent of the people currently
+  linked and in scope; or
+- it is a full reconciliation that returned **no** directory objects at all
+  while people are linked.
+
+A held round changes no account. New accounts and address or name updates
+from the same round may already be applied; only pauses wait. Admin shows
+"Large change held for approval" with the count, the percentage and up to
+200 of the accounts that would be paused. A manager then either:
+
+- presses **Approve large change** (`org.m365_sync_approved`). This approves
+  that exact round id only. The next run applies the queued pauses, checking
+  each account again first. An empty result cannot be approved; or
+- fixes the cause in Microsoft 365 and presses **Discard and sync again**
+  (Sync now). The held round is dropped and a fresh reconciliation starts.
+
+While a round is held, no other round runs. A held round is dropped after 7
+days. In dry run the brake never holds; the report says the round would have
+been held.
+
 ## The switch (Admin > Microsoft 365 sync)
 
 Managers only. Three controls, each audited:
@@ -152,7 +211,7 @@ Managers only. Three controls, each audited:
 | Control | Default | Effect |
 |---|---|---|
 | Sync on / off (`org.m365_sync_toggled`) | **Off** | Off: the cron returns at once, with no Graph call and no write. Refused while migration `0022` is missing or the Worker reports missing settings |
-| Dry run on / off (`org.m365_sync_dry_run`) | **On** | Dry run reads everything and records what it *would* change, but changes no account, mailbox or link. It never stores a delta link, so the first live run is always a full reconciliation |
+| Dry run on / off (`org.m365_sync_dry_run`) | **On** | Dry run reads everything and records what it *would* change. It changes no account, mailbox or audit log, creates no link, and changes no link's state; the only write is the bookkeeping column `seen_round` on existing links (which links the reconciliation saw). It never stores a delta link, so the first live run is always a full reconciliation |
 | Sync now (`org.m365_sync_requested`) | — | Asks for a full reconciliation on the next run (within 15 minutes) |
 
 The page also shows: last check, result and last error code, back-off time,
@@ -174,7 +233,9 @@ itself on its next run without changing anything.
 | Client secret wrong or expired | Stops; retries in an hour | `error (credentials_rejected)` |
 | Admin consent missing or permission removed (401/403) | Stops; retries in an hour | `error (unauthorized)` |
 | Throttled (429/503/504) | Short waits retried in place; longer ones saved as "waiting until" and resumed from the same page | `backoff (throttled)` |
-| Delta link expired or `410 Gone` | Drops the link, runs a full reconciliation at once | Logged; next round is a reconciliation |
+| Delta link expired, `410 Gone`, or a 40X with `syncStateNotFound`, `syncStateInvalid`, `resyncRequired` or a similar token error | Drops the link, runs a full reconciliation at once | Logged; next round is a reconciliation |
+| A round would pause too many people, or a reconciliation returns nothing | Holds the round; no pause is applied | `held`, with the list and Approve / Discard |
+| A manager pauses, reactivates or offboards someone while the sync runs | The manager's change wins; the sync's change is skipped | Report: `changed_concurrently` |
 | Network error or 5xx | Backs off 60 s, doubling to an hour | `backoff (network)` / `error` |
 | Response not as expected, or a page link not on `graph.microsoft.com/v1.0/` | Stops before using it (the token is never sent anywhere else) | `error (bad_response)` |
 | Worker stopped mid-run | The lease expires in 10 minutes; the next run resumes from the saved step | `running` |
@@ -227,6 +288,8 @@ Email Worker (`apps/email-worker/wrangler.toml`, `[vars]`; examples in
 | `M365_SCOPE_GROUP_ID` | var, optional | `00000000-0000-0000-0000-000000000000` | Only members get accounts |
 | `M365_SHARED_GROUP_ID` | var, optional | `00000000-0000-0000-0000-000000000000` | Members become shared mailboxes. Must differ from the scope group |
 | `M365_SYNC_INTERVAL_MINUTES` | var, optional | `60` | Delta interval, 15 to 1440 |
+| `M365_SYNC_MAX_PAUSE_PERCENT` | var, optional | `20` | Mass-pause brake threshold, 1 to 100 (with a floor of 5 pauses) |
+| `M365_EXTRA_MAILBOX_PLAN_IDS` | var, optional | (empty) | Extra Exchange mailbox service plan ids, comma separated |
 | `MAIL_DOMAIN` | var | `example.com` | Same value as the web app's `MAIL_DOMAIN` |
 
 The cron `*/15 * * * *` must be in `[triggers] crons`. It costs one D1 read
@@ -264,6 +327,11 @@ day old. Check conflicts now and then.
 - `throttled` that keeps coming back: another app is using the tenant's
   Graph budget. Raise `M365_SYNC_INTERVAL_MINUTES`.
 
+**A round is held.** Read the list on the Admin page. If the pauses are
+real (for example a planned licence removal), press Approve large change.
+If not, fix the cause in Microsoft 365 (tenant, permission, licence group,
+scope group) and press Discard and sync again.
+
 **Someone was paused by mistake.** Reactivate them in Admin > People. The
 sync leaves them active until their Microsoft 365 state changes again. Then
 fix the cause in Microsoft 365 (licence, sign-in, group).
@@ -289,10 +357,15 @@ The Worker tests run every real migration on `node:sqlite` against a fake
 Graph (`src/m365-sync/testing/fake-graph.ts`) with fixtures for: paging,
 delta rounds, `410 Gone` and `syncStateNotFound`, 429 with long and short
 `Retry-After`, a throttled `$batch` item, a rejected secret, missing consent,
-disabled, guest, unlicensed, suspended licence, deleted, renamed, duplicate
-addresses, existing and manager accounts, scope and shared groups, a
-converted mailbox, the sweep, the lease, dry run, and a large page spread
-over several bounded runs.
+disabled, guest, unlicensed, suspended licence, a Foundation-only licence,
+deleted, renamed, display-name-only changes, duplicate addresses, existing,
+manager and offboarded accounts, scope and shared groups, a shared mailbox
+rename, a converted mailbox, the sweep, the lease, dry run on a fresh and on
+a linked directory, and a large page spread over several bounded runs.
+`safety.sql.node.test.ts` covers the review findings: a manager's
+reactivate-then-pause is never undone, a manager pause or offboard landing
+at the same moment as the sync's pause wins, and the mass-pause brake (hold,
+wrong-id approval, approval, empty result, Sync now discard, dry run).
 
 Against a real tenant, use a test tenant (for example a Microsoft 365
 developer tenant), never a customer's, and start in dry run. The tests do not

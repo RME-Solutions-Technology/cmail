@@ -118,6 +118,12 @@ M365_SCOPE_GROUP_ID = ""
 M365_SHARED_GROUP_ID = ""
 # Minutes between delta runs (15 to 1440). A full reconciliation runs daily.
 M365_SYNC_INTERVAL_MINUTES = "60"
+# Mass-pause brake: a round that would pause at least 5 people and more than
+# this percent of linked people waits for a manager to approve it in Admin.
+M365_SYNC_MAX_PAUSE_PERCENT = "20"
+# Optional extra Exchange mailbox service plan ids (comma separated), for plans
+# newer than the built-in list in docs/m365-sync.md.
+M365_EXTRA_MAILBOX_PLAN_IDS = ""
 # The one mail domain this deployment hosts: the same value as the web app's
 # MAIL_DOMAIN. Only Microsoft 365 users whose primary address is on it sync.
 MAIL_DOMAIN = ""

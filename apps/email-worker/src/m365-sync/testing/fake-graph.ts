@@ -11,7 +11,10 @@ export const DOMAIN = 'example.test';
 
 export const oid = (n: number) => `00000000-0000-0000-0000-${n.toString(16).padStart(12, '0')}`;
 
-const EXCHANGE = [{ service: 'exchange', capabilityStatus: 'Enabled', servicePlanId: '00000000-0000-0000-0000-0000000000e1' }];
+/** Public Microsoft service plan ids (licensing reference), not tenant data. */
+export const PLAN_EXCHANGE_1 = '9aaf7827-d63c-4b61-89c3-182f06f82e5c';
+export const PLAN_EXCHANGE_FOUNDATION = '113feb6c-3fe4-4440-bddc-54d774bf0318';
+const EXCHANGE = [{ service: 'exchange', capabilityStatus: 'Enabled', servicePlanId: PLAN_EXCHANGE_1 }];
 
 export function person(n: number, local: string, overrides: Partial<GraphUser> = {}): GraphUser {
   return {

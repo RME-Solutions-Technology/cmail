@@ -93,6 +93,45 @@
       <p class="muted">Dry run is <strong>{toggle.dryRun ? 'on' : 'off'}</strong>. {toggle.dryRun ? 'Runs only report what they would change.' : 'Runs apply changes and audit each one.'} Sync now asks for a full reconciliation on the next run (within 15 minutes).</p>
     </section>
 
+    {#if status?.round?.phase === 'held' && status.round.brake}
+      <section class="card held-card" aria-labelledby="held-heading">
+        <h2 id="held-heading">Large change held for approval</h2>
+        <p>
+          {#if status.round.brake.reason === 'empty_result'}
+            Microsoft 365 returned no users at all while {status.round.brake.linked} people are linked. Nothing was changed. This usually means a wrong tenant, a removed permission or an outage, not that everyone left.
+          {:else}
+            This run would pause {status.round.brake.pauses} of {status.round.brake.linked} linked people ({status.round.brake.percent}%). Nothing has been paused yet.
+          {/if}
+        </p>
+        {#if status.round.heldPauses.length}
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Would pause</th><th>Reason</th></tr></thead>
+              <tbody>
+                {#each status.round.heldPauses as item}
+                  <tr><td>{item.address || '—'}</td><td><code>{item.reason}</code></td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+        <div class="switch-row">
+          {#if status.round.brake.reason !== 'empty_result'}
+            <form method="POST">
+              <input type="hidden" name="action" value="approve_round" />
+              <input type="hidden" name="round_id" value={status.round.id} />
+              <button type="submit" class="btn btn-danger">Approve large change</button>
+            </form>
+          {/if}
+          <form method="POST">
+            <input type="hidden" name="action" value="sync_now" />
+            <button type="submit" class="btn">Discard and sync again</button>
+          </form>
+        </div>
+        <p class="muted">Fix the cause in Microsoft 365 first if this is not expected. Discard starts a fresh full reconciliation on the next run.</p>
+      </section>
+    {/if}
+
     {#if status}
       <section class="card" aria-labelledby="status-heading">
         <h2 id="status-heading">Status</h2>
@@ -110,7 +149,7 @@
       {#if last}
         <section class="card" aria-labelledby="report-heading">
           <h2 id="report-heading">Last run: {last.kind === 'reconcile' ? 'full reconciliation' : 'delta'}{last.mode === 'dry_run' ? ', dry run' : ''}</h2>
-          <p class="muted">Finished {when(last.finishedAt)}.</p>
+          <p class="muted">Finished {when(last.finishedAt)}.{#if last.brake} {last.mode === 'dry_run' ? 'Live, this run would have been held for approval' : 'This run was held and then approved'} ({last.brake.reason === 'empty_result' ? 'no users returned' : `${last.brake.pauses} of ${last.brake.linked} people paused`}).{/if}</p>
           <ul class="counts">
             {#each COUNT_LABELS as [key, label]}
               <li><span>{label}</span><strong>{last.counts[key as keyof typeof last.counts] ?? 0}</strong></li>
@@ -150,6 +189,8 @@
   .notice-success { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 28%, var(--border)); }
   .notice-warning { color: var(--text); background: var(--bg-subtle); border-color: var(--border); }
   .card { display: grid; gap: 12px; padding: 0 0 8px; border: 0; border-radius: 0; background: none; }
+  .held-card { padding: 12px; border-left: 3px solid var(--danger); background: var(--danger-soft); }
+  .held-card p { margin: 0; font-size: 13px; }
   .switch-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
   .switch-row { display: flex; flex-wrap: wrap; gap: 10px; }
   .state-badge { flex: 0 0 auto; padding: 3px 10px; border-radius: var(--radius-pill); background: var(--bg-subtle); color: var(--text-muted); font-size: 12px; font-weight: 650; }

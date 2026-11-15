@@ -100,6 +100,18 @@ describe('GraphClient', () => {
     expect((await failure(graph.deltaPage(INITIAL_DELTA_URL))).code).toBe('resync_required');
   });
 
+  it.each(['syncStateInvalid', 'resyncRequired', 'invalidDeltaToken', 'deltaTokenExpired'])('maps a 40X %s to resync_required', async (code) => {
+    const { fake, graph } = client();
+    fake.queue(INITIAL_DELTA_URL, { status: 400, body: { error: { code } } });
+    expect((await failure(graph.deltaPage(INITIAL_DELTA_URL))).code).toBe('resync_required');
+  });
+
+  it('does not treat an unrelated 400 as a resync', async () => {
+    const { fake, graph } = client();
+    fake.queue(INITIAL_DELTA_URL, { status: 400, body: { error: { code: 'BadRequest' } } });
+    expect((await failure(graph.deltaPage(INITIAL_DELTA_URL))).code).toBe('http_error');
+  });
+
   it('reports a rejected client secret without the response body', async () => {
     const { fake, graph } = client();
     fake.tokenReplies.push({ status: 401, body: { error: 'invalid_client', error_description: 'secret detail' } });

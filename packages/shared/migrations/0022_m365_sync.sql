@@ -39,6 +39,20 @@ CREATE TABLE IF NOT EXISTS m365_sync_links (
 CREATE INDEX IF NOT EXISTS idx_m365_sync_links_seen
   ON m365_sync_links(seen_round);
 
+-- A manager's decision always wins over the sync. Any status change to an
+-- account (Admin pause, reactivate or offboard, or any other writer) clears
+-- the "paused by the sync" mark in the same statement, so the sync can never
+-- later resume an account someone else has touched. The sync's own pause
+-- sets the mark after its status change, in the same batch.
+CREATE TRIGGER IF NOT EXISTS trg_m365_sync_status_change
+AFTER UPDATE OF status ON users
+WHEN NEW.status IS NOT OLD.status
+BEGIN
+  UPDATE m365_sync_links
+  SET paused_by_sync = 0, status_before_pause = NULL, updated_at = datetime('now')
+  WHERE user_id = NEW.id AND paused_by_sync = 1;
+END;
+
 CREATE TABLE IF NOT EXISTS m365_sync_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   state TEXT NOT NULL DEFAULT '{}' CHECK (length(state) <= 1048576),

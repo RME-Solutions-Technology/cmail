@@ -1,6 +1,6 @@
 // Pure eligibility rules for the Microsoft 365 mailbox sync. See
 // docs/m365-sync.md, "Which accounts are synced".
-import { isGuid } from '@cmail/shared/m365-sync';
+import { EXCHANGE_MAILBOX_PLANS, isGuid } from '@cmail/shared/m365-sync';
 import type { GraphUser } from './graph';
 
 export type OutReason =
@@ -29,9 +29,17 @@ const USABLE_PLAN = new Set(['Enabled', 'Warning']);
 /** Same rule as the web app's normalizeMailboxLocalPart, so every synced address is one Admin could create. */
 const LOCAL_PART = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
 
-export function hasExchangePlan(user: GraphUser): boolean {
+const DEFAULT_PLANS: ReadonlySet<string> = new Set(Object.keys(EXCHANGE_MAILBOX_PLANS));
+
+/**
+ * True when the user has a usable Exchange Online service plan that includes
+ * a mailbox, matched by service plan id (EXCHANGE_MAILBOX_PLANS). The service
+ * name alone is not enough: EXCHANGE_S_FOUNDATION also reports service
+ * 'exchange' and comes with many SKUs that have no mailbox.
+ */
+export function hasExchangePlan(user: GraphUser, planIds: ReadonlySet<string> = DEFAULT_PLANS): boolean {
   return Array.isArray(user.assignedPlans) && user.assignedPlans.some((plan) =>
-    typeof plan?.service === 'string' && plan.service.toLowerCase() === 'exchange'
+    typeof plan?.servicePlanId === 'string' && planIds.has(plan.servicePlanId.toLowerCase())
     && typeof plan.capabilityStatus === 'string' && USABLE_PLAN.has(plan.capabilityStatus));
 }
 
@@ -62,6 +70,7 @@ export function classify(
   mailDomain: string,
   groups: { scope: string | null; shared: string | null },
   memberOf: Set<string> | null,
+  planIds: ReadonlySet<string> = DEFAULT_PLANS,
 ): Classification {
   const { address, onDomain } = primaryAddress(user, mailDomain);
   if (user['@removed']) return { kind: 'out', reason: 'deleted', address };
@@ -76,7 +85,7 @@ export function classify(
 
   if (user.userType && user.userType !== 'Member') return { kind: 'out', reason: 'guest', address };
   if (user.accountEnabled !== true) return { kind: 'out', reason: 'disabled', address };
-  if (!hasExchangePlan(user)) return { kind: 'out', reason: 'no_mailbox_plan', address };
+  if (!hasExchangePlan(user, planIds)) return { kind: 'out', reason: 'no_mailbox_plan', address };
   if (groups.scope && !memberOf?.has(groups.scope)) return { kind: 'out', reason: 'not_in_scope_group', address };
   return { kind: 'person', address, displayName };
 }

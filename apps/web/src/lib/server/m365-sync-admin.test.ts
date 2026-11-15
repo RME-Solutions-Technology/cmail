@@ -17,7 +17,7 @@ function setup(config: { configured: boolean; problems?: string[] } | 'none' | '
 describe('Microsoft 365 sync admin', () => {
   it('is off with dry run on by default', async () => {
     const { d1 } = setup();
-    expect(await loadM365SyncSwitch(d1)).toEqual({ enabled: false, dryRun: true, requestedAt: '' });
+    expect(await loadM365SyncSwitch(d1)).toEqual({ enabled: false, dryRun: true, requestedAt: '', approvedRound: '' });
   });
 
   it('asks the Worker for its configuration over the private binding and keeps only setting names', async () => {
@@ -47,7 +47,7 @@ describe('Microsoft 365 sync admin', () => {
     expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'enable')).toMatchObject({ ok: true });
     expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'dry_run_off')).toMatchObject({ ok: true });
     expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'sync_now', new Date('2026-11-15T01:00:00Z'))).toMatchObject({ ok: true });
-    expect(await loadM365SyncSwitch(d1)).toEqual({ enabled: true, dryRun: false, requestedAt: '2026-11-15T01:00:00.000Z' });
+    expect(await loadM365SyncSwitch(d1)).toEqual({ enabled: true, dryRun: false, requestedAt: '2026-11-15T01:00:00.000Z', approvedRound: '' });
     expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'disable')).toMatchObject({ ok: true });
     expect((await loadM365SyncSwitch(d1)).enabled).toBe(false);
     expect(audits().map((row) => (row as { event_type: string }).event_type)).toEqual([
@@ -58,6 +58,42 @@ describe('Microsoft 365 sync admin', () => {
   it('allows turning on when the Worker state is unknown (the Worker then reports for itself)', async () => {
     const { env } = setup('none');
     expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'enable')).toMatchObject({ ok: true });
+  });
+
+  function seedHeld(sqlite: ReturnType<typeof setup>['sqlite']) {
+    const state = {
+      deltaLink: 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=secret-ish',
+      round: {
+        id: 'round-held-1', kind: 'delta', mode: 'live', phase: 'held', startedAt: '2026-11-15T00:00:00.000Z',
+        nextLink: 'https://graph.microsoft.com/v1.0/users/delta?$skiptoken=abc', finalDeltaLink: null,
+        pending: [{ id: 'x', kind: 'person', address: 'pending@example.test', displayName: '', reason: '' }],
+        pauseQueue: [{ id: '00000000-0000-0000-0000-000000000001', address: 'gone@example.test', reason: 'disabled' }],
+        fetched: 6, brake: { reason: 'too_many_pauses', pauses: 6, linked: 10, percent: 60 },
+        counts: {}, report: [], restarts: 0,
+      },
+    };
+    sqlite.prepare(`INSERT INTO m365_sync_state (id, state) VALUES (1, ?)`).run(JSON.stringify(state));
+  }
+
+  it('sends the page display fields only: no Graph links or unapplied page data', async () => {
+    const { env, sqlite } = setup();
+    seedHeld(sqlite);
+    const overview = await loadM365SyncOverview(env);
+    const text = JSON.stringify(overview);
+    expect(text).not.toContain('deltatoken');
+    expect(text).not.toContain('skiptoken');
+    expect(text).not.toContain('pending@example.test');
+    expect(overview.status?.round).toMatchObject({ id: 'round-held-1', phase: 'held', heldPauses: [{ address: 'gone@example.test', reason: 'disabled' }] });
+  });
+
+  it('approves only the round that is held now, by its exact id, and audits it', async () => {
+    const { env, d1, sqlite, audits } = setup();
+    expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'approve_round', new Date(), 'round-held-1')).toMatchObject({ ok: false, status: 409 });
+    seedHeld(sqlite);
+    expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'approve_round', new Date(), 'another-round')).toMatchObject({ ok: false });
+    expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'approve_round', new Date(), 'round-held-1')).toMatchObject({ ok: true });
+    expect((await loadM365SyncSwitch(d1)).approvedRound).toBe('round-held-1');
+    expect(audits().map((row) => (row as { event_type: string }).event_type)).toEqual(['org.m365_sync_approved']);
   });
 
   it('accepts only known actions', () => {

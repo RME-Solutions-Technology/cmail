@@ -4,20 +4,27 @@
 // - New in-scope people get a pending standard account and a personal
 //   mailbox; an existing standard account with the same address is adopted.
 // - Leaving scope (disabled, unlicensed, deleted, removed from the scope
-//   group) pauses the account once, on that change. Nothing is deleted.
-// - Coming back resumes only an account the sync itself paused.
-// - Managers are never created, adopted, paused or resumed.
+//   group) pauses the account once, on that change. Pauses are queued and
+//   applied only after the mass-pause brake check (sync.ts). Nothing is
+//   deleted.
+// - Coming back resumes only an account the sync itself paused and nobody
+//   has touched since (the 0022 trigger clears the mark on any status change).
+// - Managers are never created, adopted, paused, resumed or edited, and an
+//   offboarded account is never edited.
 // - Shared mailboxes come only from the explicit shared-mailbox group, and
 //   are created or adopted, never disabled.
 // - Dry run reads the same data and reports the same decisions, but writes
 //   nothing except the link bookkeeping column `seen_round`.
-// Every change is one D1 batch with its audit row, so it lands whole or not
-// at all. A unique-key clash (a race with a sign-in or a manager) becomes a
-// reported conflict.
+// Every change is one D1 batch with its audit row. Status changes are
+// conditional on the status the sync read, and the audit row and link mark
+// are conditional on the change having landed, so a concurrent manager
+// action is never overwritten. A unique-key clash becomes a reported conflict.
+import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
 import {
   M365_REPORT_LIMIT,
   type M365CountKey,
   type M365PendingEntry,
+  type M365QueuedPause,
   type M365Round,
 } from '@cmail/shared/m365-sync';
 
@@ -37,6 +44,7 @@ interface UserRow {
   display_name: string;
   role: 'standard' | 'manager';
   status: 'pending' | 'active' | 'paused' | 'offboarded';
+  updated_at: string;
 }
 
 interface MailboxRow {
@@ -52,6 +60,8 @@ export interface ApplyContext {
   /** D1 statements issued so far in this run (reads and writes). */
   ops: number;
   newId: () => string;
+  /** Wall clock, for the change marker written to users.updated_at. */
+  now: () => number;
 }
 
 /** D1 allows at most 100 bound parameters per statement. */
@@ -69,6 +79,26 @@ function auditStatement(db: D1Database, eventType: string, target: string, detai
   ).bind(crypto.randomUUID(), eventType, target.slice(0, 256), detail.slice(0, 1000));
 }
 
+/**
+ * The same audit row, written only if this batch's status change landed:
+ * the sync stamps users.updated_at with `marker` (millisecond precision, which
+ * datetime('now') elsewhere never produces), and the row is inserted only
+ * while that stamp is still there.
+ */
+function markedAuditStatement(db: D1Database, eventType: string, userId: string, marker: string, detail: string): D1PreparedStatement {
+  return db.prepare(
+    `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
+     SELECT ?, datetime('now'), NULL, 'system', ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND updated_at = ?)`,
+  ).bind(crypto.randomUUID(), eventType, userId.slice(0, 256), detail.slice(0, 1000), userId, marker);
+}
+
+/** A users.updated_at value unique to one sync write: 'YYYY-MM-DD HH:MM:SS.mmm' plus a random suffix. */
+function changeMarker(ctx: ApplyContext): string {
+  const base = new Date(ctx.now()).toISOString().replace('T', ' ').replace('Z', '');
+  return `${base}${crypto.randomUUID().slice(0, 8)}`;
+}
+
 async function runBatch(ctx: ApplyContext, statements: D1PreparedStatement[]): Promise<boolean> {
   ctx.ops += statements.length;
   try {
@@ -79,6 +109,11 @@ async function runBatch(ctx: ApplyContext, statements: D1PreparedStatement[]): P
     // else (a sign-in, a manager, another object) got there first.
     return false;
   }
+}
+
+async function markerLanded(ctx: ApplyContext, userId: string, marker: string): Promise<boolean> {
+  ctx.ops += 1;
+  return Boolean(await ctx.db.prepare('SELECT 1 AS found FROM users WHERE id = ? AND updated_at = ?').bind(userId, marker).first());
 }
 
 async function loadLinks(ctx: ApplyContext, ids: string[]): Promise<Map<string, LinkRow>> {
@@ -108,12 +143,12 @@ async function markSeen(ctx: ApplyContext, ids: string[]): Promise<void> {
 
 async function userById(ctx: ApplyContext, id: string): Promise<UserRow | null> {
   ctx.ops += 1;
-  return ctx.db.prepare('SELECT id, email, display_name, role, status FROM users WHERE id = ?').bind(id).first<UserRow>();
+  return ctx.db.prepare('SELECT id, email, display_name, role, status, updated_at FROM users WHERE id = ?').bind(id).first<UserRow>();
 }
 
 async function userByEmail(ctx: ApplyContext, email: string): Promise<UserRow | null> {
   ctx.ops += 1;
-  return ctx.db.prepare('SELECT id, email, display_name, role, status FROM users WHERE lower(email) = ? LIMIT 1')
+  return ctx.db.prepare('SELECT id, email, display_name, role, status, updated_at FROM users WHERE lower(email) = ? LIMIT 1')
     .bind(email).first<UserRow>();
 }
 
@@ -141,37 +176,22 @@ function linkStateStatement(db: D1Database, objectId: string, sourceState: 'in_s
   ).bind(sourceState, reason.slice(0, 64), objectId);
 }
 
-/** The same lockout steps as Admin > People > Pause (sessions, AI app tokens and grants). */
-function pauseStatements(db: D1Database, userId: string): D1PreparedStatement[] {
-  return [
-    db.prepare(
-      `UPDATE users SET status = 'paused', updated_at = datetime('now')
-       WHERE id = ? AND role = 'standard' AND status IN ('pending', 'active')`,
-    ).bind(userId),
-    db.prepare(
-      `UPDATE sessions SET revoked = 1
-       WHERE user_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'paused')`,
-    ).bind(userId, userId),
-    db.prepare(
-      `UPDATE mcp_tokens SET revoked_epoch = unixepoch()
-       WHERE revoked_epoch IS NULL
-         AND grant_id IN (SELECT id FROM mcp_grants WHERE user_id = ?)
-         AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'paused')`,
-    ).bind(userId, userId),
-    db.prepare(
-      `UPDATE mcp_grants SET revoked_epoch = unixepoch(), revoked_reason = 'paused'
-       WHERE user_id = ? AND revoked_epoch IS NULL
-         AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'paused')`,
-    ).bind(userId, userId),
-  ];
+async function conflict(ctx: ApplyContext, entry: { address: string }, reason: string) {
+  record(ctx, 'conflicts', { action: 'conflict', address: entry.address, reason });
 }
 
-async function conflict(ctx: ApplyContext, entry: M365PendingEntry, reason: string) {
-  record(ctx, 'conflicts', { action: 'conflict', address: entry.address, reason });
+function dequeuePause(ctx: ApplyContext, id: string) {
+  if (ctx.round.pauseQueue.some((item) => item.id === id)) {
+    ctx.round.pauseQueue = ctx.round.pauseQueue.filter((item) => item.id !== id);
+  }
 }
 
 // ─── People ──────────────────────────────────────────────────────────────
 
+/**
+ * Decides what leaving scope means for a linked person. A pause is only
+ * queued here; applyQueuedPause makes it after the brake check.
+ */
 async function personOut(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRow, reason: string) {
   if (link.source_state === 'out_of_scope') {
     // Already handled when it left scope. A manager may since have
@@ -194,42 +214,87 @@ async function personOut(ctx: ApplyContext, entry: M365PendingEntry, link: LinkR
     if (live(ctx)) await runBatch(ctx, [linkStateStatement(ctx.db, link.object_id, 'out_of_scope', reason)]);
     return;
   }
-  record(ctx, 'paused', { action: 'pause', address: entry.address || user.email, reason });
-  if (!live(ctx)) return;
-  await runBatch(ctx, [
-    ...pauseStatements(ctx.db, user.id),
-    ctx.db.prepare(
-      `UPDATE m365_sync_links
-       SET source_state = 'out_of_scope', last_reason = ?, paused_by_sync = 1, status_before_pause = ?, updated_at = datetime('now')
-       WHERE object_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = 'paused')`,
-    ).bind(reason.slice(0, 64), user.status, link.object_id, user.id),
-    linkStateStatement(ctx.db, link.object_id, 'out_of_scope', reason),
-    auditStatement(ctx.db, 'm365_sync.user_paused', user.id, `Paused by Microsoft 365 sync: ${reason}`),
-  ]);
+  dequeuePause(ctx, link.object_id);
+  ctx.round.pauseQueue.push({ id: link.object_id, address: (entry.address || user.email).slice(0, 254), reason: reason.slice(0, 64) });
 }
 
-async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRow) {
-  const user = link.user_id ? await userById(ctx, link.user_id) : null;
-  if (!user || user.status === 'offboarded') {
-    // An offboarded account is a manager's closed record: never edited here.
+/** Applies (live) or reports (dry run) one queued pause, re-checking cmail first. */
+export async function applyQueuedPause(ctx: ApplyContext, item: M365QueuedPause): Promise<void> {
+  const links = await loadLinks(ctx, [item.id]);
+  const link = links.get(item.id);
+  const user = link?.kind === 'person' && link.user_id ? await userById(ctx, link.user_id) : null;
+  if (!link || !user || link.source_state === 'out_of_scope' || user.role !== 'standard'
+    || (user.status !== 'pending' && user.status !== 'active')) {
     record(ctx, 'unchanged');
     return;
   }
+  if (!live(ctx)) {
+    record(ctx, 'paused', { action: 'pause', address: item.address, reason: item.reason });
+    return;
+  }
+  const marker = changeMarker(ctx);
+  const ok = await runBatch(ctx, [
+    // Only from the status the sync read: a concurrent manager change wins.
+    ctx.db.prepare(
+      `UPDATE users SET status = 'paused', updated_at = ?
+       WHERE id = ? AND role = 'standard' AND status = ?`,
+    ).bind(marker, user.id, user.status),
+    // The mark, the earlier status and the audit row land only with that change.
+    ctx.db.prepare(
+      `UPDATE m365_sync_links
+       SET paused_by_sync = 1, status_before_pause = ?, updated_at = datetime('now')
+       WHERE object_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND updated_at = ? AND status = 'paused')`,
+    ).bind(user.status, link.object_id, user.id, marker),
+    ...pausedAccountLockoutStatements(ctx.db, user.id),
+    linkStateStatement(ctx.db, link.object_id, 'out_of_scope', item.reason),
+    markedAuditStatement(ctx.db, 'm365_sync.user_paused', user.id, marker, `Paused by Microsoft 365 sync: ${item.reason}`),
+  ]);
+  if (ok && await markerLanded(ctx, user.id, marker)) {
+    record(ctx, 'paused', { action: 'pause', address: item.address, reason: item.reason });
+  } else {
+    await conflict(ctx, item, 'changed_concurrently');
+  }
+}
+
+async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRow) {
+  dequeuePause(ctx, link.object_id);
+  const user = link.user_id ? await userById(ctx, link.user_id) : null;
+  if (!user || user.status === 'offboarded' || user.role !== 'standard') {
+    // An offboarded account is a manager's closed record, and managers are
+    // never edited by the sync.
+    record(ctx, 'unchanged');
+    if (live(ctx) && link.source_state === 'out_of_scope') {
+      await runBatch(ctx, [linkStateStatement(ctx.db, link.object_id, 'in_scope', '')]);
+    }
+    return;
+  }
+
+  // Resume: only an account the sync paused and nobody has touched since.
+  if (link.source_state === 'out_of_scope' && link.paused_by_sync && user.status === 'paused') {
+    const restore = link.status_before_pause ?? 'pending';
+    if (!live(ctx)) {
+      record(ctx, 'resumed', { action: 'resume', address: entry.address, reason: 'back_in_scope' });
+    } else {
+      const marker = changeMarker(ctx);
+      const ok = await runBatch(ctx, [
+        ctx.db.prepare(
+          `UPDATE users SET status = ?, updated_at = ?
+           WHERE id = ? AND status = 'paused' AND role = 'standard'
+             AND EXISTS (SELECT 1 FROM m365_sync_links WHERE user_id = ? AND paused_by_sync = 1)`,
+        ).bind(restore, marker, user.id, user.id),
+        markedAuditStatement(ctx.db, 'm365_sync.user_resumed', user.id, marker, `Resumed by Microsoft 365 sync (status ${restore}); sign-in is needed again`),
+      ]);
+      if (ok && await markerLanded(ctx, user.id, marker)) {
+        record(ctx, 'resumed', { action: 'resume', address: entry.address, reason: 'back_in_scope' });
+      } else {
+        await conflict(ctx, entry, 'changed_concurrently');
+      }
+    }
+  }
+
   const statements: D1PreparedStatement[] = [];
   let changed = false;
-
   if (link.source_state === 'out_of_scope') {
-    if (link.paused_by_sync && user.status === 'paused' && user.role === 'standard') {
-      const restore = link.status_before_pause ?? 'pending';
-      record(ctx, 'resumed', { action: 'resume', address: entry.address, reason: 'back_in_scope' });
-      statements.push(
-        ctx.db.prepare(
-          `UPDATE users SET status = ?, updated_at = datetime('now') WHERE id = ? AND status = 'paused' AND role = 'standard'`,
-        ).bind(restore, user.id),
-        auditStatement(ctx.db, 'm365_sync.user_resumed', user.id, `Resumed by Microsoft 365 sync (status ${restore}); sign-in is needed again`),
-      );
-      changed = true;
-    }
     statements.push(
       ctx.db.prepare(
         `UPDATE m365_sync_links SET source_state = 'in_scope', last_reason = '', paused_by_sync = 0, status_before_pause = NULL,
@@ -238,14 +303,15 @@ async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRo
     );
   }
 
-  if (user.email.toLowerCase() !== entry.address && user.role === 'standard') {
+  if (user.email.toLowerCase() !== entry.address) {
     const [owner, mailbox] = await Promise.all([userByEmail(ctx, entry.address), mailboxByAddress(ctx, entry.address)]);
     if ((owner && owner.id !== user.id) || (mailbox && !(mailbox.type === 'personal' && mailbox.owner_user_id === user.id))) {
       await conflict(ctx, entry, 'address_in_use');
     } else {
       record(ctx, 'updated', { action: 'update_address', address: entry.address, reason: 'primary_address_changed' });
       statements.push(
-        ctx.db.prepare(`UPDATE users SET email = ?, updated_at = datetime('now') WHERE id = ?`).bind(entry.address, user.id),
+        ctx.db.prepare(`UPDATE users SET email = ?, updated_at = datetime('now') WHERE id = ? AND role = 'standard' AND status <> 'offboarded'`)
+          .bind(entry.address, user.id),
         // Only the mailbox that carried the old address follows it; a
         // mailbox a manager named differently stays as it is.
         ctx.db.prepare(
@@ -257,18 +323,16 @@ async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRo
     }
   }
 
-  if (entry.displayName && entry.displayName !== user.display_name && user.role === 'standard') {
+  if (entry.displayName && entry.displayName !== user.display_name) {
     if (!changed) record(ctx, 'updated', { action: 'update_name', address: entry.address, reason: 'display_name_changed' });
     statements.push(
-      ctx.db.prepare(`UPDATE users SET display_name = ?, updated_at = datetime('now') WHERE id = ?`).bind(entry.displayName, user.id),
+      ctx.db.prepare(`UPDATE users SET display_name = ?, updated_at = datetime('now') WHERE id = ? AND role = 'standard' AND status <> 'offboarded'`)
+        .bind(entry.displayName, user.id),
+      auditStatement(ctx.db, 'm365_sync.user_updated', user.id, 'Display name changed in Microsoft 365; account display name updated'),
     );
     changed = true;
   }
 
-  if (!changed && link.source_state === 'in_scope') {
-    record(ctx, 'unchanged');
-    return;
-  }
   if (!changed) record(ctx, 'unchanged');
   if (!live(ctx) || !statements.length) return;
   if (!await runBatch(ctx, statements)) await conflict(ctx, entry, 'write_conflict');
@@ -423,4 +487,13 @@ export async function sweepUnseen(ctx: ApplyContext, limit: number): Promise<num
   if (!ids.length) return 0;
   await applyEntries(ctx, ids.map((id) => ({ id, kind: 'out', address: '', displayName: '', reason: 'not_seen' })));
   return ids.length;
+}
+
+/** People currently linked and in scope: the base for the mass-pause brake. */
+export async function linkedPeopleInScope(ctx: ApplyContext): Promise<number> {
+  ctx.ops += 1;
+  const row = await ctx.db.prepare(
+    `SELECT COUNT(*) AS n FROM m365_sync_links WHERE kind = 'person' AND source_state = 'in_scope'`,
+  ).first<{ n: number }>();
+  return Number(row?.n ?? 0);
 }

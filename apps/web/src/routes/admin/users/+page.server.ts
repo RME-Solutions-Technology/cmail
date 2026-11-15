@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import type { AuthProvider, Env, User, UserRole, UserStatus } from '@cmail/shared/types';
+import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
 import { audit, generateId } from '#lib/server/db.js';
 import { detectProvider, sendEmail } from '#lib/server/outbound.js';
 import { generateInviteEmail } from '#lib/server/invite-email.js';
@@ -472,28 +473,10 @@ export const actions: Actions = {
       ).bind(status, userId, status, userId),
     ];
 
-    if (status === 'paused') {
-      statements.push(
-        env.DB.prepare(
-          `UPDATE sessions SET revoked = 1
-           WHERE user_id = ? AND EXISTS (
-             SELECT 1 FROM users WHERE id = ? AND status = ?
-           )`,
-        ).bind(userId, userId, status),
-        // Pausing also disconnects AI apps (MCP); reactivation does not restore them.
-        env.DB.prepare(
-          `UPDATE mcp_tokens SET revoked_epoch = unixepoch()
-           WHERE revoked_epoch IS NULL
-             AND grant_id IN (SELECT id FROM mcp_grants WHERE user_id = ?)
-             AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = ?)`,
-        ).bind(userId, userId, status),
-        env.DB.prepare(
-          `UPDATE mcp_grants SET revoked_epoch = unixepoch(), revoked_reason = 'paused'
-           WHERE user_id = ? AND revoked_epoch IS NULL
-             AND EXISTS (SELECT 1 FROM users WHERE id = ? AND status = ?)`,
-        ).bind(userId, userId, status),
-      );
-    }
+    // Shared with the Microsoft 365 sync, so both pause the same way. The
+    // status change also clears any "paused by the sync" mark (trigger in
+    // migration 0022), so the sync never undoes this decision.
+    if (status === 'paused') statements.push(...pausedAccountLockoutStatements(env.DB, userId));
     if (status === 'offboarded') statements.push(...offboardingCleanupStatements(env.DB, userId));
 
     try {

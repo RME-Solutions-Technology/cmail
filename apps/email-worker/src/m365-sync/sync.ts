@@ -12,15 +12,21 @@
 //      after a resync-required answer, when the delta link is near its
 //      7-day limit, and always in dry run;
 //    - delta: the saved delta link, every M365_SYNC_INTERVAL_MINUTES.
+//    Each round runs fetch -> (sweep) -> pauses. Pauses are queued until the
+//    end and pass the mass-pause brake first: a round that would pause too
+//    many linked people, or a reconciliation that returned nothing, is held
+//    until a manager approves it (or presses Sync now to start over).
 // 5. Does bounded work (pages fetched, objects applied, D1 statements and
 //    wall time) and saves its place after every step, so a stop at any point
 //    resumes cleanly on the next tick. Replays are harmless: every write is
 //    keyed on the Entra object id and guarded.
 import {
+  M365_BRAKE_MIN_PAUSES,
   emptyCounts,
   loadM365SyncSwitch,
   m365SyncConfig,
   parseM365SyncState,
+  type M365Brake,
   type M365PendingEntry,
   type M365Round,
   type M365RoundKind,
@@ -29,7 +35,7 @@ import {
   type M365SyncEnv,
   type M365SyncState,
 } from '@cmail/shared/m365-sync';
-import { applyEntries, sweepUnseen, type ApplyContext } from './apply';
+import { applyEntries, applyQueuedPause, linkedPeopleInScope, sweepUnseen, type ApplyContext } from './apply';
 import { classify, needsGroupCheck } from './classify';
 import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser } from './graph';
 
@@ -47,8 +53,9 @@ const APPLY_CHUNK = 25;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Graph delta tokens for directory objects last seven days; refresh well before. */
 const DELTA_LINK_MAX_AGE_MS = 6 * DAY_MS;
-/** A round older than this is abandoned and started again. */
+/** A round older than this is abandoned and started again (a held round waits longer). */
 const ROUND_MAX_AGE_MS = DAY_MS;
+const HELD_ROUND_MAX_AGE_MS = 7 * DAY_MS;
 const MAX_BACKOFF_SECONDS = 60 * 60;
 const AUTH_BACKOFF_SECONDS = 60 * 60;
 const MAX_RESTARTS = 2;
@@ -67,7 +74,7 @@ export interface M365SyncDeps {
 }
 
 export type M365TickResult =
-  | { status: 'off' | 'busy' | 'not_installed' | 'not_configured' | 'idle' | 'backoff' }
+  | { status: 'off' | 'busy' | 'not_installed' | 'not_configured' | 'idle' | 'backoff' | 'held' }
   | { status: 'worked'; round: M365RoundKind | null; mode: M365RoundMode | null; finished: boolean }
   | { status: 'error'; code: string };
 
@@ -80,6 +87,9 @@ function newRound(kind: M365RoundKind, mode: M365RoundMode, now: number, id: str
     kind,
     mode,
     phase: 'fetch',
+    pauseQueue: [],
+    fetched: 0,
+    brake: null,
     nextLink: null,
     finalDeltaLink: null,
     pending: [],
@@ -106,6 +116,25 @@ export function dueRound(
   return age(now, state.lastDeltaAt) >= interval ? 'delta' : null;
 }
 
+/**
+ * The mass-pause brake. Holds when the round would pause at least
+ * M365_BRAKE_MIN_PAUSES people and more than `maxPercent` of the linked
+ * people, or when a reconciliation returned no directory objects at all
+ * while people are linked (a wrong tenant, a broken permission or an empty
+ * response must never look like "everyone left").
+ */
+export function brakeCheck(round: M365Round, linked: number, maxPercent: number): M365Brake | null {
+  const pauses = round.pauseQueue.length;
+  const percent = linked ? Math.round((pauses / linked) * 100) : 0;
+  if (round.kind === 'reconcile' && round.fetched === 0 && linked > 0) {
+    return { reason: 'empty_result', pauses, linked, percent };
+  }
+  if (pauses >= M365_BRAKE_MIN_PAUSES && pauses * 100 > linked * maxPercent) {
+    return { reason: 'too_many_pauses', pauses, linked, percent };
+  }
+  return null;
+}
+
 async function saveState(db: D1Database, state: M365SyncState): Promise<void> {
   await db.prepare(`UPDATE m365_sync_state SET state = ?, updated_at = datetime('now') WHERE id = 1`)
     .bind(JSON.stringify(state)).run();
@@ -117,7 +146,7 @@ function toPending(users: GraphUser[], config: M365SyncConfig, memberships: Map<
   for (const user of users) {
     if (typeof user.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(user.id)) continue;
     const id = user.id.toLowerCase();
-    const cls = classify(user, config.mailDomain, groups, memberships.get(user.id) ?? memberships.get(id) ?? null);
+    const cls = classify(user, config.mailDomain, groups, memberships.get(user.id) ?? memberships.get(id) ?? null, config.mailboxPlanIds);
     // A page may repeat an object (delta replays); the last copy wins.
     byId.delete(id);
     byId.set(id, cls.kind === 'out'
@@ -136,6 +165,7 @@ function finishRound(state: M365SyncState, round: M365Round, now: number): void 
     finishedAt,
     counts: round.counts,
     report: round.report,
+    brake: round.brake,
   };
   if (round.mode === 'live') {
     state.deltaLink = round.finalDeltaLink;
@@ -199,12 +229,27 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
     state.backoffUntil = null;
 
     const mode: M365RoundMode = toggle.dryRun ? 'dry_run' : 'live';
-    if (state.round && (state.round.mode !== mode || age(startedAt, state.round.startedAt) > ROUND_MAX_AGE_MS)) {
-      // Mode changed or the round went stale (for example the switch was off
-      // for days): its saved page links may have expired. Start again.
-      state.round = null;
-    }
     const requested = Boolean(toggle.requestedAt) && toggle.requestedAt !== state.handledRequestAt;
+    if (state.round) {
+      // Older rounds may predate the brake fields.
+      state.round.pauseQueue ??= [];
+      state.round.fetched ??= 0;
+      state.round.brake ??= null;
+      const held = state.round.phase === 'held';
+      const maxAge = held ? HELD_ROUND_MAX_AGE_MS : ROUND_MAX_AGE_MS;
+      // Drop the round when the mode changed, it went stale (its saved page
+      // links may have expired), or a manager pressed Sync now on a held round.
+      if (state.round.mode !== mode || age(startedAt, state.round.startedAt) > maxAge || (held && requested)) state.round = null;
+    }
+    if (state.round?.phase === 'held') {
+      if (toggle.approvedRound !== state.round.id) {
+        state.lastResult = 'held';
+        await saveState(db, state);
+        return { status: 'held' };
+      }
+      // A manager approved this exact round: apply its pauses.
+      state.round.phase = 'pauses';
+    }
     if (!state.round) {
       const kind = dueRound(state, { mode, requested, intervalMinutes: config.intervalMinutes, now: startedAt });
       if (requested) state.handledRequestAt = toggle.requestedAt;
@@ -228,14 +273,15 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
     const groupIds = [config.scopeGroupId, config.sharedGroupId].filter((id): id is string => Boolean(id));
     let d1Ops = 0;
     let finished = false;
-    const round = () => state.round!;
     const withinBudget = () => now() - startedAt < budgets.timeMs && d1Ops < budgets.d1;
+    const context = (round: M365Round): ApplyContext => ({ db, round, ops: 0, newId, now });
 
     while (state.round && withinBudget()) {
-      const current = round();
+      const current = state.round;
+      if (current.phase === 'held') break;
       if (current.pending.length) {
         const chunk = current.pending.slice(0, budgets.chunk);
-        const ctx: ApplyContext = { db, round: current, ops: 0, newId };
+        const ctx = context(current);
         await applyEntries(ctx, chunk);
         d1Ops += ctx.ops;
         current.pending = current.pending.slice(chunk.length);
@@ -260,18 +306,49 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
         const needCheck = groupIds.length
           ? page.users.filter((user) => needsGroupCheck(user, config.mailDomain, { scope: config.scopeGroupId, shared: config.sharedGroupId })).map((user) => user.id)
           : [];
+        // If this throttles, the page is not saved and is fetched again on
+        // resume (one extra page request; nothing is applied twice).
         const memberships = needCheck.length ? await graph.memberGroups(needCheck, groupIds) : new Map<string, Set<string>>();
         current.pending = toPending(page.users, config, memberships);
+        current.fetched += page.users.length;
         current.nextLink = page.nextLink;
         if (page.deltaLink) current.finalDeltaLink = page.deltaLink;
-      } else if (current.kind === 'reconcile') {
-        current.phase = 'sweep';
-        const ctx: ApplyContext = { db, round: current, ops: 0, newId };
-        const swept = await sweepUnseen(ctx, budgets.chunk);
+      } else if (current.phase === 'fetch' || current.phase === 'sweep') {
+        if (current.kind === 'reconcile') {
+          current.phase = 'sweep';
+          const ctx = context(current);
+          const swept = await sweepUnseen(ctx, budgets.chunk);
+          d1Ops += ctx.ops;
+          if (swept) {
+            await saveState(db, state);
+            d1Ops += 1;
+            continue;
+          }
+        }
+        // All objects applied: check the brake before any pause.
+        const ctx = context(current);
+        const linked = await linkedPeopleInScope(ctx);
         d1Ops += ctx.ops;
-        if (!swept) {
-          finishRound(state, current, now());
-          finished = true;
+        current.brake = brakeCheck(current, linked, config.maxPausePercent);
+        if (current.brake && current.mode === 'live') {
+          current.phase = 'held';
+          console.warn('Microsoft 365 sync: round held by the mass-pause brake', { reason: current.brake.reason, pauses: current.brake.pauses, linked });
+          await saveState(db, state);
+          d1Ops += 1;
+          break;
+        }
+        current.phase = 'pauses';
+      } else if (current.phase === 'pauses' && current.pauseQueue.length) {
+        const chunk = current.pauseQueue.slice(0, budgets.chunk);
+        const ctx = context(current);
+        try {
+          for (const item of chunk) {
+            await applyQueuedPause(ctx, item);
+            // Dequeued only once applied; a retry re-checks and is harmless.
+            current.pauseQueue = current.pauseQueue.slice(1);
+          }
+        } finally {
+          d1Ops += ctx.ops;
         }
       } else {
         finishRound(state, current, now());
@@ -282,8 +359,9 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
     }
 
     state.backoffStreak = 0;
-    state.lastResult = state.round ? 'running' : 'ok';
+    state.lastResult = state.round?.phase === 'held' ? 'held' : state.round ? 'running' : 'ok';
     await saveState(db, state);
+    if (state.round?.phase === 'held') return { status: 'held' };
     const last = state.round ?? state.lastRound;
     return { status: 'worked', round: last?.kind ?? null, mode: last?.mode ?? null, finished };
   } catch (caught) {

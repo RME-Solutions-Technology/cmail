@@ -128,7 +128,13 @@ function errorCodeOf(body: unknown): string {
   return typeof code === 'string' ? code : '';
 }
 
-const RESYNC_CODES = new Set(['syncStateNotFound', 'resyncRequired', 'SyncStateNotFound']);
+/**
+ * Error codes that mean "this delta or skip token is no longer usable". Graph
+ * documents a 40X error with codes "such as syncStateNotFound" for an expired
+ * token; the others are the same family seen across Graph change tracking.
+ */
+const RESYNC_CODE = /^(?:syncStateNotFound|syncStateInvalid|resyncRequired|resyncApplicationRequired|invalidDeltaToken|deltaTokenExpired|expiredDeltaToken|invalidSkipToken)$/i;
+const RESYNC_STATUSES = new Set([400, 404, 409, 410]);
 const RETRYABLE = new Set([429, 503, 504]);
 
 export class GraphClient {
@@ -228,7 +234,7 @@ export class GraphClient {
         throw new GraphError('bad_response', response.status);
       }
       if (!response.ok) {
-        if (RESYNC_CODES.has(errorCodeOf(parsed))) throw new GraphError('resync_required', response.status);
+        if (RESYNC_STATUSES.has(response.status) && RESYNC_CODE.test(errorCodeOf(parsed))) throw new GraphError('resync_required', response.status);
         throw new GraphError(response.status >= 500 ? 'throttled' : 'http_error', response.status, null);
       }
       return parsed;

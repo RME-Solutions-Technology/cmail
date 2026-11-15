@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { m365SyncConfig } from '@cmail/shared/m365-sync';
 import { classify, needsGroupCheck } from './classify';
-import { CLIENT_ID, DOMAIN, SCOPE_GROUP, SHARED_GROUP, TENANT_ID, person, removed } from './testing/fake-graph';
+import { CLIENT_ID, DOMAIN, PLAN_EXCHANGE_1, PLAN_EXCHANGE_FOUNDATION, SCOPE_GROUP, SHARED_GROUP, TENANT_ID, person, removed } from './testing/fake-graph';
 
 const none = { scope: null, shared: null };
 
@@ -14,7 +14,9 @@ describe('classify', () => {
     ['disabled', person(1, 'alex', { accountEnabled: false }), 'disabled'],
     ['a guest', person(1, 'alex', { userType: 'Guest' }), 'guest'],
     ['unlicensed', person(1, 'alex', { assignedPlans: [] }), 'no_mailbox_plan'],
-    ['a suspended Exchange plan', person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Suspended' }] }), 'no_mailbox_plan'],
+    ['a suspended Exchange plan', person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Suspended', servicePlanId: PLAN_EXCHANGE_1 }] }), 'no_mailbox_plan'],
+    ['only Exchange Foundation (no mailbox)', person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Enabled', servicePlanId: PLAN_EXCHANGE_FOUNDATION }] }), 'no_mailbox_plan'],
+    ['service "exchange" with no plan id', person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Enabled' }] }), 'no_mailbox_plan'],
     ['only a non-Exchange plan', person(1, 'alex', { assignedPlans: [{ service: 'SharePoint', capabilityStatus: 'Enabled' }] }), 'no_mailbox_plan'],
     ['no mail address', person(1, 'alex', { mail: null }), 'no_address'],
     ['another domain', person(1, 'alex', { mail: 'alex@other.example' }), 'other_domain'],
@@ -25,7 +27,7 @@ describe('classify', () => {
   });
 
   it('keeps a licence in its grace period (Warning)', () => {
-    const user = person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Warning' }] });
+    const user = person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Warning', servicePlanId: PLAN_EXCHANGE_1 }] });
     expect(classify(user, DOMAIN, none, null).kind).toBe('person');
   });
 
@@ -75,6 +77,23 @@ describe('m365SyncConfig', () => {
   it('clamps the interval to 15..1440 minutes', () => {
     expect(m365SyncConfig({ ...base, M365_SYNC_INTERVAL_MINUTES: '1' })).toMatchObject({ config: { intervalMinutes: 15 } });
     expect(m365SyncConfig({ ...base, M365_SYNC_INTERVAL_MINUTES: '99999' })).toMatchObject({ config: { intervalMinutes: 1440 } });
+  });
+
+  it('accepts extra mailbox plan ids from configuration, and only GUIDs', () => {
+    const extra = '00000000-0000-0000-0000-0000000000e9';
+    const check = m365SyncConfig({ ...base, M365_EXTRA_MAILBOX_PLAN_IDS: extra });
+    expect(check.configured && check.config.mailboxPlanIds.has(extra)).toBe(true);
+    expect(check.configured && check.config.mailboxPlanIds.has(PLAN_EXCHANGE_1)).toBe(true);
+    expect(check.configured && check.config.mailboxPlanIds.has(PLAN_EXCHANGE_FOUNDATION)).toBe(false);
+    expect(m365SyncConfig({ ...base, M365_EXTRA_MAILBOX_PLAN_IDS: 'EXCHANGE_S_STANDARD' }).configured).toBe(false);
+    const user = person(1, 'alex', { assignedPlans: [{ service: 'exchange', capabilityStatus: 'Enabled', servicePlanId: extra }] });
+    expect(classify(user, DOMAIN, none, null).kind).toBe('out');
+    expect(classify(user, DOMAIN, none, null, check.configured ? check.config.mailboxPlanIds : undefined).kind).toBe('person');
+  });
+
+  it('defaults the pause brake to 20 percent and clamps it', () => {
+    expect(m365SyncConfig(base)).toMatchObject({ config: { maxPausePercent: 20 } });
+    expect(m365SyncConfig({ ...base, M365_SYNC_MAX_PAUSE_PERCENT: '0' })).toMatchObject({ config: { maxPausePercent: 1 } });
   });
 
   it('refuses the same group for scope and shared', () => {

@@ -4,12 +4,14 @@
 // private EMAIL_SERVICE binding) whether its settings are present, and reads
 // the status row the Worker writes.
 import {
+  M365_SYNC_SETTING_APPROVED_ROUND,
   M365_SYNC_SETTING_DRY_RUN,
   M365_SYNC_SETTING_ENABLED,
   M365_SYNC_SETTING_REQUESTED_AT,
   loadM365SyncState,
   loadM365SyncSwitch,
-  type M365SyncState,
+  m365StatusView,
+  type M365StatusView,
   type M365SyncSwitch,
 } from '@cmail/shared/m365-sync';
 import { audit } from './db';
@@ -25,7 +27,8 @@ export interface M365SyncOverview {
   config: M365ConfigStatus;
   /** False until migration 0022 is applied. */
   installed: boolean;
-  status: M365SyncState | null;
+  /** Display fields only: no Graph links or unapplied page data reach the page. */
+  status: M365StatusView | null;
   linkedPeople: number;
   linkedShared: number;
 }
@@ -65,7 +68,7 @@ export async function loadM365SyncOverview(env: { DB: D1Database; EMAIL_SERVICE?
          FROM m365_sync_links`,
       ).first<{ people: number | null; shared: number | null }>(),
     ]);
-    return { toggle, config, installed: true, status, linkedPeople: counts?.people ?? 0, linkedShared: counts?.shared ?? 0 };
+    return { toggle, config, installed: true, status: m365StatusView(status), linkedPeople: counts?.people ?? 0, linkedShared: counts?.shared ?? 0 };
   } catch {
     return { toggle, config, installed: false, status: null, linkedPeople: 0, linkedShared: 0 };
   }
@@ -79,10 +82,10 @@ async function putSetting(db: D1Database, key: string, value: string, managerId:
   ).bind(key, value, managerId).run();
 }
 
-export type M365AdminAction = 'enable' | 'disable' | 'dry_run_on' | 'dry_run_off' | 'sync_now';
+export type M365AdminAction = 'enable' | 'disable' | 'dry_run_on' | 'dry_run_off' | 'sync_now' | 'approve_round';
 
 export function parseM365AdminAction(value: unknown): M365AdminAction | null {
-  return typeof value === 'string' && ['enable', 'disable', 'dry_run_on', 'dry_run_off', 'sync_now'].includes(value)
+  return typeof value === 'string' && ['enable', 'disable', 'dry_run_on', 'dry_run_off', 'sync_now', 'approve_round'].includes(value)
     ? value as M365AdminAction
     : null;
 }
@@ -100,8 +103,24 @@ export async function applyM365AdminAction(
   manager: { id: string },
   action: M365AdminAction,
   now = new Date(),
+  roundId = '',
 ): Promise<M365AdminResult> {
   const db = env.DB;
+  if (action === 'approve_round') {
+    // Only the round that is held right now, named exactly: an old or guessed
+    // id approves nothing.
+    const state = await loadM365SyncState(db).catch(() => null);
+    const held = state?.round?.phase === 'held' ? state.round : null;
+    if (!held || !roundId || held.id !== roundId) return { ok: false, status: 409, error: 'There is no held change with that id. Reload the page.' };
+    await putSetting(db, M365_SYNC_SETTING_APPROVED_ROUND, held.id, manager.id);
+    await audit(db, {
+      event_type: 'org.m365_sync_approved',
+      actor_id: manager.id,
+      actor_role: 'manager',
+      detail: `Approved a held Microsoft 365 sync change: ${held.brake?.pauses ?? held.pauseQueue.length} pauses of ${held.brake?.linked ?? 0} linked people`,
+    });
+    return { ok: true, message: 'Approved. The held pauses are applied on the next run, within 15 minutes, each checked again first.' };
+  }
   if (action === 'enable') {
     const overview = await loadM365SyncOverview(env);
     if (!overview.installed) return { ok: false, status: 409, error: 'Apply database migration 0022 before turning on Microsoft 365 sync' };
