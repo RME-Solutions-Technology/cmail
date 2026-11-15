@@ -154,6 +154,30 @@ STANDBY_PROBE_LOCAL_PART = "cmail-standby-probe"
 # Minutes a test may take before it fails (2 to 60).
 STANDBY_PROBE_TIMEOUT_MINUTES = "10"
 
+# Optional Exchange mirror (docs/exchange-mirror.md): files the original of
+# each Exchange Online journal report into every recipient's mailbox. Nothing
+# is read or filed until a manager turns it on in Admin > Exchange mirror;
+# with M365_JOURNAL_ADDRESS empty it is off whatever the switch says. Needs
+# migration 0027, INBOUND_AUTHSERV_ID above and MAIL_DOMAIN.
+# The journal address: journal-<32 to 64 random lower-case letters/digits>@<a
+# domain routed to this Worker>. Keep it secret (prefer a Worker secret):
+#   wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml
+# M365_JOURNAL_ADDRESS = ""
+# Domains a journal report may authenticate as (DMARC From or DKIM signer),
+# comma separated: the tenant's default and onmicrosoft.com domains. Default
+# MAIL_DOMAIN. M365_TENANT_ID above, when set, must match the report's tenant.
+M365_JOURNAL_SENDER_DOMAINS = ""
+# "false" skips the SPF/DKIM/DMARC check (weaker; see the docs). Needs
+# M365_TENANT_ID, and every report must then carry that tenant id. Default "true".
+M365_JOURNAL_REQUIRE_AUTH = "true"
+# "true" also files the sender's copy into Sent (needs M365_TENANT_ID). Keep
+# "false" until a live test shows originals carry the tenant headers.
+M365_JOURNAL_MIRROR_SENT = "false"
+# Reports larger than MAX_INBOUND_BYTES + 1 MiB are refused unread.
+# Subrequests one report may use for filing (about 4 + attachments per copy).
+# Raise [limits] subrequests first if you raise this above 10,000.
+M365_JOURNAL_SUBREQUEST_BUDGET = "8000"
+
 [triggers]
 # 17 3 * * *: retention (off unless RETENTION_JOBS_ENABLED).
 # 7 * * * *: refresh the local phishing-domain list for link checks (hourly).

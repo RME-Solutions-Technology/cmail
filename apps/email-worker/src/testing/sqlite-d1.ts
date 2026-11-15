@@ -40,19 +40,25 @@ export function migratedDatabase() {
   for (const file of readdirSync(MIGRATIONS_DIR).filter((name) => name.endsWith('.sql')).sort()) {
     sqlite.exec(readFileSync(resolve(MIGRATIONS_DIR, file), 'utf8'));
   }
+  let queue: Promise<void> = Promise.resolve();
   const d1 = {
     prepare: (sql: string) => new Statement(sqlite, sql),
+    // One connection: batches run one at a time, like D1's serialized writes.
     async batch(statements: Statement[]) {
-      sqlite.exec('BEGIN');
-      try {
-        const results = [];
-        for (const statement of statements) results.push(await statement.run());
-        sqlite.exec('COMMIT');
-        return results;
-      } catch (caught) {
-        sqlite.exec('ROLLBACK');
-        throw caught;
-      }
+      const run = queue.then(async () => {
+        sqlite.exec('BEGIN');
+        try {
+          const results = [];
+          for (const statement of statements) results.push(await statement.run());
+          sqlite.exec('COMMIT');
+          return results;
+        } catch (caught) {
+          sqlite.exec('ROLLBACK');
+          throw caught;
+        }
+      });
+      queue = run.then(() => undefined, () => undefined);
+      return run;
     },
   } as unknown as D1Database;
   return { d1, sqlite };
