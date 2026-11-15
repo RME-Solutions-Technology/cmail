@@ -97,6 +97,15 @@ export function parseOrRefuse(config) {
   }
 }
 
+/** For an unexpected error after a write was sent: the state is unknown, exit 3. */
+export function reportUnknownAfterWrite(error, out, redact, command) {
+  out('');
+  out(`OUTCOME UNKNOWN: an error after the DNS change was sent (${redact(error?.message || String(error))}).`);
+  out('Check DNS > Records in the dashboard now.');
+  if (command) out(`To undo or finish (safe whatever the state; run without --apply first): ${command}`);
+  return EXIT.UNKNOWN;
+}
+
 /** For failures before any write: prints the error and returns 1 (nothing changed). */
 export function reportFailure(error, out, redact = (text) => text) {
   if (error instanceof Refusal) {

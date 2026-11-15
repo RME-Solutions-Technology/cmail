@@ -48,7 +48,7 @@ Two scripts do the DNS part, each in one change:
 | Email Routing needs **exclusive control of the root domain's MX records**: onboarding a domain that has another provider's MX fails with error 2008, "Non-Cloudflare MX records exist". | Cloudflare [Troubleshooting](https://developers.cloudflare.com/email-service/reference/troubleshooting/), [Domains](https://developers.cloudflare.com/email-service/configuration/domains/#move-to-email-routing-from-another-provider) | Documented |
 | Cloudflare's way in from another provider: delete that provider's MX, enable Email Routing (Cloudflare adds its MX and a `cf2024-1._domainkey` DKIM record; SPF only if none exists), then create routing rules at once, because with Cloudflare's MX in place **mail to an address with no rule is rejected ("Address does not exist") and the sender does not retry**. Senders mostly retry the brief no-MX gap; resolvers that cached the absence may take up to 30 minutes. | [Domains: Move to Email Routing](https://developers.cloudflare.com/email-service/configuration/domains/#move-to-email-routing-from-another-provider) | Documented |
 | Email Routing's root records (MX, SPF, DKIM) can be **unlocked** and edited to point to another provider. An edited record stays associated with Email Routing and is deleted if Email Routing is disabled. Onboarding locks the records it creates. | [Domains: Locked DNS records](https://developers.cloudflare.com/email-service/configuration/domains/#locked-dns-records), [Remove a domain from Email Routing](https://developers.cloudflare.com/email-service/configuration/domains/#remove-a-domain-from-email-routing) | Documented |
-| Subdomain routing (the standby address `name@standby.<domain>`) is added from the **apex domain's** Email Routing Settings, with literal rules only; the catch-all exists only on the apex. | [Subdomains](https://developers.cloudflare.com/email-service/configuration/subdomains/) | Documented |
+| Subdomain routing (the [standby address](standby-probe.md) `name@standby.<domain>`) is added from the **apex domain's** Email Routing Settings, with literal rules only; the catch-all exists only on the apex. | [Subdomains](https://developers.cloudflare.com/email-service/configuration/subdomains/) | Documented |
 | A DNS batch (`POST /zones/{id}/dns_records/batch`) runs deletes, patches, puts, posts in **one database transaction: all or nothing**. Propagation to Cloudflare's edge is per record, not atomic. | [Batch record changes](https://developers.cloudflare.com/dns/manage-dns-records/how-to/batch-record-changes/) | Documented |
 | `GET /zones/{id}/email/routing` gives `enabled` and `status` (`ready`, `unconfigured`, `misconfigured`, `misconfigured/locked`, `unlocked`); `GET .../email/routing/dns` lists the DNS records Email Routing needs; `PATCH .../email/routing/dns` unlocks them; `GET .../email/routing/rules/catch_all` reads the catch-all. Zones and routing rules list at most 50 per page. | [Email Routing API](https://developers.cloudflare.com/api/resources/email_routing/), [Zones](https://developers.cloudflare.com/api/resources/zones/methods/list/) | Documented |
 | **The prepared state: Email Routing enabled on the zone, root MX unlocked and pointing at Exchange, the standby subdomain still routing to cmail.** | none | **Not proven until the drill passes** (drill step 9). Cloudflare documents unlocking only as a step on the way out. |
@@ -56,7 +56,7 @@ Two scripts do the DNS part, each in one change:
 | What `GET .../email/routing/dns` returns while the apex points elsewhere. If it lists no MX, the switch stops and asks for `--cloudflare-mx` (copied from Email Routing > Settings). | none | Not proven; the drill shows which |
 | What `PATCH .../email/routing/dns` answers when nothing is locked. The switch-back tolerates a refusal and goes on (a still-locked record makes the batch refuse cleanly). | none | Not proven |
 | Whether Email Routing needs `include:_spf.mx.cloudflare.net` when it only delivers to a Worker (Cloudflare says the record authorises it to forward). The switch leaves SPF alone unless `--spf-include`. | [Domains: Routing records](https://developers.cloudflare.com/email-service/configuration/domains/#routing-records) | Not proven either way |
-| The probe reading needs the standby probe's tables (migration `0023`, `docs/standby-probe.md`), which arrive **after PR 109 merges**. | this repo | Depends on that feature |
+| The probe reading needs the standby probe's tables (migration `0023`, [standby test address and probe](standby-probe.md)). | this repo | Needs that feature deployed and switched on |
 
 When the drill has passed on a real domain, record the date and what was
 seen in the instance's own notes, and change the two bold rows to "Proven
@@ -93,7 +93,7 @@ domain) changes:
    `--worker`. Otherwise refused. Literal apex rules that send elsewhere are
    listed as warnings (they take those addresses first).
 4. The probe: with `--probe-d1 <database-id>` it reads the standby probe light
-   from D1 (two SELECTs, read-only) and refuses anything but **green** (the
+   from D1 (two SELECTs, read-only; see [standby probe](standby-probe.md)) and refuses anything but **green** (the
    same rules as Admin > Standby test). An unreadable probe is refused unless
    `--skip-probe-check`. `--apply` without `--probe-d1` needs
    `--skip-probe-check`, which is printed loudly. `--skip-probe-check` never
@@ -130,7 +130,11 @@ the switch, same domain, same zone id, and kind `apply` unless
 records that are Cloudflare's, re-create every original MX with its host,
 priority, TTL and comment (tags and record ids are recorded in the snapshot
 but not restored), and put SPF back **only if it still holds what the switch
-wrote** (an SPF record edited since is left alone, with a warning). Any apex
+wrote** (an SPF record edited since is left alone, with a warning). It
+then compares the apex SPF it expects to leave with the snapshot's original
+and, on any difference (for example the SPF record Cloudflare's onboarding
+adds when none existed), warns and prints the exact record to delete or the
+exact content to restore by hand. Any apex
 MX that is neither Cloudflare's nor in the snapshot stops it. If Email
 Routing's status says its records are locked (`ready` or
 `misconfigured/locked`), it first unlocks them (`PATCH .../email/routing/dns`,
@@ -145,7 +149,8 @@ Cloudflare's MX are still delivered.
 ### Exit codes
 
 Both scripts use the same codes. **Exit code 1 always means nothing was
-changed.**
+changed.** Once a script has sent a write (the unlock or the batch), any
+error after that, even an unexpected one, ends with code 3, never 1.
 
 | Code | Meaning | Do |
 |---|---|---|
@@ -254,14 +259,17 @@ note whether it did.
 1. The domain's DNS is on Cloudflare (full setup). cmail is deployed for
    `MAIL_DOMAIN`, every person has a cmail mailbox
    ([Microsoft 365 mailbox sync](m365-sync.md)) and can sign in
-   ([staff sign-in](staff-sign-in.md)). The standby probe is deployed (after
-   PR 109 merges).
+   ([staff sign-in](staff-sign-in.md)). The [standby probe](standby-probe.md)
+   is deployed and switched on.
 2. Lower the apex MX TTL to Auto (300 s) and wait out the old TTL (days ahead
    is best).
 3. Take the snapshot of the original records with a dry run. It is refused
    ("Email Routing is not enabled") but saves `...-switch-dry-run.json`;
    keep it. Add `--spf-include` only if you will add the SPF include by hand
-   in step 5, so the switch-back can remove it again.
+   in step 5, so the switch-back can remove it again. It is removed only if
+   the record then reads **exactly** as this dry run printed it (the include
+   right after `v=spf1`, every other character the same); anything else is
+   left alone and switch-back prints the original record to restore by hand.
    ```sh
    node scripts/standby/switch.mjs --domain example.com --worker <email-worker-name>
    ```
@@ -278,7 +286,7 @@ Following Cloudflare's
 6. At once: Routing rules > Catch-all address > Send to a Worker > the cmail
    email Worker, enabled.
 7. Settings > Subdomains: add `standby.<domain>` and the probe's literal rule
-   (`docs/standby-probe.md`, after PR 109 merges).
+   ([standby probe](standby-probe.md)).
 8. Send a test from an outside mailbox (another provider) to a real person;
    it should appear in cmail.
 

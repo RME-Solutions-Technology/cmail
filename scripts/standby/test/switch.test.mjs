@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { D1_ID, DOMAIN, TEST_TOKEN, WORKER, exchangeMx } from './mock-cloudflare.mjs';
+import { ACCOUNT_ID, D1_ID, DOMAIN, TEST_TOKEN, WORKER, exchangeMx } from './mock-cloudflare.mjs';
+import { runSwitch } from '../switch.mjs';
 import { newMock, run, snapshotFiles, tempDir } from './harness.mjs';
 
 const base = (dir) => ['--domain', DOMAIN, '--worker', WORKER, '--snapshot-dir', dir];
@@ -243,6 +244,8 @@ test('already switched: nothing to do', async (t) => {
   const dir = await tempDir(t);
   const mock = newMock((s) => {
     s.records[0] = { ...exchangeMx(), content: 'route1.mx.cloudflare.net', priority: 13 };
+    s.records.push({ ...exchangeMx(), content: 'route2.mx.cloudflare.net', priority: 24 });
+    s.records.push({ ...exchangeMx(), content: 'route3.mx.cloudflare.net', priority: 86 });
   });
   const result = await run('switch', [...withProbe(dir), '--apply'], { mock, answer: DOMAIN });
   assert.equal(result.code, 0, result.text);
@@ -437,4 +440,42 @@ test('input checks', async (t) => {
   assert.equal(noToken.code, 1);
   assert.match(noToken.text, /CLOUDFLARE_API_TOKEN/);
   assert.equal(mock.calls.length, 0);
+});
+
+test('an unexpected error after the batch was sent is exit 3 with the undo command', async (t) => {
+  const dir = await tempDir(t);
+  const mock = newMock();
+  const lines = [];
+  let thrown = false;
+  const deps = {
+    env: { CLOUDFLARE_API_TOKEN: TEST_TOKEN, CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID },
+    fetch: mock.fetch,
+    now: () => new Date(mock.now),
+    sleep: async () => {},
+    prompt: async () => DOMAIN,
+    out: (line) => {
+      if (!thrown && line === 'Applied the DNS batch.') { thrown = true; throw new TypeError('boom'); }
+      lines.push(line);
+    },
+  };
+  const code = await runSwitch([...withProbe(dir), '--apply'], deps);
+  assert.equal(code, 3, lines.join('\n'));
+  assert.match(lines.join('\n'), /switch-back\.mjs --domain example\.com --snapshot ".*-switch-apply\.json"/);
+});
+
+test('already pointing at Cloudflare, but not at the MX Cloudflare lists: refused', async (t) => {
+  const mock = newMock((s) => { s.records[0] = { ...exchangeMx(), content: 'route9.mx.cloudflare.net', priority: 5 }; });
+  const result = await run('switch', withProbe(await tempDir(t)), { mock });
+  assert.equal(result.code, 1);
+  assert.match(result.text, /not at the MX records Cloudflare lists/);
+});
+
+test('a never-enabled zone whose settings call errors still gets its dry-run snapshot', async (t) => {
+  const dir = await tempDir(t);
+  const mock = newMock();
+  mock.errorFor.set(`GET /zones/${mock.zones[0].id}/email/routing`, { status: 404, code: 1000, message: 'not found' });
+  const result = await run('switch', base(dir), { mock });
+  assert.equal(result.code, 1);
+  assert.match(result.text, /Email Routing is not enabled/);
+  assert.equal((await snapshotFiles(dir)).length, 1);
 });

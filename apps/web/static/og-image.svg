@@ -89,6 +89,6 @@
 
   <g transform="translate(60 582)" font-family="'Segoe UI', system-ui, sans-serif" font-size="18" fill="#5A8AB5">
     <text x="0" y="0">github.com/RME-Solutions-Technology/cmail</text>
-    <text x="1080" y="0" text-anchor="end">MIT licensed</text>
+    <text x="1080" y="0" text-anchor="end">Apache 2.0 licensed</text>
   </g>
 </svg>

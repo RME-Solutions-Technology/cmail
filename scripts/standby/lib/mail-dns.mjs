@@ -385,6 +385,32 @@ function planSpfRestore(snapshot, mail) {
 }
 
 /**
+ * Compares the apex SPF as it will be after switch-back with the snapshot's
+ * original. Anything different (for example an SPF record Cloudflare's
+ * onboarding added, or a hand edit) is returned as warnings with the exact
+ * manual fix; switch-back never changes SPF beyond undoing its own edit.
+ */
+export function spfDrift(domain, snapshotSpf, currentSpf, patch) {
+  const after = currentSpf.map((r) => (patch && r.id === patch.id ? patch.content : r.content));
+  const before = snapshotSpf.map((r) => r.content);
+  const extra = [...after];
+  const missing = [];
+  for (const content of before) {
+    const index = extra.indexOf(content);
+    if (index >= 0) extra.splice(index, 1);
+    else missing.push(content);
+  }
+  const lines = [];
+  for (const content of extra) {
+    lines.push(`SPF differs from before the switch: TXT ${domain} ${content} was not there (Cloudflare onboarding adds an SPF record when none existed; or it was edited by hand). Fix by hand: DNS > Records > that TXT record: ${missing.length ? 'edit it' : 'delete it'}.`);
+  }
+  for (const content of missing) {
+    lines.push(`Original SPF to restore by hand: TXT ${domain} with content exactly ${content}`);
+  }
+  return lines;
+}
+
+/**
  * The apex as it will be after the switch's batch, for checking before the
  * switch that switch-back would accept the snapshot and restore the originals.
  */

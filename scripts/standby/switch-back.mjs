@@ -8,7 +8,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClient } from './lib/cloudflare.mjs';
-import { checkZone, classifyMailRecords, normaliseDomain, planSwitchBack, verifyMx } from './lib/mail-dns.mjs';
+import { checkZone, classifyMailRecords, normaliseDomain, planSwitchBack, spfDrift, verifyMx } from './lib/mail-dns.mjs';
 import { DEFAULT_SNAPSHOT_DIR, readSnapshot, writeResult, writeSnapshot } from './lib/snapshot.mjs';
 import {
   EXIT,
@@ -19,6 +19,7 @@ import {
   realDeps,
   refuseApplyInCi,
   reportFailure,
+  reportUnknownAfterWrite,
   rereadWithRetry,
   token,
 } from './lib/cli.mjs';
@@ -116,6 +117,9 @@ function standbyMailAdvice(out, snapshot, now) {
 export async function runSwitchBack(argv, deps) {
   const { out } = deps;
   let redact = (text) => text;
+  // Once an unlock or the batch has been sent, no error may be reported as "nothing changed".
+  let writesStarted = false;
+  let redo = null;
   try {
     const opts = parse(argv);
     if (opts.help) {
@@ -166,6 +170,7 @@ export async function runSwitchBack(argv, deps) {
       out('');
       out('The apex MX records already match the snapshot. Nothing to do.');
       if (plan.spf.action === 'leave') out(`  ! ${plan.spf.note}`);
+      for (const line of spfDrift(opts.domain, snapshot.records.apexSpf, mail.apexSpf, null)) out(`  ! ${line}`);
       return EXIT.DONE;
     }
 
@@ -177,6 +182,8 @@ export async function runSwitchBack(argv, deps) {
     for (const r of plan.describe.posts) out(`  + add     ${formatRecord(r)}`);
     if (plan.describe.spf) out(`  ~ edit    TXT ${opts.domain} SPF\n      from ${plan.describe.spf.before}\n      to   ${plan.describe.spf.after}`);
     out(`  SPF: ${plan.spf.note}`);
+    const drift = spfDrift(opts.domain, snapshot.records.apexSpf, mail.apexSpf, plan.spf.action === 'edit' ? plan.spf.patch : null);
+    for (const line of drift) out(`  ! ${line}`);
     out('  Restored: host, priority, TTL and comment of each original MX record (tags and record ids are not restored).');
     out('  Routing rules, the catch-all, the standby subdomain and Email Routing itself are left as they are.');
 
@@ -208,10 +215,11 @@ export async function runSwitchBack(argv, deps) {
       plan: { fromSnapshot: resolve(opts.snapshot) },
     });
     out(`This run's snapshot (records before switch-back): ${ownSnapshot}`);
-    const redo = `node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${resolve(opts.snapshot)}"${snapshot.kind === 'apply' ? '' : ' --allow-dry-run-snapshot'}`;
+    redo = `node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${resolve(opts.snapshot)}"${snapshot.kind === 'apply' ? '' : ' --allow-dry-run-snapshot'}`;
 
     // From here on something may change: never report "nothing changed" unless it is certain.
     let unlockState = 'none';
+    writesStarted = true;
     if (unlock) {
       try {
         await client.unlockEmailRoutingDns(zone.id);
@@ -241,6 +249,9 @@ export async function runSwitchBack(argv, deps) {
           return EXIT.UNKNOWN;
         }
         out('Nothing was changed.');
+        if (!unlock && !opts.skipUnlock && settings?.enabled === true) {
+          out(`If Cloudflare says the records are locked (status was "${settings.status}"), unlock them in Email Routing > Settings > DNS records, then run again with --skip-unlock.`);
+        }
         return EXIT.NOTHING_CHANGED;
       }
       out('');
@@ -294,6 +305,7 @@ export async function runSwitchBack(argv, deps) {
     out('Done. Verify with docs/standby-switch.md, "Switch back", step 3.');
     return EXIT.DONE;
   } catch (error) {
+    if (writesStarted) return reportUnknownAfterWrite(error, out, redact, redo);
     return reportFailure(error, out, redact);
   }
 }

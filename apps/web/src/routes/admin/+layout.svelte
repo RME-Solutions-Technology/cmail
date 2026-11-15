@@ -33,6 +33,7 @@
         { href: '/admin/trace', label: 'Mail trace', description: 'Delivery diagnostics', icon: 'activity' },
         { href: '/admin/quarantine', label: 'Quarantine', description: 'Spam review and sender rules', icon: 'junk' },
         { href: '/admin/copy-back', label: 'Copy back to Exchange', description: 'After a standby outage', icon: 'outbound' },
+        { href: '/admin/standby', label: 'Standby test', description: 'Standby address and daily test', icon: 'clock' },
       ],
     },
     {
@@ -147,7 +148,7 @@
         Simple email management for small, distributed organisations.
       </span>
       <span class="product-meta">
-        <a href="/help/standards">Standards &amp; assurance</a> · MIT open source
+        <a href="/help/standards">Standards &amp; assurance</a> · Apache-2.0 open source
       </span>
     </div>
   {/snippet}

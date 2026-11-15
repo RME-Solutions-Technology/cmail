@@ -51,7 +51,7 @@ A **Worker** with four handlers in `src/index.ts`:
 | `email()` | Receives mail from Email Routing. See [How receiving works](receiving.md) |
 | `fetch()` | Only `POST /internal/send`, reachable only over the service binding. See [How sending works](sending.md) |
 | `queue()` | Optional. Delivery events. See [Delivery status and bounces](delivery-and-bounces.md) |
-| `scheduled()` | Retention at `17 3 * * *` (when `RETENTION_JOBS_ENABLED="true"`), the link blocklist refresh at `7 * * * *`, and the optional [Microsoft 365 sync](m365-sync.md) at `*/15 * * * *` (returns at once unless a manager turned it on) |
+| `scheduled()` | Retention at `17 3 * * *` (when `RETENTION_JOBS_ENABLED="true"`), the link blocklist refresh at `7 * * * *`, the optional [Microsoft 365 sync](m365-sync.md) at `*/15 * * * *` and the optional [standby probe](standby-probe.md) at `*/10 * * * *` (each returns at once unless a manager turned it on) |
 
 Bindings: `DB`, `STORAGE`, `[[send_email]] name = "EMAIL"`, three rate-limit
 bindings (they only record activity, and never block mail), and the optional
@@ -109,8 +109,11 @@ Check Cloudflare's current plan limits and prices before choosing a plan.
 
 ## Database migrations
 
-There are 22 forward-only migrations in `packages/shared/migrations/`, from
-`0001_initial.sql` to `0022_m365_sync.sql`. There are no down
+There are 24 forward-only migrations in `packages/shared/migrations/`, from
+`0001_initial.sql` to `0024_standby_copyback.sql`. `0023_standby_probe.sql`
+was merged after `0024`; `wrangler d1 migrations apply` still applies it on
+a database that already has `0024`, because it applies every file not yet
+listed in `d1_migrations`. There are no down
 migrations, so roll back with a backup or Time Travel.
 
 | Command | Does |

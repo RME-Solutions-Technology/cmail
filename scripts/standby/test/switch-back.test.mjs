@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { D1_ID, DOMAIN, WORKER } from './mock-cloudflare.mjs';
+import { D1_ID, DOMAIN, TEST_TOKEN, WORKER } from './mock-cloudflare.mjs';
+import { runSwitchBack } from '../switch-back.mjs';
 import { newMock, run, snapshotFiles, tempDir } from './harness.mjs';
 
 /** Switches a fresh mock for real (against the mock) and returns it with the apply snapshot. */
@@ -209,6 +210,7 @@ test('unlock: only when the status says locked; a refused unlock is tolerated; -
   assert.equal(rb.code, 1, rb.text);
   assert.ok(!b.mock.writes().some((w) => w.method === 'PATCH'));
   assert.match(rb.text, /Nothing was changed/);
+  assert.match(rb.text, /unlock them in Email Routing > Settings > DNS records, then run again with --skip-unlock/);
 
   // --skip-unlock never calls unlock, even when the status says locked.
   const c = await switched(t);
@@ -240,4 +242,39 @@ test('switch-back batch with no clear answer is exit 3 with the command to finis
     assert.match(result.text, pattern);
     assert.match(result.text, /switch-back\.mjs --domain example\.com --snapshot ".*-switch-apply\.json"/);
   }
+});
+test('warns, with the manual fix, when SPF differs from the snapshot (onboarding added one)', async (t) => {
+  const dir = await tempDir(t);
+  const mock = newMock((s) => { s.settings = { enabled: false, status: 'unconfigured' }; s.records.splice(1, 1); });
+  await run('switch', ['--domain', DOMAIN, '--worker', WORKER, '--snapshot-dir', dir], { mock });
+  const snapshot = join(dir, (await snapshotFiles(dir))[0]);
+  for (const [id, record] of mock.records) if (record.name === DOMAIN && record.type === 'MX') mock.records.delete(id);
+  mock.add({ type: 'MX', name: DOMAIN, content: 'route1.mx.cloudflare.net', priority: 13, ttl: 1 });
+  mock.add({ type: 'TXT', name: DOMAIN, content: '"v=spf1 include:_spf.mx.cloudflare.net ~all"', ttl: 1 });
+  mock.settings = { enabled: true, status: 'unlocked' };
+  const result = await run('switch-back', [...back(dir, snapshot), '--allow-dry-run-snapshot'], { mock });
+  assert.equal(result.code, 0, result.text);
+  assert.match(result.text, /SPF differs from before the switch: TXT example\.com "v=spf1 include:_spf\.mx\.cloudflare\.net ~all" was not there/);
+  assert.match(result.text, /delete it/);
+});
+
+test('an unexpected error after the batch was sent is exit 3, never exit 1', async (t) => {
+  const { dir, mock, snapshot } = await switched(t);
+  const lines = [];
+  let thrown = false;
+  const deps = {
+    env: { CLOUDFLARE_API_TOKEN: TEST_TOKEN },
+    fetch: mock.fetch,
+    now: () => new Date(mock.now),
+    sleep: async () => {},
+    prompt: async () => DOMAIN,
+    out: (line) => {
+      if (!thrown && line === 'Applied the DNS batch.') { thrown = true; throw new TypeError('boom'); }
+      lines.push(line);
+    },
+  };
+  const code = await runSwitchBack([...back(dir, snapshot), '--apply'], deps);
+  assert.equal(code, 3, lines.join('\n'));
+  assert.match(lines.join('\n'), /OUTCOME UNKNOWN: an error after the DNS change was sent/);
+  assert.match(lines.join('\n'), /switch-back\.mjs --domain example\.com --snapshot/);
 });

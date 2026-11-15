@@ -38,6 +38,7 @@ import {
   realDeps,
   refuseApplyInCi,
   reportFailure,
+  reportUnknownAfterWrite,
   rereadWithRetry,
   token,
 } from './lib/cli.mjs';
@@ -129,11 +130,14 @@ async function readMailRecords(client, zoneId, domain, standbyLabel) {
 /**
  * @param {string[]} argv
  * @param {ReturnType<typeof realDeps>} deps
- * @returns {Promise<number>} exit code: 0 done, 1 refused or failed, 2 applied but not as expected
+ * @returns {Promise<number>} EXIT in lib/cli.mjs: 0 done, 1 nothing changed, 2 applied but not as planned, 3 outcome unknown
  */
 export async function runSwitch(argv, deps) {
   const { out } = deps;
   let redact = (text) => text;
+  // Once the batch has been sent, no error may be reported as "nothing changed".
+  let writesStarted = false;
+  let undo = null;
   try {
     const opts = parse(argv);
     if (opts.help) {
@@ -156,7 +160,15 @@ export async function runSwitch(argv, deps) {
     const problems = [];
     const warnings = [];
 
-    const settings = await client.emailRoutingSettings(zone.id);
+    // Guarded: a zone where Email Routing was never enabled may answer with an
+    // error, and the dry run must still save the snapshot First-time setup needs.
+    let settings = null;
+    try {
+      settings = await client.emailRoutingSettings(zone.id);
+    } catch (error) {
+      if (!(error instanceof CloudflareError)) throw error;
+      warnings.push(`Could not read Email Routing settings (${error.message}).`);
+    }
     out(`Email Routing: ${settings?.enabled === true ? 'enabled' : 'not enabled'}, status ${settings?.status ?? 'unknown'}`);
     const routing = checkEmailRouting(settings);
     if (!routing.ok) problems.push(routing.error);
@@ -245,6 +257,9 @@ export async function runSwitch(argv, deps) {
     if (plan && !plan.ok) problems.push(plan.error);
 
     if (plan?.ok && plan.nothingToDo) {
+      if (target.ok && !verifyMx(mail, target.mx).ok) {
+        problems.push(`The apex points at Cloudflare, but not at the MX records Cloudflare lists (${target.mx.map((m) => `${m.priority} ${m.content}`).join(', ')}). Compare them in Email Routing > Settings > DNS records and fix by hand.`);
+      }
       out('');
       out(plan.note);
       out('Nothing to do. Use switch-back.mjs with the snapshot from before the switch to return mail to the other provider.');
@@ -322,7 +337,8 @@ export async function runSwitch(argv, deps) {
       throw new Refusal(`The rollback snapshot failed its check (${proof.error}); it was removed.`);
     }
     out(`Rollback snapshot saved and checked (keep it private, not in git): ${snapshotFile}`);
-    const undo = `node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${snapshotFile}"`;
+    undo = `node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${snapshotFile}"`;
+    writesStarted = true;
 
     try {
       await client.batchRecords(zone.id, plan.batch);
@@ -372,6 +388,7 @@ export async function runSwitch(argv, deps) {
     out(`To switch back: ${undo}`);
     return EXIT.DONE;
   } catch (error) {
+    if (writesStarted) return reportUnknownAfterWrite(error, out, redact, undo);
     return reportFailure(error, out, redact);
   }
 }
@@ -402,9 +419,10 @@ async function unknownOutcome({ deps, out, redact, error, client, zone, opts, ta
     const applied = verifyMx(now, target.mx).ok;
     const untouched = now.apexMx.every((r) => !isCloudflareMxHost(r.content));
     out(applied ? 'It looks APPLIED: the apex MX are Cloudflare\'s.' : untouched ? 'It looks NOT applied: the apex MX are unchanged.' : 'The apex MX are in neither state. Check the dashboard now.');
-    await writeResult(snapshotFile, { applied: applied ? 'apparently' : untouched ? false : 'unknown', at: deps.now().toISOString(), apexMx: now.apexMx, apexSpf: now.apexSpf }).catch(() => {});
+    await writeResult(snapshotFile, { applied: 'unknown', looks: applied ? 'applied' : untouched ? 'not applied' : 'mixed', at: deps.now().toISOString(), apexMx: now.apexMx, apexSpf: now.apexSpf }).catch(() => {});
   } else {
     out('  The records could not be read. Check DNS > Records in the dashboard now.');
+    await writeResult(snapshotFile, { applied: 'unknown', at: deps.now().toISOString() }).catch(() => {});
   }
   out(`Snapshot: ${snapshotFile}`);
   out('To undo (safe whatever the state; run without --apply first to see what it would do):');
