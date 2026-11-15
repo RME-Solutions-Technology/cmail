@@ -57,7 +57,8 @@ describe.skipIf(!hasPwsh)('collect.ps1 harness (mocked cmdlets)', () => {
       });
       expect(parsed.ok).toBe(true);
       if (parsed.ok) {
-        expect(parsed.snapshot.mailboxes).toHaveLength(3);
+        expect(parsed.snapshot.mailboxes).toHaveLength(4);
+        expect(parsed.snapshot.mailboxes.find((mailbox) => mailbox.address === 'legal@example.test')).toMatchObject({ complete: false, grants: [] });
         expect(parsed.snapshot.mailboxes.find((mailbox) => mailbox.address === 'support@example.test')?.complete).toBe(false);
       }
     } finally {

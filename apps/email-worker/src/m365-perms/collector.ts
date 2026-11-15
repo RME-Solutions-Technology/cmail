@@ -16,7 +16,7 @@
 //
 // The class is a plain Durable Object (fetch + alarm, no RPC) so the Worker
 // bundle needs no `cloudflare:workers` import.
-import type { M365PermsEnv } from '@cmail/shared/m365-perms';
+import { loadM365PermsSwitch, type M365PermsEnv } from '@cmail/shared/m365-perms';
 import { SNAPSHOT_MAX_BYTES } from './snapshot';
 
 const COLLECTOR_NAME = 'm365-perms-collector';
@@ -151,8 +151,13 @@ export async function runCollector(container: CollectorContainer | undefined, en
 }
 
 /** The collector Durable Object. Bound as M365_PERMS_COLLECTOR. */
+/** The Worker's own bindings, which the Durable Object shares. */
+export interface CollectorEnv extends M365PermsEnv {
+  DB?: D1Database;
+}
+
 export class M365PermsCollector implements DurableObject {
-  constructor(private readonly state: DurableObjectState, private readonly env: M365PermsEnv) {}
+  constructor(private readonly state: DurableObjectState, private readonly env: CollectorEnv) {}
 
   private async run(): Promise<RunRecord | null> {
     return (await this.state.storage.get<RunRecord>('run')) ?? null;
@@ -219,6 +224,18 @@ export class M365PermsCollector implements DurableObject {
   async alarm(): Promise<void> {
     const record = await this.run();
     if (!record || record.status !== 'running') return;
+    // Switched off since the run was requested (or a retried alarm after it
+    // was): no container, no Microsoft call.
+    let enabled = false;
+    try {
+      enabled = this.env.DB ? (await loadM365PermsSwitch(this.env.DB)).enabled : false;
+    } catch {
+      enabled = false;
+    }
+    if (!enabled) {
+      await this.state.storage.put('run', { ...record, status: 'failed', finishedAt: Date.now(), code: 'switched_off' });
+      return;
+    }
     const outcome = await runCollector(this.state.container as CollectorContainer | undefined, this.env, record.cursor);
     // Only finish the run this alarm started (a newer /begin may have replaced it).
     const latest = await this.run();

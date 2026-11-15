@@ -19,7 +19,8 @@ gives people access to those shared mailboxes the way Exchange does.
   mailboxes, the Microsoft 365 sync) is not touched either way. A test proves
   the whole database is byte-for-byte unchanged while the switch is off.
 - **Dry run first.** Turning it on starts in dry run: each run reports what
-  it would change and writes nothing but its own status.
+  it would change and writes nothing but its own status (and a temporary
+  list of group members, cleared when the run ends).
 - **Read-only toward Microsoft.** A small PowerShell collector in a Cloudflare
   Container signs in to Exchange Online app-only with a certificate and runs
   four `Get-` cmdlets. Write cmdlets are refused by the script itself and
@@ -101,10 +102,13 @@ folders, archive, delete). The rule is **never more than Exchange grants**.
 | Full Access only | Read (or Full with `M365_PERMS_FULLACCESS_IMPLIES_SEND = "true"`) | `add` |
 | Send As only | nothing (cmail Send as would add reading) | `not_representable` |
 | Send on Behalf | not read (cmail has no on-behalf sending) | — |
-| Inherited, Deny, `NT AUTHORITY\…`, bare SIDs (deleted accounts) | skipped | snapshot `skipped` counts |
+| Inherited, `NT AUTHORITY\…`, bare SIDs (deleted accounts) | skipped | snapshot `skipped` counts |
+| Any Deny entry on the mailbox (Full Access or Send As) | the whole mailbox is left as it is: no additions, no removals (Exchange applies Deny over group grants; cmail cannot model that) | `deny_entries`, `mailboxNotCovered` |
+| An address the Worker would refuse (for example non-ASCII) | that mailbox is left out of the snapshot and left as it is | `mailbox_address_unsupported` |
 | A room, equipment or shared mailbox as trustee, a contact | skipped | `otherKind` |
 | A trustee not linked to a cmail person by the Microsoft 365 sync | skipped | `trusteeNotLinked` |
-| A paused, offboarded or out-of-scope person | no new access (existing sync-made access follows Exchange) | `account_not_active` |
+| A paused, offboarded or out-of-scope person | no new or raised access (existing sync-made access can still be lowered or removed when Exchange takes it away) | `account_not_active` |
+| A person whose Microsoft 365 link is gone | nothing removed (a lost link is not Exchange taking access away) | — |
 | A shared mailbox the Microsoft 365 sync has not linked yet | skipped until linked | `mailboxNotLinked` |
 
 Mapping is by Entra object id only (Exchange `ExternalDirectoryObjectId`, the
@@ -119,7 +123,9 @@ count as not fully read (no removals there).
 ## Safety rules
 
 1. **Off means off.** See "In short". Turning it off mid-run stops before the
-   next write; assignments stay as they are.
+   next write; assignments stay as they are. The collector object also reads
+   the switch before it starts the container, so a collection requested just
+   before the switch went off does not run (`switched_off`).
 2. **Ownership ledger.** Every assignment the sync writes gets a row in
    `m365_perm_ledger` with the level and an exact `assigned_at` marker in
    millisecond precision (every other writer stamps `datetime('now')`, which
@@ -130,7 +136,12 @@ count as not fully read (no removals there).
    marker or with an `assigned_by` (Admin > Mailboxes re-assign does both).
    From then on the row is the manager's and the sync never touches it, even
    if Exchange no longer grants it. Exchange granting more than a manager set
-   is reported as `manager_kept`, never applied.
+   is reported as `manager_kept`, never applied. Re-saving a sync-made row in
+   Admin > Mailboxes at the same level also hands it to the manager.
+   **A manager's removal sticks:** deleting a sync-made assignment records the
+   pair in `m365_perm_released`, and the sync does not give it back while
+   Exchange still grants it (`manager_removed`). Once Exchange stops granting
+   it, the mark is cleared, so a later new grant in Exchange counts again.
 4. **Guarded writes.** Each change is one D1 batch with its audit row
    (`mailbox.assigned`, `mailbox.permission_changed`, `mailbox.unassigned`,
    actor `system`). Every statement re-checks what the diff read, so a
@@ -149,7 +160,9 @@ count as not fully read (no removals there).
    - Exchange lists no shared mailboxes at all while the sync owns grants:
      **never approvable** (a wrong tenant or a lost role, not "nobody has
      access").
-   Approve applies to that exact round only. **Discard and collect again**
+   Approve applies to that exact round and to exactly the removals and
+   downgrades listed when it was held (up to 5,000; any beyond wait for the
+   next round), never to new ones found later. **Discard and collect again**
    (or Sync access now) drops it. A held round expires after 30 hours, so a
    snapshot older than 36 hours is never applied.
 8. **Strict snapshot validation.** Exact keys, versions, GUIDs, addresses,
@@ -369,7 +382,7 @@ change the two `ARG`s, rebuild, run the harness (below) and a dry run.
 
 ### 7. Database
 
-Apply migration `0028` (additive: three tables, two triggers) with
+Apply migration `0028` (additive: four tables, two triggers) with
 `pnpm db:migrate` after the owner's yes. Deploy the email Worker, then the
 web app.
 

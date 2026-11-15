@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COLLECT_DEADLINE_SECONDS, runCollector, scriptEnv, type CollectorContainer } from './collector';
+import { COLLECT_DEADLINE_SECONDS, M365PermsCollector, runCollector, scriptEnv, type CollectorContainer } from './collector';
 
 const env = {
   M365_TENANT_ID: '00000000-0000-0000-0000-000000000000',
@@ -75,5 +75,58 @@ describe('collector container run', () => {
   it('passes only a GUID cursor', () => {
     expect(scriptEnv(env, 'x; rm -rf /').CMAIL_START_AFTER).toBe('');
     expect(scriptEnv(env, '00000000-0000-0000-aaaa-000000000001').CMAIL_START_AFTER).toBe('00000000-0000-0000-aaaa-000000000001');
+  });
+});
+
+describe('collector Durable Object', () => {
+  function fakeState(container?: CollectorContainer) {
+    const store = new Map<string, unknown>();
+    let alarm: number | null = null;
+    const storage = {
+      async get(keyOrKeys: string | string[]) {
+        if (Array.isArray(keyOrKeys)) return new Map(keyOrKeys.filter((k) => store.has(k)).map((k) => [k, store.get(k)]));
+        return store.get(keyOrKeys);
+      },
+      async put(keyOrEntries: string | Record<string, unknown>, value?: unknown) {
+        if (typeof keyOrEntries === 'string') store.set(keyOrEntries, value);
+        else for (const [k, v] of Object.entries(keyOrEntries)) store.set(k, v);
+      },
+      async delete(keyOrKeys: string | string[]) { for (const k of Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys]) store.delete(k); },
+      async setAlarm(at: number) { alarm = at; },
+    };
+    return { state: { storage, container } as unknown as DurableObjectState, alarm: () => alarm };
+  }
+  const switchDb = (enabled: boolean) => ({
+    prepare: () => ({ bind: () => ({ all: async () => ({ results: enabled ? [{ key: 'm365_perms_enabled', value: 'true' }] : [] }) }) }),
+  }) as unknown as D1Database;
+  const begin = (object: M365PermsCollector, runId = 'round-1') => object.fetch(new Request('https://m365-perms-collector.internal/begin', { method: 'POST', body: JSON.stringify({ runId, cursor: '' }) }));
+  const result = async (object: M365PermsCollector, runId = 'round-1') => {
+    const response = await object.fetch(new Request(`https://m365-perms-collector.internal/result?runId=${runId}`));
+    return response.headers.get('x-collector-status') === 'done' ? { status: 'done', text: await response.text() } : response.json();
+  };
+
+  it('starts nothing when the switch was turned off before the alarm ran', async () => {
+    const fake = fakeContainer({ exit: 0, files: { '/tmp/cmail-out/result.json': '{}' } });
+    const { state, alarm } = fakeState(fake.container);
+    const object = new M365PermsCollector(state, { ...env, DB: switchDb(false) });
+    expect((await begin(object)).status).toBe(202);
+    expect(alarm()).not.toBeNull();
+    await object.alarm();
+    expect(fake.starts).toEqual([]);
+    expect(fake.log).toEqual([]);
+    expect(await result(object)).toEqual({ status: 'failed', code: 'switched_off' });
+  });
+
+  it('runs once when on, stores the snapshot in chunks and hands it back for that run id only', async () => {
+    const fake = fakeContainer({ exit: 0, files: { '/tmp/cmail-out/result.json': '{"snapshot":true}' } });
+    const { state } = fakeState(fake.container);
+    const object = new M365PermsCollector(state, { ...env, DB: switchDb(true) });
+    await begin(object);
+    expect(await result(object)).toEqual({ status: 'running' });
+    expect((await begin(object, 'round-2')).status).toBe(409);
+    await object.alarm();
+    expect(fake.starts).toHaveLength(1);
+    expect(await result(object)).toEqual({ status: 'done', text: '{"snapshot":true}' });
+    expect(await result(object, 'round-9')).toEqual({ status: 'unknown' });
   });
 });

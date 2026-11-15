@@ -45,8 +45,12 @@ export interface DiffInput {
   personLinks: Map<string, PersonLink>;
   /** Expanded group members (user object ids) by group object id. */
   groupMembers: Map<string, Set<string>>;
+  /** Groups expanded this round (even when empty). Any other group leaves its mailboxes not covered. */
+  expandedGroups: Set<string>;
   /** Groups that could not be expanded: mailboxes granting them are not covered. */
   failedGroups: Set<string>;
+  /** `${mailboxId}|${userId}` pairs whose sync-made access a manager removed: never given back while Exchange grants it. */
+  released: Set<string>;
   /** `${mailboxId}|${userId}` -> live assignment, for linked shared mailboxes. */
   assignments: Map<string, LiveAssignment>;
   /** `${mailboxId}|${userId}` -> ledger row. */
@@ -59,7 +63,9 @@ export type DiffOp =
   | { type: 'upgrade' | 'downgrade'; mailboxId: string; userId: string; from: CmailLevel; level: CmailLevel; marker: string; rights: number; mailbox: string; user: string }
   | { type: 'remove'; mailboxId: string; userId: string; from: CmailLevel; marker: string; mailbox: string; user: string }
   /** Ledger row whose assignment is no longer the sync's: forget it (no assignment change). */
-  | { type: 'release'; mailboxId: string; userId: string; mailbox: string; user: string };
+  | { type: 'release'; mailboxId: string; userId: string; mailbox: string; user: string }
+  /** Exchange no longer grants a pair a manager had removed: forget that mark (no assignment change). */
+  | { type: 'unblock'; mailboxId: string; userId: string; mailbox: string; user: string };
 
 export interface DiffResult {
   ops: DiffOp[];
@@ -113,12 +119,11 @@ export function computeDiff(input: DiffInput): DiffResult {
       const rights = (grant.fullAccess ? RIGHT_FULL_ACCESS : 0) | (grant.sendAs ? RIGHT_SEND_AS : 0);
       let members: Iterable<string>;
       if (grant.kind === 'group') {
-        const expanded = input.groupMembers.get(grant.trustee);
-        if (!expanded || input.failedGroups.has(grant.trustee)) {
+        if (!input.expandedGroups.has(grant.trustee) || input.failedGroups.has(grant.trustee)) {
           covered = false;
           continue;
         }
-        members = expanded;
+        members = input.groupMembers.get(grant.trustee) ?? [];
       } else {
         members = [grant.trustee];
       }
@@ -156,6 +161,11 @@ export function computeDiff(input: DiffInput): DiffResult {
       continue;
     }
     if (!live) {
+      if (input.released.has(k)) {
+        // A manager removed the access the sync gave: it stays removed.
+        note('managerKept', { action: 'manager_removed', mailbox: entry.mailbox, user: entry.user, reason: 'removed_by_manager' });
+        continue;
+      }
       if (!persons.get(entry.userId)?.eligible) {
         note('trusteeNotLinked', { action: 'skipped', mailbox: entry.mailbox, user: entry.user, reason: 'account_not_active' });
         continue;
@@ -177,7 +187,9 @@ export function computeDiff(input: DiffInput): DiffResult {
       continue;
     }
     const raise = LEVEL_RANK[level] > LEVEL_RANK[live.permissions];
-    if (raise) {
+    if (raise && !persons.get(entry.userId)?.eligible) {
+      note('trusteeNotLinked', { action: 'skipped', mailbox: entry.mailbox, user: entry.user, reason: 'account_not_active' });
+    } else if (raise) {
       adds.push({ type: 'upgrade', mailboxId: entry.mailboxId, userId: entry.userId, from: live.permissions, level, marker: live.assignedAt, rights: entry.rights, mailbox: entry.mailbox, user: entry.user });
     } else if (inSnapshot.get(entry.mailboxId)?.covered) {
       lowers.push({ type: 'downgrade', mailboxId: entry.mailboxId, userId: entry.userId, from: live.permissions, level, marker: live.assignedAt, rights: entry.rights, mailbox: entry.mailbox, user: entry.user });
@@ -200,9 +212,22 @@ export function computeDiff(input: DiffInput): DiffResult {
       continue;
     }
     // Exchange no longer grants it (or grants only Send As). Removed only when
-    // the snapshot fully covered this mailbox; otherwise kept for now.
-    if (!mailbox?.covered) continue;
+    // the snapshot fully covered this mailbox, and only for a person still
+    // linked (a lost link is not Exchange taking access away); otherwise kept.
+    if (!mailbox?.covered || !persons.has(userId)) continue;
     lowers.push({ type: 'remove', mailboxId, userId, from: live!.permissions, marker: live!.assignedAt, mailbox: mailbox.address, user });
+  }
+
+  // Manager-removed marks whose grant Exchange has since taken away: forget
+  // them, so a later new grant in Exchange counts again.
+  const unblocks: DiffOp[] = [];
+  for (const k of input.released) {
+    const [mailboxId, userId] = k.split('|');
+    const mailbox = inSnapshot.get(mailboxId);
+    if (!mailbox?.covered) continue;
+    const want = wanted.get(k);
+    if (want && levelFor(want.rights, input.fullAccessImpliesSend)) continue;
+    unblocks.push({ type: 'unblock', mailboxId, userId, mailbox: mailbox.address, user: persons.get(userId)?.email ?? '' });
   }
 
   // Linked shared mailboxes this snapshot did not (fully) cover.
@@ -221,7 +246,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     return true;
   });
 
-  return { ops: [...adds, ...uniqueReleases, ...lowers], counts, report, owned, grants };
+  return { ops: [...adds, ...uniqueReleases, ...unblocks, ...lowers], counts, report, owned, grants };
 }
 
 /**

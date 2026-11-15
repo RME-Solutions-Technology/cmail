@@ -36,6 +36,9 @@ $VerbosePreference = 'SilentlyContinue'
 $script:SchemaName = 'cmail-exo-permissions'
 $script:SchemaVersion = 1
 $script:GuidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+# The same address rule the Worker's validator applies (snapshot.ts), so one
+# unusual address is skipped here instead of rejecting the whole snapshot.
+$script:AddressPattern = '^[a-z0-9.!#$%&''*+/=?^_`{|}~-]{1,64}@(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
 
 # The only Exchange commands this script may run. Get-* only, plus the
 # session commands. Anything else is refused before it is called.
@@ -79,9 +82,10 @@ function Get-ErrorCode {
   # Entra sign-in failures: wrong app, wrong or expired certificate, no consent.
   if ($text -match 'AADSTS(700016|700027|7000215|7000222|50034|90002|500011|65001)') { return 'credentials_rejected' }
   if ($text -match 'is not recognized as (a|the) name of a cmdlet|CommandNotFoundException') { return 'exchange_role_missing' }
+  # "Not found" first: its message may quote an address that looks like a status code.
+  if ($text -match '(?i)couldn.t be found|could not be found|ManagementObjectNotFound') { return 'not_found' }
   if ($text -match '(?i)\b(401|403)\b|Unauthorized|Forbidden|access is denied|isn.t authorized|not authorized') { return 'unauthorized' }
   if ($text -match '(?i)\b429\b|throttl|server busy|too many requests|micro delay') { return 'throttled' }
-  if ($text -match '(?i)couldn.t be found|could not be found|ManagementObjectNotFound') { return 'not_found' }
   return 'exchange_error'
 }
 
@@ -153,8 +157,13 @@ function Get-PermissionSnapshot {
   foreach ($mailbox in $all) {
     $id = "$($mailbox.ExternalDirectoryObjectId)".ToLowerInvariant()
     $address = "$($mailbox.PrimarySmtpAddress)".ToLowerInvariant()
-    if ($id -notmatch $script:GuidPattern -or $address -notmatch '^[^@\s]{1,64}@[^@\s]{1,253}$') {
+    if ($id -notmatch $script:GuidPattern) {
       $errors['mailbox_without_object_id'] = 1 + [int]($errors['mailbox_without_object_id'] ?? 0)
+      continue
+    }
+    if ($address.Length -gt 254 -or $address -cnotmatch $script:AddressPattern) {
+      # Not listed: the Worker keeps that mailbox's assignments as they are.
+      $errors['mailbox_address_unsupported'] = 1 + [int]($errors['mailbox_address_unsupported'] ?? 0)
       continue
     }
     $shared.Add([pscustomobject]@{ Id = $id; Address = $address })
@@ -178,6 +187,7 @@ function Get-PermissionSnapshot {
     if ((Get-Date) -gt $Deadline) { break }
     $mailbox = $ordered[($start + $n) % $total]
     $complete = $true
+    $hasDeny = $false
     $rights = [ordered]@{}
 
     try {
@@ -185,7 +195,7 @@ function Get-PermissionSnapshot {
       foreach ($entry in $fullAccess) {
         if (-not (Test-HasRight $entry.AccessRights 'FullAccess')) { continue }
         if ($entry.IsInherited) { $skipped.inherited++; continue }
-        if ($entry.Deny) { $skipped.deny++; continue }
+        if ($entry.Deny) { $skipped.deny++; $hasDeny = $true; continue }
         $name = "$($entry.User)"
         $skip = Get-TrusteeSkip $name
         if ($skip) { $skipped[$skip]++; if ($skip -eq 'unresolved') { $complete = $false }; continue }
@@ -207,7 +217,7 @@ function Get-PermissionSnapshot {
       foreach ($entry in $sendAs) {
         if (-not (Test-HasRight $entry.AccessRights 'SendAs')) { continue }
         if ($entry.IsInherited) { $skipped.inherited++; continue }
-        if ("$($entry.AccessControlType)" -ne 'Allow') { $skipped.deny++; continue }
+        if ("$($entry.AccessControlType)" -ne 'Allow') { $skipped.deny++; $hasDeny = $true; continue }
         $name = "$($entry.Trustee)"
         $skip = Get-TrusteeSkip $name
         if ($skip) { $skipped[$skip]++; if ($skip -eq 'unresolved') { $complete = $false }; continue }
@@ -225,6 +235,14 @@ function Get-PermissionSnapshot {
     }
 
     $grants = [System.Collections.Generic.List[object]]::new()
+    if ($hasDeny) {
+      # Exchange applies Deny over Allow (also through groups). cmail cannot
+      # model that, so a mailbox with any Deny entry is listed with no grants
+      # and as incomplete: the Worker then neither adds nor removes there.
+      $errors['deny_entries'] = 1 + [int]($errors['deny_entries'] ?? 0)
+      $complete = $false
+      $rights = [ordered]@{}
+    }
     foreach ($trusteeId in $rights.Keys) {
       if ($trusteeId -eq $mailbox.Id) { continue }
       $grant = $rights[$trusteeId]

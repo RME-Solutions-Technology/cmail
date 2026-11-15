@@ -86,6 +86,14 @@ export async function loadLedger(ctx: PermsApplyContext): Promise<Map<string, Le
   return map;
 }
 
+/** Pairs whose sync-made access a manager removed (migration 0028 delete trigger). */
+export async function loadReleased(ctx: PermsApplyContext): Promise<Set<string>> {
+  ctx.ops += 1;
+  const { results } = await ctx.db.prepare('SELECT mailbox_id, user_id FROM m365_perm_released')
+    .all<{ mailbox_id: string; user_id: string }>();
+  return new Set((results ?? []).map((row) => key(row.mailbox_id, row.user_id)));
+}
+
 export async function loadGroupMembers(ctx: PermsApplyContext, roundId: string): Promise<Map<string, Set<string>>> {
   ctx.ops += 1;
   const { results } = await ctx.db.prepare(
@@ -143,7 +151,7 @@ function record(ctx: PermsApplyContext, op: DiffOp, landed: boolean) {
     if (ctx.round.report.length < M365_PERMS_REPORT_LIMIT) ctx.round.report.push({ action: 'conflict', mailbox: op.mailbox, user: op.user, reason: 'changed_concurrently' });
     return;
   }
-  if (op.type === 'release') return;
+  if (op.type === 'release' || op.type === 'unblock') return;
   const countKey = op.type === 'add' ? 'added' : op.type === 'upgrade' ? 'upgraded' : op.type === 'downgrade' ? 'downgraded' : 'removed';
   counts[countKey] += 1;
   if (ctx.round.report.length < M365_PERMS_REPORT_LIMIT) {
@@ -201,8 +209,9 @@ export async function applyOp(ctx: PermsApplyContext, op: DiffOp): Promise<boole
         `UPDATE m365_perm_ledger SET level_written = ?, assigned_at_written = ?, exchange_rights = ?, round_id = ?, written_at = datetime('now')
          WHERE mailbox_id = ? AND user_id = ? AND level_written = ? AND assigned_at_written = ?
            AND EXISTS (SELECT 1 FROM mailbox_assignments a JOIN mailboxes m ON m.id = a.mailbox_id AND m.type = 'shared'
-             WHERE a.mailbox_id = ? AND a.user_id = ? AND a.permissions = ? AND a.assigned_at = ? AND a.assigned_by IS NULL)`,
-      ).bind(op.level, marker, op.rights, ctx.round.id, op.mailboxId, op.userId, op.from, op.marker, op.mailboxId, op.userId, op.from, op.marker),
+             WHERE a.mailbox_id = ? AND a.user_id = ? AND a.permissions = ? AND a.assigned_at = ? AND a.assigned_by IS NULL)
+           AND (? = 'downgrade' OR EXISTS (SELECT 1 FROM users u WHERE u.id = ? AND u.status IN ('active', 'pending')))`,
+      ).bind(op.level, marker, op.rights, ctx.round.id, op.mailboxId, op.userId, op.from, op.marker, op.mailboxId, op.userId, op.from, op.marker, op.type, op.userId),
       db.prepare(
         `UPDATE mailbox_assignments SET permissions = ?, assigned_at = ?
          WHERE mailbox_id = ? AND user_id = ? AND permissions = ? AND assigned_at = ? AND assigned_by IS NULL
@@ -214,18 +223,34 @@ export async function applyOp(ctx: PermsApplyContext, op: DiffOp): Promise<boole
     changeIndex = 1;
   } else if (op.type === 'remove') {
     statements = [
+      // Marked as the sync's own removal first, so the delete trigger does
+      // not record it as a manager's removal.
+      db.prepare(
+        `UPDATE m365_perm_ledger SET removing = 1
+         WHERE mailbox_id = ? AND user_id = ? AND level_written = ? AND assigned_at_written = ?`,
+      ).bind(op.mailboxId, op.userId, op.from, op.marker),
       db.prepare(
         `DELETE FROM mailbox_assignments
          WHERE mailbox_id = ? AND user_id = ? AND permissions = ? AND assigned_at = ? AND assigned_by IS NULL
            AND EXISTS (SELECT 1 FROM mailboxes m WHERE m.id = ? AND m.type = 'shared')
-           AND EXISTS (SELECT 1 FROM m365_perm_ledger WHERE mailbox_id = ? AND user_id = ? AND level_written = ? AND assigned_at_written = ?)`,
+           AND EXISTS (SELECT 1 FROM m365_perm_ledger WHERE mailbox_id = ? AND user_id = ? AND level_written = ? AND assigned_at_written = ? AND removing = 1)`,
       ).bind(op.mailboxId, op.userId, op.from, op.marker, op.mailboxId, op.mailboxId, op.userId, op.from, op.marker),
       // changes() is the previous statement's direct row count (the ledger
       // row the delete trigger removes is not counted).
       audit(db, 'mailbox.unassigned', op.mailboxId,
         `Removed ${op.from} access for account ${op.userId} (Microsoft 365 shared mailbox access sync; Exchange no longer grants Full Access)`,
         { sql: 'changes() > 0', args: [] }),
+      // If the delete did not happen, the ledger row stays and is unmarked again.
+      db.prepare('UPDATE m365_perm_ledger SET removing = 0 WHERE mailbox_id = ? AND user_id = ?').bind(op.mailboxId, op.userId),
     ];
+    changeIndex = 1;
+  } else if (op.type === 'unblock') {
+    statements = [
+      db.prepare('DELETE FROM m365_perm_released WHERE mailbox_id = ? AND user_id = ?').bind(op.mailboxId, op.userId),
+    ];
+    ctx.ops += 1;
+    await db.batch(statements);
+    return true;
   } else {
     statements = [
       db.prepare('DELETE FROM m365_perm_ledger WHERE mailbox_id = ? AND user_id = ?').bind(op.mailboxId, op.userId),

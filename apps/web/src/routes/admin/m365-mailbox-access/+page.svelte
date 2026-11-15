@@ -11,6 +11,7 @@
     downgrade: ['Lowered access', 'Would lower access'],
     remove: ['Removed access', 'Would remove access'],
     manager_kept: ['Set by a manager; left as is', 'Set by a manager; would leave as is'],
+    manager_removed: ['Removed by a manager; not given back', 'Removed by a manager; would not give back'],
     not_representable: ['Send As without Full Access; no cmail equivalent', 'Send As without Full Access; no cmail equivalent'],
     mailbox_not_linked: ['Shared mailbox not in cmail yet', 'Shared mailbox not in cmail yet'],
     skipped: ['Skipped', 'Skipped'],

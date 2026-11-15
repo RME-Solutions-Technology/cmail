@@ -343,18 +343,21 @@ export const actions: Actions = {
         .bind(mailboxAddress).first<Pick<Mailbox, 'id' | 'type'>>(),
       getEligibleMailboxAssignee(env.DB, normalizeDomain(env.MAIL_DOMAIN) || '__invalid__', userId),
       env.DB.prepare(
-        `SELECT ma.permissions
+        `SELECT ma.permissions, ma.assigned_by
          FROM mailbox_assignments ma
          INNER JOIN mailboxes m ON m.id = ma.mailbox_id
          WHERE lower(m.address) = ? AND ma.user_id = ?`,
-      ).bind(mailboxAddress, userId).first<Pick<MailboxAssignment, 'permissions'>>(),
+      ).bind(mailboxAddress, userId).first<Pick<MailboxAssignment, 'permissions'> & { assigned_by: string | null }>(),
     ]);
     if (!mailbox) return fail(404, { error: 'Mailbox not found' });
     if (!user) return fail(409, { error: 'Choose an active or pending account with an active personal mailbox' });
     if (mailbox.type === 'personal') {
       return fail(400, { error: 'Personal mailbox ownership is managed from People and cannot be delegated' });
     }
-    if (existingAssignment?.permissions === permissions) {
+    // A row with no assigning manager (made by the Microsoft 365 shared
+    // mailbox access sync) is re-saved, so the manager takes it over and the
+    // sync never changes it again.
+    if (existingAssignment?.permissions === permissions && existingAssignment.assigned_by !== null) {
       // This is intentionally read-only. Lifecycle cleanup remains
       // authoritative if the account changes after the eligibility read.
       return { success: `${mailboxPermissionLabel(permissions)} is already assigned to this account` };

@@ -17,6 +17,8 @@
 // a round in progress before its next write.
 import {
   M365_PERMS_FAILURE_ALERT,
+  M365_PERMS_REMOVAL_LIMIT,
+  M365_PERMS_REPORT_LIMIT,
   emptyM365PermsCounts,
   loadM365PermsSwitch,
   m365PermsConfig,
@@ -35,6 +37,7 @@ import {
   loadGroupMembers,
   loadLedger,
   loadPersonLinks,
+  loadReleased,
   loadSharedLinks,
   reportOp,
   saveGroupMembers,
@@ -75,6 +78,7 @@ export type M365PermsTickResult =
   | { status: 'failed'; code: string };
 
 const iso = (ms: number) => new Date(ms).toISOString();
+const opKey = (op: DiffOp) => `${op.type}|${op.mailboxId}|${op.userId}`;
 const age = (now: number, at: string | null | undefined) => (at ? now - Date.parse(at) : Number.POSITIVE_INFINITY);
 
 class RoundFailure extends Error {
@@ -96,12 +100,14 @@ function newRound(id: string, mode: M365PermsMode, now: number): M365PermsRound 
     phase: 'collecting',
     startedAt: iso(now),
     groupsPending: [],
+    groupsExpanded: [],
     groupsFailed: [],
     brake: null,
     removalsAllowed: true,
-    removalBudget: 0,
+    removalKeys: [],
     counts: emptyM365PermsCounts(),
     report: [],
+    heldItems: [],
     snapshot: null,
   };
 }
@@ -281,6 +287,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         try {
           const members = await graph.transitiveUserMembers(groupId, Math.max(1, budgets.graph - graph.requests));
           await saveGroupMembers(ctx, round.id, groupId, members);
+          round.groupsExpanded.push(groupId);
         } catch (caught) {
           if (caught instanceof GraphError && caught.code === 'throttled') break;
           round.groupsFailed.push(groupId);
@@ -300,15 +307,17 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
     // diff and apply both work from the stored snapshot, read again each tick.
     const snapshot = await loadSnapshot(env, round.id, expected);
     const diffNow = async () => {
-      const [sharedLinks, personLinks, assignments, ledger, groupMembers] = await Promise.all([
-        loadSharedLinks(ctx), loadPersonLinks(ctx), loadAssignments(ctx), loadLedger(ctx), loadGroupMembers(ctx, round.id),
+      const [sharedLinks, personLinks, assignments, ledger, groupMembers, released] = await Promise.all([
+        loadSharedLinks(ctx), loadPersonLinks(ctx), loadAssignments(ctx), loadLedger(ctx), loadGroupMembers(ctx, round.id), loadReleased(ctx),
       ]);
       return computeDiff({
         snapshot,
         sharedLinks,
         personLinks,
         groupMembers,
+        expandedGroups: new Set(round.groupsExpanded ?? []),
         failedGroups: new Set(round.groupsFailed),
+        released,
         assignments,
         ledger,
         fullAccessImpliesSend: config.fullAccessImpliesSend,
@@ -323,7 +332,13 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       }
       for (const item of diff.report) if (round.report.length < 200) round.report.push(item);
       round.brake = brakeCheck(diff, snapshot, config.maxRemovePercent);
-      round.removalBudget = diff.ops.filter((op) => op.type === 'remove' || op.type === 'downgrade').length;
+      // The exact removals and downgrades decided now; apply (and an approval)
+      // covers these and nothing else.
+      const removals = diff.ops.filter((op) => op.type === 'remove' || op.type === 'downgrade');
+      round.removalKeys = removals.slice(0, M365_PERMS_REMOVAL_LIMIT).map(opKey);
+      round.heldItems = round.brake
+        ? removals.slice(0, M365_PERMS_REPORT_LIMIT).map((op) => ({ action: op.type, mailbox: op.mailbox, user: op.user, reason: 'held_for_approval' }))
+        : [];
       round.removalsAllowed = !round.brake;
       if (round.mode === 'dry_run') {
         // Report only: nothing is written but the status row.
@@ -344,6 +359,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       // Each op is tried at most once per run; one that did not land is
       // counted as changedConcurrently and looked at again by the next round.
       const attempted = new Set<string>();
+      const allowedRemovals = new Set(round.removalKeys ?? []);
       for (;;) {
         // Switched off (or to dry run) since the tick began: stop before writing.
         const live = await loadM365PermsSwitch(db);
@@ -355,19 +371,15 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         }
         const diff = await diffNow();
         const pending = diff.ops.filter((op: DiffOp) => {
-          if (attempted.has(`${op.type}|${op.mailboxId}|${op.userId}`)) return false;
-          if (op.type === 'remove' || op.type === 'downgrade') return round.removalsAllowed && round.removalBudget > 0;
+          if (attempted.has(opKey(op))) return false;
+          if (op.type === 'remove' || op.type === 'downgrade') return round.removalsAllowed && allowedRemovals.has(opKey(op));
           return true;
         });
         if (!pending.length) break;
         let progressed = false;
         for (const op of pending) {
           if (!withinBudget()) break;
-          if (op.type === 'remove' || op.type === 'downgrade') {
-            if (round.removalBudget <= 0) break;
-            round.removalBudget -= 1;
-          }
-          attempted.add(`${op.type}|${op.mailboxId}|${op.userId}`);
+          attempted.add(opKey(op));
           await applyOp(ctx, op);
           progressed = true;
         }
@@ -388,6 +400,12 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       finishRound(state, round, now(), snapshot.nextCursor);
       finished = true;
       await clearGroupMembers(db, null);
+      // Manager-removed marks for mailboxes or accounts that no longer exist.
+      await db.prepare(
+        `DELETE FROM m365_perm_released
+         WHERE NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.id = m365_perm_released.mailbox_id)
+            OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id = m365_perm_released.user_id)`,
+      ).run();
       await discardCollect(namespace, round.id).catch(() => undefined);
     }
 

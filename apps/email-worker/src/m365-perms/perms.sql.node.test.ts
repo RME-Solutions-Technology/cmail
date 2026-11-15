@@ -250,6 +250,33 @@ describe('Mailbox access sync: manager assignments are never touched', () => {
     expect(t.assignments()).toEqual([{ mailbox_id: 'sm1', user_id: 'u1', permissions: 'read', assigned_by: 'mgr' }]);
   });
 
+  it('does not give back access a manager removed while Exchange still grants it, and counts a later new grant again', async () => {
+    const t = setup();
+    const granted = t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]);
+    await t.round(granted);
+    expect(t.assignments()).toHaveLength(1);
+    // The manager removes it in Admin > Mailboxes.
+    t.sqlite.prepare(`DELETE FROM mailbox_assignments WHERE mailbox_id = 'sm1' AND user_id = 'u1'`).run();
+    expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM m365_perm_released').get()).toEqual({ n: 1 });
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    expect(t.assignments()).toEqual([]);
+    expect((await t.state()).lastRound!.report.some((item) => item.action === 'manager_removed')).toBe(true);
+    // Exchange takes it away: the mark is forgotten. A new grant later counts again.
+    await t.round(t.snapshotAt([mailbox(1, [])]));
+    expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM m365_perm_released').get()).toEqual({ n: 0 });
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    expect(t.assignments()).toHaveLength(1);
+  });
+
+  it('a manager re-saving a sync-made row at the same level takes it over', async () => {
+    const t = setup();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    t.managerAssign('sm1', 'u1', 'full');
+    expect(t.ledger()).toEqual([]);
+    await t.round(t.snapshotAt([mailbox(1, [])]));
+    expect(t.assignments()).toEqual([{ mailbox_id: 'sm1', user_id: 'u1', permissions: 'full', assigned_by: 'mgr' }]);
+  });
+
   it('never writes a personal mailbox', async () => {
     const t = setup();
     const before = t.sqlite.prepare(`SELECT * FROM mailbox_assignments WHERE mailbox_id LIKE 'pm%' ORDER BY mailbox_id`).all();
@@ -274,6 +301,31 @@ describe('Mailbox access sync: changes to sync-made rows', () => {
     expect(t.audits('mailbox.permission_changed')).toBe(2);
     expect(t.audits('mailbox.unassigned')).toBe(1);
     expect((await t.state()).lastRound!.counts).toMatchObject({ upgraded: 1, downgraded: 1, removed: 1 });
+  });
+});
+
+describe('Mailbox access sync: link and eligibility rules', () => {
+  it('does not remove access when the person is no longer linked (not an Exchange change)', async () => {
+    const t = setup();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    t.sqlite.prepare(`DELETE FROM m365_sync_links WHERE user_id = 'u1'`).run();
+    await t.round(t.snapshotAt([mailbox(1, [])]));
+    expect(t.assignments()).toHaveLength(1);
+  });
+
+  it('does not raise access for a paused account', async () => {
+    const t = setup();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, false)])]));
+    t.sqlite.prepare(`UPDATE users SET status = 'paused' WHERE id = 'u1'`).run();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    expect(t.assignments()).toEqual([{ mailbox_id: 'sm1', user_id: 'u1', permissions: 'read', assigned_by: null }]);
+  });
+
+  it('treats an empty group as read (the mailbox is covered and stale grants go)', async () => {
+    const t = setup({ groups: { [GROUP(1)]: [] } });
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    await t.round(t.snapshotAt([mailbox(1, [grant(GROUP(1), true, true, 'group')])]));
+    expect(t.assignments()).toEqual([]);
   });
 });
 
@@ -378,6 +430,9 @@ describe('Mailbox access sync: removal brake', () => {
     const held = (await t.state()).round!;
     expect(held.phase).toBe('held');
     expect(held.brake).toMatchObject({ reason: 'too_many_removals', removals: 6 });
+    // Exactly the reviewed removals are recorded and shown.
+    expect(held.removalKeys).toHaveLength(6);
+    expect(held.heldItems).toHaveLength(6);
     // Without approval nothing more happens.
     t.advance(HOUR);
     expect(await t.tick()).toEqual({ status: 'held' });

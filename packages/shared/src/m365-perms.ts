@@ -174,6 +174,8 @@ export const M365_PERMS_REPORT_LIMIT = 200;
 export const M365_PERMS_FAILURE_ALERT = 3;
 /** Removal brake: never held below this many removals plus downgrades. */
 export const M365_PERMS_BRAKE_MIN = 5;
+/** Removals and downgrades one round decides on; any beyond wait for the next round. */
+export const M365_PERMS_REMOVAL_LIMIT = 5_000;
 
 export interface M365PermsBrake {
   /**
@@ -194,16 +196,24 @@ export interface M365PermsRound {
   mode: M365PermsMode;
   phase: M365PermsPhase;
   startedAt: string;
-  /** Group trustee ids still to expand, and those that could not be. */
+  /** Group trustee ids still to expand, those expanded (even if empty), and those that could not be. */
   groupsPending: string[];
+  groupsExpanded: string[];
   groupsFailed: string[];
   brake: M365PermsBrake | null;
   /** False while held: removals and downgrades wait. */
   removalsAllowed: boolean;
-  /** Removals plus downgrades counted when the brake was checked; apply never exceeds it. */
-  removalBudget: number;
+  /**
+   * The removals and downgrades decided when the brake was checked
+   * (`type|mailboxId|userId`, at most M365_PERMS_REMOVAL_LIMIT). Only these
+   * are ever applied in this round, so an approval covers exactly what the
+   * manager saw.
+   */
+  removalKeys: string[];
   counts: M365PermsCounts;
   report: M365PermsReportItem[];
+  /** What a held round would remove or lower (at most M365_PERMS_REPORT_LIMIT rows), for Admin. */
+  heldItems: M365PermsReportItem[];
   snapshot: M365PermsSnapshotSummary | null;
 }
 
@@ -306,7 +316,7 @@ export function m365PermsStatusView(state: M365PermsState): M365PermsStatusView 
     backoffUntil: state.backoffUntil,
     lastFinishedAt: state.lastFinishedAt,
     round: round
-      ? { id: round.id, mode: round.mode, phase: round.phase, startedAt: round.startedAt, brake: round.brake ?? null, counts: round.counts, report: round.phase === 'held' ? round.report : [] }
+      ? { id: round.id, mode: round.mode, phase: round.phase, startedAt: round.startedAt, brake: round.brake ?? null, counts: round.counts, report: round.phase === 'held' ? (round.heldItems ?? []) : [] }
       : null,
     lastRound: state.lastRound,
   };
