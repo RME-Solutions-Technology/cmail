@@ -20,10 +20,11 @@
     "./contacts": "./src/contacts.ts",
     "./inbox-rules": "./src/inbox-rules.ts",
     "./m365-sync": "./src/m365-sync.ts",
-    "./account-lockout": "./src/account-lockout.ts"
+    "./account-lockout": "./src/account-lockout.ts",
+    "./standby": "./src/standby.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --types @cloudflare/workers-types --strict --skipLibCheck src/types.ts src/push.ts src/sanitize-email.ts src/compose-html.ts src/compose-style.ts src/compose-paste.ts src/link-risk.ts src/link-blocklist.ts src/inbound-risk.ts src/mailbox-storage.ts src/message-importance.ts src/message-participants.ts src/ics.ts src/contacts.ts src/inbox-rules.ts src/m365-sync.ts src/account-lockout.ts",
+    "check": "tsc --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --types @cloudflare/workers-types --strict --skipLibCheck src/types.ts src/push.ts src/sanitize-email.ts src/compose-html.ts src/compose-style.ts src/compose-paste.ts src/link-risk.ts src/link-blocklist.ts src/inbound-risk.ts src/mailbox-storage.ts src/message-importance.ts src/message-participants.ts src/ics.ts src/contacts.ts src/inbox-rules.ts src/m365-sync.ts src/account-lockout.ts src/standby.ts",
     "lint": "pnpm check",
     "test": "node --test"
   },

@@ -35,6 +35,10 @@ To keep accounts in step with a Microsoft 365 tenant (read-only, off by
 default, with a manager switch and dry run), see
 [Microsoft 365 mailbox sync](m365-sync.md).
 
+To give every mailbox a second address on a standby subdomain and test it
+daily (off by default), see
+[Standby test address and daily probe](standby-probe.md).
+
 For staff-portal links and optional provider-session reuse, see the
 [staff sign-in contract](staff-sign-in.md), including the Cloudflare Access
 identity boundary and live configuration checks.

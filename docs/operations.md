@@ -58,6 +58,7 @@ cmail has no built-in alerting. These are the places to look, and what should ma
 | Email Worker: retention | `17 3 * * *` (only if `RETENTION_JOBS_ENABLED`) | Completes, with audit events | `Retention run failed`, or `backlog remaining` on several days in a row |
 | Email Worker: link list | `7 * * * *` | Shards update, or nothing changed | `Link blocklist refresh failed` or `kept the previous copy` for more than a day (links still open; checks go stale after two days). On Workers Free every refresh fails by design: the feature needs Workers Paid |
 | Email Worker: Microsoft 365 sync | `*/15 * * * *` (only once turned on in Admin) | Admin > Microsoft 365 sync shows result `ok` or `running` and a recent last check | Result `error` or `not_configured`, a delta link older than two days, or a growing conflicts count. See the [runbook](m365-sync.md#runbook) |
+| Email Worker: standby probe | `*/10 * * * *` (only once turned on in Admin) | Admin > Standby test is green | Amber or red: see [failure modes](standby-probe.md#failure-modes-and-what-to-do) |
 | Backup Worker | `23 * * * *` | Run succeeds; the day's manifest says `complete: true`; `d1/<date>/complete.json` exists | Any failed run. A **paused** run means objects vanished from the mail bucket: check the `SOURCE` binding before acknowledging (see [Automated backups](deployment.md#automated-backups-optional)) |
 
 **Mail flow.**

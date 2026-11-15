@@ -128,11 +128,24 @@ M365_EXTRA_MAILBOX_PLAN_IDS = ""
 # MAIL_DOMAIN. Only Microsoft 365 users whose primary address is on it sync.
 MAIL_DOMAIN = ""
 
+# Optional standby test address and daily probe (docs/standby-probe.md).
+# Nothing is delivered on the standby subdomain and no test runs until a
+# manager turns it on in Admin > Standby test. Needs MAIL_DOMAIN above, the
+# EMAIL binding (to send the test) and Email Routing on the subdomain with a
+# literal rule per address (Cloudflare has no catch-all on subdomains).
+# DNS label of the standby subdomain: name@standby.<MAIL_DOMAIN>.
+STANDBY_SUBDOMAIN_LABEL = "standby"
+# Local part of the dedicated probe system mailbox (created on first test).
+STANDBY_PROBE_LOCAL_PART = "cmail-standby-probe"
+# Minutes a test may take before it fails (2 to 60).
+STANDBY_PROBE_TIMEOUT_MINUTES = "10"
+
 [triggers]
 # 17 3 * * *: retention (off unless RETENTION_JOBS_ENABLED).
 # 7 * * * *: refresh the local phishing-domain list for link checks (hourly).
 # */15 * * * *: Microsoft 365 sync (returns at once unless switched on in Admin).
-crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *"]
+# */10 * * * *: standby probe (returns at once unless switched on in Admin).
+crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *", "*/10 * * * *"]
 
 # Email Routing — configure a catch-all in the Cloudflare dashboard
 # pointing all inbound mail at this worker.

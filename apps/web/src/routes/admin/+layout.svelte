@@ -32,6 +32,7 @@
         { href: '/admin/signatures', label: 'Signatures', description: 'Personal and organisation', icon: 'compose' },
         { href: '/admin/trace', label: 'Mail trace', description: 'Delivery diagnostics', icon: 'activity' },
         { href: '/admin/quarantine', label: 'Quarantine', description: 'Spam review and sender rules', icon: 'junk' },
+        { href: '/admin/standby', label: 'Standby test', description: 'Standby address and daily test', icon: 'clock' },
       ],
     },
     {
