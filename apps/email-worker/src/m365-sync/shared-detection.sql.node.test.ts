@@ -173,8 +173,8 @@ describe('shared mailbox detection: a failed lookup never pauses or creates', ()
       { action: 'type_unknown', address: 'blair@example.test', reason: 'mailbox_type_denied' },
       { action: 'type_unknown', address: 'team@example.test', reason: 'mailbox_type_failed' },
     ]));
-    // Failures are not cached, and the stale row is dropped: both are asked again when next seen.
-    expect(t.cache()).toEqual({ [oid(1)]: 'user' });
+    // No answer is kept for a failure (only a failure count), so both are asked again when next returned.
+    expect(t.cache()).toEqual({ [oid(1)]: 'user', [oid(2)]: 'unknown', [oid(9)]: 'unknown' });
 
     // A delta round sees blair again: asked again, still denied, still left alone.
     t.advance(HOUR);
@@ -420,5 +420,199 @@ describe('shared mailbox detection and the mass-pause brake', () => {
     expect(t.users().every((user) => user.status === 'pending')).toBe(true);
     // No shared mailbox was created over a person's address.
     expect(t.mailboxes().every((mailbox) => mailbox.type === 'personal')).toBe(true);
+  });
+});
+
+describe('shared mailbox detection: switching it on (review finding 1)', () => {
+  it('forgets answers from an earlier period and runs a full reconciliation at once', async () => {
+    // Detection off: alex is a licensed person, linked.
+    const t = await live([[person(1, 'alex')]], { env: { M365_DETECT_SHARED_MAILBOXES: 'false' } });
+    // An answer left from an earlier detection period: alex's mailbox was shared then.
+    t.sqlite.prepare(`INSERT INTO m365_sync_mailbox_purpose (object_id, purpose, checked_round) VALUES (?, 'shared', 'old-round')`).run(oid(1));
+    // Only a delta would be due now, and the delta returns alex.
+    t.advance(HOUR);
+    t.fake.setDelta('tok-1', [[person(1, 'alex', { displayName: 'Alex' })]], 'tok-2');
+    t.fake.setReconcile([[person(1, 'alex'), sharedObject(9, 'team')]], 'tok-3');
+    t.fake.purposes.set(oid(9), 'shared');
+    t.setEnv('M365_DETECT_SHARED_MAILBOXES', 'true');
+    expect(await t.tick()).toMatchObject({ status: 'worked', round: 'reconcile', finished: true });
+    // The stale 'shared' answer was not used: alex was asked again and stays a person.
+    expect(t.fake.purposeReads.sort()).toEqual([oid(1), oid(9)]);
+    expect(t.user('alex@example.test')?.status).toBe('pending');
+    expect(t.cache()).toEqual({ [oid(1)]: 'user', [oid(9)]: 'shared' });
+    // Existing shared mailboxes are found at once.
+    expect(t.mailboxes().map((mailbox) => mailbox.address)).toContain('team@example.test');
+    const s = await t.state();
+    expect(s).toMatchObject({ sharedDetection: true, detectionReconcilePending: false });
+  });
+
+  it('switching off and on again clears the cache again and drops a delta round in progress', async () => {
+    const t = await live([[person(1, 'alex')]]);
+    expect(t.cache()).toEqual({ [oid(1)]: 'user' });
+    t.setEnv('M365_DETECT_SHARED_MAILBOXES', 'false');
+    t.advance(HOUR);
+    t.fake.setDelta('tok-1', [[]], 'tok-2');
+    await t.tick();
+    expect((await t.state()).sharedDetection).toBe(false);
+    t.setEnv('M365_DETECT_SHARED_MAILBOXES', 'true');
+    t.fake.setReconcile([[person(1, 'alex')]], 'tok-3');
+    t.advance(HOUR);
+    const reads = t.fake.purposeReads.length;
+    expect(await t.tick()).toMatchObject({ round: 'reconcile', finished: true });
+    expect(t.fake.purposeReads.slice(reads)).toEqual([oid(1)]);
+  });
+});
+
+describe('shared mailbox detection: 404 in a delta round (review finding 2)', () => {
+  it('does not store a delta 404, so a shared mailbox still provisioning is found when next returned', async () => {
+    const t = await live([[person(1, 'alex')]]);
+    t.fake.purposes.set(oid(9), [{ status: 404, body: { error: { code: 'MailboxNotEnabledForRESTAPI' } } }, 'shared']);
+    t.advance(HOUR);
+    t.fake.setDelta('tok-1', [[sharedObject(9, 'team')]], 'tok-2');
+    await t.tick();
+    expect(t.mailboxes().map((mailbox) => mailbox.address)).toEqual(['alex@example.test']);
+    expect(t.cache()).toEqual({ [oid(1)]: 'user' });
+    t.advance(HOUR);
+    t.fake.setDelta('tok-2', [[sharedObject(9, 'team')]], 'tok-3');
+    await t.tick();
+    expect(t.mailboxes()).toContainEqual(expect.objectContaining({ address: 'team@example.test', type: 'shared' }));
+    expect(t.cache()).toEqual({ [oid(1)]: 'user', [oid(9)]: 'shared' });
+  });
+
+  it('does not create a person for a new licensed room whose mailbox is not there yet', async () => {
+    const t = await live([[person(1, 'alex')]]);
+    t.fake.purposes.set(oid(5), [{ status: 404, body: { error: { code: 'MailboxNotEnabledForRESTAPI' } } }, 'room']);
+    t.advance(HOUR);
+    t.fake.setDelta('tok-1', [[person(5, 'boardroom')]], 'tok-2');
+    await t.tick();
+    expect(t.users().map((user) => user.email)).toEqual(['alex@example.test']);
+    expect((await t.state()).lastRound!.report).toEqual([{ action: 'wait_for_mailbox', address: 'boardroom@example.test', reason: 'mailbox_not_provisioned' }]);
+    t.advance(HOUR);
+    t.fake.setDelta('tok-2', [[person(5, 'boardroom')]], 'tok-3');
+    await t.tick();
+    expect(t.users().map((user) => user.email)).toEqual(['alex@example.test']);
+    expect(t.cache()).toMatchObject({ [oid(5)]: 'room' });
+  });
+
+  it('still pauses a linked person whose mailbox is gone (404) in a delta round, by the licence rule', async () => {
+    const t = await live([[person(1, 'alex'), person(2, 'blair')]]);
+    t.fake.purposes.set(oid(3), { status: 404 });
+    t.advance(HOUR);
+    // casey is new, licensed, 404: waits. blair (cached 'user') lost the licence: paused.
+    t.fake.setDelta('tok-1', [[person(2, 'blair', { assignedPlans: [] }), person(3, 'casey')]], 'tok-2');
+    await t.tick();
+    expect(t.user('blair@example.test')?.status).toBe('paused');
+    expect(t.user('casey@example.test')).toBeUndefined();
+  });
+
+  it('a reconciliation stores 404 as "none" and the licensed-person rule creates the account', async () => {
+    const t = setup();
+    t.fake.purposes.set(oid(3), { status: 404 });
+    t.fake.setReconcile([[person(3, 'casey')]]);
+    await t.tick();
+    expect(t.user('casey@example.test')).toBeDefined();
+    expect(t.cache()).toEqual({ [oid(3)]: 'none' });
+  });
+});
+
+describe('shared mailbox detection: a cached "user" in a delta round', () => {
+  it('pauses a linked person who is disabled, without asking Exchange again', async () => {
+    const t = await live([[person(1, 'alex'), person(2, 'blair')]]);
+    const reads = t.fake.purposeReads.length;
+    t.advance(HOUR);
+    t.fake.setDelta('tok-1', [[person(2, 'blair', { accountEnabled: false })]], 'tok-2');
+    await t.tick();
+    expect(t.fake.purposeReads.length).toBe(reads);
+    expect(t.user('blair@example.test')?.status).toBe('paused');
+    expect(t.link(2)).toMatchObject({ last_reason: 'disabled' });
+  });
+});
+
+describe('shared mailbox detection: repeated failures (review finding 3)', () => {
+  const failures = (t: ReturnType<typeof setup>, n: number) =>
+    (t.sqlite.prepare('SELECT failed_reconciles AS f FROM m365_sync_mailbox_purpose WHERE object_id = ?').get(oid(n)) as { f: number } | undefined)?.f;
+
+  async function reconcileAgain(t: ReturnType<typeof setup>, token: string) {
+    t.fake.setReconcile([[person(1, 'alex', { accountEnabled: false })]], token);
+    t.syncNow();
+    t.advance(1000);
+    expect(await t.tick()).toMatchObject({ round: 'reconcile', finished: true });
+  }
+
+  it('counts consecutive failed reconciliations per object, alerts once at 3, and resets on an answer', async () => {
+    const t = await live([[person(1, 'alex')]]);
+    t.fake.purposes.set(oid(1), { status: 403, body: { error: { code: 'ErrorAccessDenied' } } });
+    await reconcileAgain(t, 'tok-2');
+    expect(failures(t, 1)).toBe(1);
+    // A failed delta lookup does not count, and does not reset.
+    t.advance(HOUR);
+    t.fake.setDelta('tok-2', [[person(1, 'alex', { accountEnabled: false })]], 'tok-3');
+    await t.tick();
+    expect(failures(t, 1)).toBe(1);
+    await reconcileAgain(t, 'tok-4');
+    expect(t.audits('m365_sync.type_unreadable')).toBe(0);
+    await reconcileAgain(t, 'tok-5');
+    expect(failures(t, 1)).toBe(3);
+    expect(t.audits('m365_sync.type_unreadable')).toBe(1);
+    await reconcileAgain(t, 'tok-6');
+    expect(failures(t, 1)).toBe(4);
+    expect(t.audits('m365_sync.type_unreadable')).toBe(1);
+    // Never paused meanwhile, though disabled in Microsoft 365.
+    expect(t.user('alex@example.test')?.status).toBe('pending');
+    // Readable again: the count resets and the normal rules apply.
+    t.fake.purposes.set(oid(1), 'user');
+    await reconcileAgain(t, 'tok-7');
+    expect(failures(t, 1)).toBe(0);
+    expect(t.user('alex@example.test')?.status).toBe('paused');
+  });
+
+  it('a page read again after throttling does not count a reconciliation twice', async () => {
+    const t = await live([[person(1, 'alex'), person(2, 'blair')]]);
+    t.fake.purposes.set(oid(1), { status: 403 });
+    t.fake.purposes.set(oid(2), [{ status: 429, headers: { 'retry-after': '60' } }, 'user']);
+    t.fake.setReconcile([[person(1, 'alex'), person(2, 'blair')]], 'tok-2');
+    t.syncNow();
+    t.advance(1000);
+    expect(await t.tick()).toEqual({ status: 'error', code: 'throttled' });
+    t.advance(61_000);
+    expect(await t.tick()).toMatchObject({ finished: true });
+    expect(failures(t, 1)).toBe(1);
+  });
+});
+
+describe('shared mailbox detection: bounded work', () => {
+  it('checks the Graph budget before every $batch and resumes the page next run without asking twice', async () => {
+    const t = setup();
+    t.fake.setReconcile([Array.from({ length: 45 }, (_, index) => person(10 + index, `user${index}`))]);
+    const budgets = { graph: 2 };
+    const first = await t.tick({ budgets });
+    expect(first).toMatchObject({ status: 'worked', finished: false });
+    expect(t.users()).toEqual([]);
+    // Token, page and two batches: the ceiling (twice the budget) stops the third batch.
+    expect(t.fake.purposeReads).toHaveLength(40);
+    let ticks = 1;
+    for (;;) {
+      const result = await t.tick({ budgets });
+      ticks += 1;
+      if (result.status === 'worked' && result.finished) break;
+      expect(ticks).toBeLessThan(20);
+    }
+    expect(t.users()).toHaveLength(45);
+    expect(t.fake.purposeReads).toHaveLength(45);
+  });
+});
+
+describe('shared mailbox group without detection (wording unchanged)', () => {
+  it('reports a licensed member leaving the shared group as not_in_shared_group', async () => {
+    const t = setup({ env: { M365_DETECT_SHARED_MAILBOXES: 'false', M365_SHARED_GROUP_ID: SHARED_GROUP } });
+    t.fake.memberships.set(oid(8), [SHARED_GROUP]);
+    t.fake.setReconcile([[person(8, 'team')]]);
+    await t.tick();
+    t.fake.memberships.set(oid(8), []);
+    t.fake.setReconcile([[person(8, 'team')]], 'tok-2');
+    t.syncNow();
+    t.advance(1000);
+    await t.tick();
+    expect((await t.state()).lastRound!.report).toContainEqual({ action: 'left_source_kept', address: 'team@example.test', reason: 'not_in_shared_group' });
   });
 });

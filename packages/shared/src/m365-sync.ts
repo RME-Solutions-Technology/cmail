@@ -227,6 +227,13 @@ export interface M365QueuedPause {
   reason: string;
 }
 
+/**
+ * Shared mailbox detection: consecutive full reconciliations in which a
+ * linked object's Exchange mailbox type could not be read before Admin shows
+ * an alert and an audit row is written (m365_sync.type_unreadable).
+ */
+export const M365_PURPOSE_FAILURE_ALERT = 3;
+
 /** Mass-pause brake: no live pause is applied while this many would be. */
 export const M365_BRAKE_MIN_PAUSES = 5;
 
@@ -290,6 +297,11 @@ export interface M365SyncState {
   backoffStreak: number;
   /** Whether the Worker has shared mailbox detection on (M365_DETECT_SHARED_MAILBOXES), as of its last configured run. */
   sharedDetection: boolean | null;
+  /**
+   * Set when detection was switched on (again): the cached types were cleared
+   * and the next round must be a full reconciliation. Cleared when one finishes.
+   */
+  detectionReconcilePending: boolean;
 }
 
 export function emptyCounts(): M365Counts {
@@ -312,6 +324,7 @@ export function emptyM365SyncState(): M365SyncState {
     backoffUntil: null,
     backoffStreak: 0,
     sharedDetection: null,
+    detectionReconcilePending: false,
   };
 }
 

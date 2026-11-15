@@ -94,7 +94,7 @@ export function classify(
   groups: { scope: string | null; shared: string | null },
   memberOf: Set<string> | null,
   planIds: ReadonlySet<string> = DEFAULT_PLANS,
-  purpose: PurposeLookup | null = null,
+  purpose: PurposeLookup | 'none_unconfirmed' | null = null,
 ): Classification {
   const { address, onDomain } = primaryAddress(user, mailDomain);
   if (user['@removed']) return { kind: 'out', reason: 'deleted', address };
@@ -121,7 +121,8 @@ export function classify(
   // Room and equipment mailboxes are never people, even when licensed and
   // enabled (Teams Rooms resource accounts are).
   if (purpose === 'room' || purpose === 'equipment') return { kind: 'out', reason: 'resource_mailbox', address };
-  // user, linked, others and none: the licensed-person rule below, unchanged.
+  // user, linked, others and none (also an unconfirmed 'none' from a delta
+  // round): the licensed-person rule below, unchanged.
 
   if (user.userType && user.userType !== 'Member') return { kind: 'out', reason: 'guest', address };
   if (user.accountEnabled !== true) return { kind: 'out', reason: 'disabled', address };

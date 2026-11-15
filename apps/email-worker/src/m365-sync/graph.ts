@@ -103,6 +103,8 @@ export interface PurposeBatchResult {
   throttled: boolean;
   /** Longest Retry-After among throttled items, in seconds, or null. */
   retryAfterSeconds: number | null;
+  /** True when `maxRequests` stopped it before every object was asked. */
+  incomplete: boolean;
 }
 
 export interface DeltaPage {
@@ -358,17 +360,25 @@ export class GraphClient {
    * MailboxSettings.Read), 20 per JSON `$batch`. Unlike memberGroups, one
    * object's failure does not fail the rest: a 404 is 'none' (no Exchange
    * Online mailbox), a 401/403 is 'denied' and any other error 'failed'.
+   * `maxRequests` stops it before a batch once this client has made that
+   * many requests (`incomplete`: the rest have no answer).
    * Throttled items (429/503/504) get no answer and are reported with the
    * longest Retry-After; no further batch is sent after a throttled one. The
    * caller keeps the answers it has and stops until the wait is over. A
    * failure of the `$batch` request itself throws as usual (429 with its
    * Retry-After, 401/403 as unauthorized).
    */
-  async mailboxPurposes(objectIds: string[]): Promise<PurposeBatchResult> {
+  async mailboxPurposes(objectIds: string[], options: { maxRequests?: number } = {}): Promise<PurposeBatchResult> {
     const purposes = new Map<string, PurposeLookup>();
     let throttled = false;
+    let incomplete = false;
     let longestWait: number | null = null;
     for (let start = 0; start < objectIds.length; start += GRAPH_BATCH_LIMIT) {
+      // The run's Graph budget is checked before every $batch, not only per page.
+      if (options.maxRequests !== undefined && this.requests >= options.maxRequests) {
+        incomplete = true;
+        break;
+      }
       const slice = objectIds.slice(start, start + GRAPH_BATCH_LIMIT);
       const requests = slice.map((id, index) => ({
         id: String(index),
@@ -404,6 +414,6 @@ export class GraphClient {
         break;
       }
     }
-    return { purposes, throttled, retryAfterSeconds: longestWait };
+    return { purposes, throttled, retryAfterSeconds: longestWait, incomplete };
   }
 }

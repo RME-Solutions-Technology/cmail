@@ -39,8 +39,8 @@ import {
 } from '@cmail/shared/m365-sync';
 import { applyEntries, applyQueuedPause, linkedPeopleInScope, sweepUnseen, type ApplyContext } from './apply';
 import { classify, needsGroupCheck } from './classify';
-import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser, type PurposeLookup } from './graph';
-import { prunePurposes, purposeCacheInstalled, resolvePurposes } from './purpose';
+import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser } from './graph';
+import { clearPurposes, prunePurposes, purposeCacheInstalled, resolvePurposes, type ResolvedPurpose } from './purpose';
 
 export const M365_SYNC_CRON = '*/15 * * * *';
 
@@ -147,7 +147,7 @@ function toPending(
   users: GraphUser[],
   config: M365SyncConfig,
   memberships: Map<string, Set<string>>,
-  purposes: Map<string, PurposeLookup> | null = null,
+  purposes: Map<string, ResolvedPurpose> | null = null,
 ): M365PendingEntry[] {
   const groups = { scope: config.scopeGroupId, shared: config.sharedGroupId };
   const byId = new Map<string, M365PendingEntry>();
@@ -166,7 +166,10 @@ function toPending(
     byId.delete(id);
     if (cls.kind === 'out' || cls.kind === 'skip') byId.set(id, { id, kind: cls.kind, address: cls.address, displayName: '', reason: cls.reason });
     else if (cls.kind === 'shared') byId.set(id, { id, kind: 'shared', address: cls.address, displayName: cls.displayName, reason: cls.source });
-    else byId.set(id, { id, kind: 'person', address: cls.address, displayName: cls.displayName, reason: '' });
+    // A person whose 'no Exchange Online mailbox' answer came from a delta
+    // round may be a mailbox still being provisioned (a new room, say): apply
+    // does not create a new account from it.
+    else byId.set(id, { id, kind: 'person', address: cls.address, displayName: cls.displayName, reason: purposes?.get(id) === 'none_unconfirmed' ? 'mailbox_not_provisioned' : '' });
   }
   return [...byId.values()];
 }
@@ -190,6 +193,7 @@ function finishRound(state: M365SyncState, round: M365Round, now: number): void 
   if (round.kind === 'reconcile') {
     state.lastReconcileAt = finishedAt;
     state.lastReconcileMode = round.mode;
+    state.detectionReconcilePending = false;
   }
   state.round = null;
   state.lastError = null;
@@ -236,7 +240,7 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
       return { status: 'not_configured' };
     }
     const config = check.config;
-    state.sharedDetection = config.detectSharedMailboxes;
+    // A D1 error here is thrown and handled as an error, not as a missing migration.
     if (config.detectSharedMailboxes && !await purposeCacheInstalled(db)) {
       // Detection is on but its cache table is missing: change nothing rather
       // than run without it (a converted mailbox would look like a leaver).
@@ -245,6 +249,18 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
       await saveState(db, state);
       return { status: 'not_installed' };
     }
+    if (config.detectSharedMailboxes && state.sharedDetection !== true) {
+      // Detection switched on (or on again): answers cached in an earlier
+      // period may be stale (a mailbox converted meanwhile), so forget them,
+      // drop any round started without detection, and run a full
+      // reconciliation next so existing shared mailboxes are found at once.
+      await clearPurposes(db);
+      state.round = null;
+      state.detectionReconcilePending = true;
+      console.warn('Microsoft 365 sync: shared mailbox detection switched on, starting a full reconciliation');
+    }
+    state.sharedDetection = config.detectSharedMailboxes;
+    state.detectionReconcilePending = Boolean(state.detectionReconcilePending) && config.detectSharedMailboxes;
 
     if (state.backoffUntil && Date.parse(state.backoffUntil) > startedAt) {
       await saveState(db, state);
@@ -276,7 +292,9 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
       state.round.phase = 'pauses';
     }
     if (!state.round) {
-      const kind = dueRound(state, { mode, requested, intervalMinutes: config.intervalMinutes, now: startedAt });
+      const kind = state.detectionReconcilePending
+        ? 'reconcile'
+        : dueRound(state, { mode, requested, intervalMinutes: config.intervalMinutes, now: startedAt });
       if (requested) state.handledRequestAt = toggle.requestedAt;
       if (!kind) {
         state.lastResult = 'ok';
@@ -299,7 +317,7 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
     let d1Ops = 0;
     let finished = false;
     const withinBudget = () => now() - startedAt < budgets.timeMs && d1Ops < budgets.d1;
-    const context = (round: M365Round): ApplyContext => ({ db, round, ops: 0, newId, now });
+    const context = (round: M365Round): ApplyContext => ({ db, round, ops: 0, newId, now, sharedDetection: config.detectSharedMailboxes });
 
     while (state.round && withinBudget()) {
       const current = state.round;
@@ -334,7 +352,7 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
         // If this throttles, the page is not saved and is fetched again on
         // resume (one extra page request; nothing is applied twice).
         const memberships = needCheck.length ? await graph.memberGroups(needCheck, groupIds) : new Map<string, Set<string>>();
-        let purposes: Map<string, PurposeLookup> | null = null;
+        let purposes: Map<string, ResolvedPurpose> | null = null;
         if (config.detectSharedMailboxes) {
           // Shared-group members are shared whatever Exchange says: no lookup.
           const inSharedGroup = new Set<string>();
@@ -343,8 +361,17 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
           }
           // If this throttles, the answers read so far are kept (live) and the
           // page is fetched again on resume, like the group check.
-          const resolved = await resolvePurposes({ db, graph, round: current, users: page.users, mailDomain: config.mailDomain, exclude: inSharedGroup });
+          // The Graph budget is checked before every $batch, with a ceiling of
+          // twice the per-page budget so a full page (999 objects at most)
+          // always fits in one run, even in dry run, which keeps no answers.
+          const resolved = await resolvePurposes({
+            db, graph, round: current, users: page.users, mailDomain: config.mailDomain, exclude: inSharedGroup,
+            maxRequests: budgets.graph * 2,
+          });
           d1Ops += resolved.ops;
+          // Out of budget: the page is not stored and is fetched again next
+          // run (live runs keep the answers already read).
+          if (!resolved.complete) break;
           purposes = resolved.purposes;
         }
         current.pending = toPending(page.users, config, memberships, purposes);

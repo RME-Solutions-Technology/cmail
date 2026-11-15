@@ -221,3 +221,15 @@ describe('mailbox type (userPurpose) lookups', () => {
     expect((await failure(graph.mailboxPurposes([oid(1)]))).code).toBe('unauthorized');
   });
 });
+
+describe('mailbox type lookups: per-batch budget', () => {
+  it('stops before a $batch once the client has made maxRequests requests', async () => {
+    const { fake, graph } = client();
+    const ids = Array.from({ length: 45 }, (_, index) => oid(300 + index));
+    // Token + two batches = 3 requests: the third batch is not sent.
+    const result = await graph.mailboxPurposes(ids, { maxRequests: 3 });
+    expect(fake.calls.filter((url) => url.endsWith('$batch'))).toHaveLength(2);
+    expect(result).toMatchObject({ incomplete: true, throttled: false });
+    expect(result.purposes.size).toBe(40);
+  });
+});

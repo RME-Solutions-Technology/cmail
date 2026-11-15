@@ -16,6 +16,7 @@
     resume: ['Resumed account', 'Would resume account'],
     left_source_kept: ['No longer a shared mailbox in Microsoft 365; kept active', 'No longer a shared mailbox in Microsoft 365; would keep active'],
     type_unknown: ['Mailbox type not readable; left as is', 'Mailbox type not readable; would leave as is'],
+    wait_for_mailbox: ['Waiting for its Exchange mailbox; not created yet', 'Waiting for its Exchange mailbox; would not create yet'],
     conflict: ['Needs a manager', 'Needs a manager'],
   };
   const COUNT_LABELS: Array<[string, string]> = [
@@ -25,7 +26,9 @@
   ];
   const typeUnknown = $derived(Number((last?.counts as Record<string, number> | undefined)?.typeUnknown ?? 0));
 
-  function actionLabel(action: string, dryRun: boolean): string {
+  function actionLabel(action: string, reason: string, dryRun: boolean): string {
+    // The shared-group wording, as before detection existed.
+    if (action === 'left_source_kept' && reason === 'not_in_shared_group') return dryRun ? 'Left Microsoft 365 group; would keep active' : 'Left Microsoft 365 group; kept active';
     const pair = ACTIONS[action];
     return pair ? pair[dryRun ? 1 : 0] : action;
   }
@@ -94,6 +97,12 @@
       </div>
       <p class="muted">Dry run is <strong>{toggle.dryRun ? 'on' : 'off'}</strong>. {toggle.dryRun ? 'Runs only report what they would change.' : 'Runs apply changes and audit each one.'} Sync now asks for a full reconciliation on the next run (within 15 minutes).</p>
     </section>
+
+    {#if overview.unreadableLinked > 0}
+      <div class="notice notice-error" role="alert">
+        <strong>Mailbox type unreadable.</strong> For {overview.unreadableLinked} linked {overview.unreadableLinked === 1 ? 'account or shared mailbox' : 'accounts or shared mailboxes'}, Exchange's mailbox type could not be read in 3 or more full reconciliations in a row. The sync leaves {overview.unreadableLinked === 1 ? 'it' : 'them'} unchanged (no pause, no update) until it can be read. Check the Entra app's <code>MailboxSettings.Read</code> permission and admin consent, and any Exchange RBAC for Applications scope. The Audit log has a <code>m365_sync.type_unreadable</code> row for each.
+      </div>
+    {/if}
 
     {#if status?.round?.phase === 'held' && status.round.brake}
       <section class="card held-card" aria-labelledby="held-heading">
@@ -169,7 +178,7 @@
                 <thead><tr><th>Change</th><th>Microsoft 365 address</th><th>Reason</th></tr></thead>
                 <tbody>
                   {#each last.report as item}
-                    <tr><td>{actionLabel(item.action, last.mode === 'dry_run')}</td><td>{item.address || '—'}</td><td><code>{item.reason}</code></td></tr>
+                    <tr><td>{actionLabel(item.action, item.reason, last.mode === 'dry_run')}</td><td>{item.address || '—'}</td><td><code>{item.reason}</code></td></tr>
                   {/each}
                 </tbody>
               </table>

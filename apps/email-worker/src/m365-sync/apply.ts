@@ -65,6 +65,8 @@ export interface ApplyContext {
   newId: () => string;
   /** Wall clock, for the change marker written to users.updated_at. */
   now: () => number;
+  /** Shared mailbox detection on (M365_DETECT_SHARED_MAILBOXES): only changes report wording. */
+  sharedDetection?: boolean;
 }
 
 /** D1 allows at most 100 bound parameters per statement. */
@@ -350,6 +352,14 @@ async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRo
 }
 
 async function personNew(ctx: ApplyContext, entry: M365PendingEntry) {
+  if (entry.reason === 'mailbox_not_provisioned') {
+    // Detection on, delta round, Graph says "no Exchange Online mailbox":
+    // it may still be provisioning (and turn out to be a room or shared
+    // mailbox). Not created now; asked again when next returned, and the
+    // daily reconciliation decides for good.
+    record(ctx, 'ignored', { action: 'wait_for_mailbox', address: entry.address, reason: 'mailbox_not_provisioned' });
+    return;
+  }
   const existing = await userByEmail(ctx, entry.address);
   if (existing) {
     if (existing.role !== 'standard') return conflict(ctx, entry, 'manager_not_adopted');
@@ -434,8 +444,8 @@ async function sharedLinked(ctx: ApplyContext, entry: M365PendingEntry, link: Li
   if (entry.kind !== 'shared') {
     // Shared mailboxes are never disabled by the sync: that would bounce mail.
     if (link.source_state === 'in_scope') {
-      record(ctx, 'unchanged', { action: 'left_source_kept', address: entry.address, reason: entry.reason || 'no_longer_shared' });
-      if (live(ctx)) await runBatch(ctx, [linkStateStatement(ctx.db, link.object_id, 'out_of_scope', entry.reason || 'no_longer_shared')]);
+      record(ctx, 'unchanged', { action: 'left_source_kept', address: entry.address, reason: (entry.reason || (ctx.sharedDetection ? 'no_longer_shared' : 'not_in_shared_group')) });
+      if (live(ctx)) await runBatch(ctx, [linkStateStatement(ctx.db, link.object_id, 'out_of_scope', (entry.reason || (ctx.sharedDetection ? 'no_longer_shared' : 'not_in_shared_group')))]);
     } else {
       record(ctx, 'unchanged');
     }

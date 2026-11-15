@@ -184,38 +184,63 @@ can then decide what to do with it.
 - **No Exchange Online mailbox.** Graph answers `404` (typically
   `MailboxNotEnabledForRESTAPI`: "inactive, soft-deleted, or hosted
   on-premise"; [Microsoft Q&A](https://learn.microsoft.com/en-us/answers/questions/1803734/getting-mailboxnotenabledforrestapi-error-when-try)).
-  The sync stores `none` and the licensed-person rule decides, as without
-  detection. This is the normal answer for a user without an Exchange
-  licence.
+  This is the normal answer for a user without an Exchange licence, but also
+  for a new mailbox Exchange has not finished provisioning. So:
+  - in a **full reconciliation** the sync stores `none` and the
+    licensed-person rule decides, as without detection;
+  - in a **delta round** nothing is stored, a linked person is judged by the
+    licensed-person rule as usual (a lost licence still pauses), and a new,
+    unlinked object is **not created** yet (`wait_for_mailbox`,
+    `mailbox_not_provisioned`): it may turn out to be a room or a shared
+    mailbox. It is asked again the next time Graph returns it, and the next
+    full reconciliation decides for good.
 - **Lookup failed.** A `401`/`403` for one mailbox (`mailbox_type_denied`) or
   any other error (`mailbox_type_failed`) leaves that object **exactly as it
   is** for the round: nothing is created, updated or paused, and it still
-  counts as seen, so the sweep does not pause it either. Nothing is stored,
-  so it is asked again the next time it is seen. Admin counts these as "Type
-  unknown" and warns. A `401`/`403` for the whole `$batch` request stops the
-  run (`unauthorized`), like any other missing consent.
+  counts as seen, so the sweep does not pause it either. No answer is
+  stored, so it is asked again **the next time Graph returns the object**:
+  in a delta round only if the object changed in Entra, otherwise at the
+  next full reconciliation (daily, or Sync now). Admin counts these as
+  "Type unknown" and warns. Each full reconciliation in which an object's
+  lookup fails adds one to its consecutive-failure count (a delta round
+  neither adds nor resets; any answer resets it). When a **linked** account
+  or shared mailbox reaches **3**, Admin shows a "Mailbox type unreadable"
+  alert and one `m365_sync.type_unreadable` audit row is written for it. A
+  `401`/`403` for the whole `$batch` request stops the run
+  (`unauthorized`), like any other missing consent.
 - **Throttling.** A throttled item (429, 503, 504) or a throttled `$batch`
   stops the run with the longest `Retry-After` (Outlook limits are per app
   and mailbox: 10,000 requests per 10 minutes and four concurrent requests;
   Graph sends at most four requests of a batch to Outlook at a time;
   [Outlook service limits](https://learn.microsoft.com/en-us/graph/throttling-limits#outlook-service-limits)).
-  The answers already read are kept (live runs); the page is read again on resume and
-  only the unanswered objects are asked again. Nothing from that page is
-  applied before every candidate has an answer.
+  The answers already read are kept (live runs); the page is read again on
+  resume and only the unanswered objects are asked again. Nothing from that
+  page is applied before every candidate has an answer.
 - **Cache** (`m365_sync_mailbox_purpose`, migration `0026`). One row per
-  object id with its type and the round that read it; no address, name or
-  mail. A delta round asks only objects with no row. A full reconciliation
-  (daily, or Sync now) asks every candidate again once, then deletes rows it
-  did not refresh, so a conversion in Exchange is picked up within a day.
-  Deleted objects lose their row at once. Only definite answers (including
-  `none`) are stored.
-- **Budget.** The lookups count towards the run's Graph request budget and
-  bounded work like the group check: about one request per 20 on-domain
-  objects per reconciliation, and one per 20 new or uncached objects in a
-  delta round.
+  object id with its type, the round that read it and the failure count; no
+  address, name or mail. A delta round asks only objects with no stored
+  answer. A full reconciliation (daily, or Sync now) asks every candidate
+  again once, then deletes rows it did not refresh, so a conversion in
+  Exchange is picked up within a day. Deleted objects lose their row at
+  once.
+- **Switching detection on** (first time, or again after it was off): the
+  Worker clears the whole cache, drops any round in progress (a held one
+  too) and runs a **full reconciliation** next, whatever was due. So an
+  answer from an earlier period (a mailbox converted meanwhile) is never
+  used, and existing shared mailboxes are found at once.
+- **Budget.** The lookups count towards the run's Graph request budget. The
+  budget is checked before every `$batch`, with a ceiling of twice the
+  per-run budget (120 requests) so one full page of 999 objects always fits
+  in a run; if it runs out, the page is not applied and is read again in
+  the next run (live runs keep the answers already read). Roughly one
+  request per 20 on-domain objects per reconciliation, and one per 20 new
+  or uncached objects in a delta round.
 - **Dry run** reads the types but never writes the cache (every dry run is a
   full reconciliation, which reads every object anyway), and reports what it
   would create (`create_shared`, reason `shared_mailbox`).
+- **Report wording.** With detection off, a group shared mailbox that leaves
+  the group is reported as before (`not_in_shared_group`, "Left Microsoft
+  365 group"); with it on, as `no_longer_shared`.
 
 Without either option, shared mailboxes are not synced at all. Create them
 in Admin as before.
@@ -322,7 +347,9 @@ itself on its next run without changing anything.
 | Throttled (429/503/504) | Short waits retried in place; longer ones saved as "waiting until" and resumed from the same page | `backoff (throttled)` |
 | Detection on, migration `0026` not applied | Nothing. No Graph call | `error (migration_0026_missing)` |
 | Detection on, `MailboxSettings.Read` missing or not consented | A refused `$batch` stops the run (`unauthorized`); refused items leave their objects unchanged | `error (unauthorized)`, or "Type unknown" counts and a warning |
-| One mailbox type lookup fails | That object is left exactly as it is and asked again next time | Report: `type_unknown` with `mailbox_type_denied` or `mailbox_type_failed` |
+| One mailbox type lookup fails | That object is left exactly as it is, and asked again when Graph next returns it (a delta round if it changed, else the next full reconciliation) | Report: `type_unknown` with `mailbox_type_denied` or `mailbox_type_failed`; after 3 failed reconciliations in a row for a linked object, an Admin alert and `m365_sync.type_unreadable` |
+| Detection on, a delta round gets 404 for a new object | Not created yet; asked again when next returned; the full reconciliation decides | Report: `wait_for_mailbox` |
+| D1 error while checking for migration `0026` | Treated as an error and retried with back-off, never as a missing migration | `error (internal)` |
 | Delta link expired, `410 Gone`, or a 40X with `syncStateNotFound`, `syncStateInvalid`, `resyncRequired` or a similar token error | Drops the link, runs a full reconciliation at once | Logged; next round is a reconciliation |
 | A round would pause too many people, or a reconciliation returns nothing | Holds the round; no pause is applied | `held`, with the list and Approve / Discard |
 | A manager pauses, reactivates or offboards someone while the sync runs | The manager's change wins; the sync's change is skipped | Report: `changed_concurrently` |
@@ -477,8 +504,14 @@ pnpm --filter @cmail/email-worker check
 default, a bad setting value, migration `0026` missing, `shared` (disabled
 and unlicensed), `user`, `room`, `equipment`, unknown future values, `404`,
 a denied and a failed lookup (nothing paused or created, still counted as
-seen, asked again), a throttled item and a throttled `$batch` (Retry-After,
-answers kept, only the rest asked again), the cache (not read again on delta
+seen, asked again), repeated failures (count per reconciliation, alert and
+one audit row at 3, reset on an answer, a re-read page not counted twice),
+switching detection on (stale answers cleared, full reconciliation at once;
+off and on again), a delta 404 (not stored; a shared mailbox found when next
+returned; a new licensed room not created as a person), a cached `user` for a
+disabled linked person in a delta round, the per-`$batch` budget, a
+throttled item and a throttled `$batch` (Retry-After, answers kept, only the
+rest asked again), the cache (not read again on delta
 rounds, read again and pruned at the reconciliation, forgotten on delete), a
 conversion of a linked person, dry run, an existing shared mailbox, personal
 mailbox or account at the same address, address change, deletion and
