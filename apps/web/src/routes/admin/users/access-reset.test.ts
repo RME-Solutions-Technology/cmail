@@ -57,8 +57,12 @@ describe('admin resetAccess', () => {
     const result = await resetAccess('manager-1');
     expect(result.status).toBe(409);
     expect(count(`SELECT COUNT(*) AS n FROM user_identities WHERE user_id = 'manager-1'`)).toBe(1);
-    db.sqlite.exec(`INSERT INTO users (id, email) VALUES ('u2', 'unlinked@example.test');`);
+    db.sqlite.exec(`INSERT INTO users (id, email) VALUES ('u2', 'unlinked@example.test');
+      INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked) VALUES ('s2', 'u2', 'h2', datetime('now', '+1 day'), 0);`);
     expect((await resetAccess('u2')).status).toBe(404);
+    // No link: the person is not signed out and nothing is audited as a reset.
+    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u2' AND revoked = 0`)).toBe(1);
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.identity_reset'`)).toBe(0);
   });
 
   it('is for managers only', async () => {

@@ -131,11 +131,11 @@ one Access binding and one Access `sub` belongs to one account (migration
 Repeated denials (`auth.sign_in_denied`) and email-change notes are audited
 once per person and reason every 10 minutes.
 
-A request that has a valid Access token but no cmail cookie reuses the
-account's newest live session if there is one: no new cookie, no new
-`auth.sign_in` row, and the user's other sessions are not evicted. A new
-session and cookie are minted only when the account has no live session.
-This is safe because every request must carry a valid Access token anyway.
+A session and cookie are minted only when the request has no valid cmail
+cookie, so each browser or device signs in once and then reuses its own
+cookie. Minting follows the normal sign-in rules: one `auth.sign_in` row,
+and the oldest sessions beyond `MAX_SESSIONS_PER_USER` are signed out,
+exactly as for a Google or Microsoft sign-in.
 
 Sign-out also ends the Access session (`/cdn-cgi/access/logout`); otherwise
 Access would sign the user straight back in.

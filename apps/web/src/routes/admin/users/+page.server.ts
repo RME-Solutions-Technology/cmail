@@ -543,17 +543,26 @@ export const actions: Actions = {
       return fail(409, { error: 'You cannot reset your own Access link' });
     }
 
+    const linked = await env.DB.prepare(
+      `SELECT 1 AS linked FROM user_identities WHERE provider = 'access' AND user_id = ?`,
+    ).bind(userId).first<{ linked: number }>();
+    if (!linked) return fail(404, { error: 'That account has no Access link' });
+
     let removed: number;
     try {
+      // Sessions are revoked only while the Access link still exists, so a
+      // concurrent reset cannot sign someone out without removing a link.
       const results = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE sessions SET revoked = 1
+           WHERE user_id = ? AND revoked = 0
+             AND EXISTS (SELECT 1 FROM user_identities WHERE provider = 'access' AND user_id = ?)`,
+        ).bind(userId, userId),
         env.DB.prepare(
           `DELETE FROM user_identities WHERE provider = 'access' AND user_id = ?`,
         ).bind(userId),
-        env.DB.prepare(
-          `UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0`,
-        ).bind(userId),
       ]);
-      removed = results[0]?.meta.changes ?? 0;
+      removed = results[1]?.meta.changes ?? 0;
     } catch (error) {
       logAdminFailure('access reset', error);
       return fail(500, { error: 'The Access link could not be reset' });

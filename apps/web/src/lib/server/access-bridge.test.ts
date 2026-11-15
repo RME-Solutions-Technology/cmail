@@ -290,32 +290,15 @@ describe('establishAccessSession', () => {
     expect(count(`SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE ? OR key LIKE ?`, `%${SUB_A}%`, '%stranger%')).toBe(0);
   });
 
-  it('reuses a live session for cookie-less visits instead of minting, evicting or auditing again', async () => {
-    seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'person@example.test', 'active');
-      INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1');`);
-    const first = await establish(SUB_A, 'person@example.test');
-    expect(first?.cookie).toMatch(/^cmail_session=/);
-    for (let index = 0; index < 8; index += 1) {
-      const again = await establish(SUB_A, 'person@example.test');
-      expect(again?.cookie).toBeNull();
-      expect(again?.sessionId).toBe(first?.sessionId);
-    }
-    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1'`)).toBe(1);
-    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.sign_in'`)).toBe(1);
-  });
-
-  it("never evicts the user's other device sessions on a cookie-less visit", async () => {
+  it('mints a session per sign-in and keeps other device sessions within the normal cap', async () => {
     seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'person@example.test', 'active');
       INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1');
       INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked) VALUES
-        ('s1', 'u1', 'h1', datetime('now', '+1 day'), 0), ('s2', 'u1', 'h2', datetime('now', '+2 days'), 0),
-        ('s3', 'u1', 'h3', datetime('now', '+3 days'), 0), ('s4', 'u1', 'h4', datetime('now', '+4 days'), 0),
-        ('s5', 'u1', 'h5', datetime('now', '+5 days'), 0);`);
+        ('s1', 'u1', 'h1', datetime('now', '+1 day'), 0), ('s2', 'u1', 'h2', datetime('now', '+2 days'), 0);`);
     const result = await establish(SUB_A, 'person@example.test');
-    expect(result?.sessionId).toBe('s5');
-    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1' AND revoked = 0`)).toBe(5);
+    expect(result?.cookie).toMatch(/^cmail_session=/);
+    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1' AND revoked = 0`)).toBe(3);
   });
-
   it('audits an email change once per window, not on every visit', async () => {
     seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'old@example.test', 'active');
       INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1');`);
@@ -379,11 +362,11 @@ async function sessionCookieFor(userId: string): Promise<string> {
   return buildSessionCookie(session.token, true).split(';', 1)[0];
 }
 
-async function invokeHooks(env: Record<string, unknown>, headers: Record<string, string>, path = '/mail') {
+async function invokeHooks(env: Record<string, unknown>, headers: Record<string, string>, path = '/mail', method = 'GET') {
   const url = new URL(path, 'https://mail.example.test');
   const event = {
     url,
-    request: new Request(url, { headers }),
+    request: new Request(url, method === 'GET' ? { headers } : { method, headers: { ...headers, origin: url.origin, 'content-type': 'application/json' }, body: '{}' }),
     locals: { user: null as User | null, sessionId: null as string | null },
     platform: {
       env: { DB: db.d1, SESSION_SECRET, MAIL_DOMAIN, APP_URL: 'https://mail.example.test', ...env },
@@ -493,6 +476,27 @@ describe('hooks with the Access bridge', () => {
     expect(response.headers.get('set-cookie')).toBeNull();
   });
 
+  it('gives two cookie-less browsers their own working cookies, then reuses each without minting', async () => {
+    const header = { 'cf-access-jwt-assertion': await accessToken(SUB_A, 'person@example.test') };
+    const first = await invokeHooks(ACCESS_ENV, header);
+    const second = await invokeHooks(ACCESS_ENV, header);
+    const cookieA = first.response.headers.get('set-cookie')?.split(';', 1)[0];
+    const cookieB = second.response.headers.get('set-cookie')?.split(';', 1)[0];
+    expect(cookieA).toMatch(/^cmail_session=/);
+    expect(cookieB).toMatch(/^cmail_session=/);
+    expect(cookieA).not.toBe(cookieB);
+    expect(first.locals.sessionId).not.toBe(second.locals.sessionId);
+
+    const browsers: Array<[string, string | null]> = [[cookieA!, first.locals.sessionId], [cookieB!, second.locals.sessionId]];
+    for (const [cookie, sessionId] of browsers) {
+      const post = await invokeHooks(ACCESS_ENV, { ...header, cookie }, '/mail', 'POST');
+      expect(post.locals.user?.id).toBe('u1');
+      expect(post.locals.sessionId).toBe(sessionId);
+      expect(post.response.headers.get('set-cookie')).toBeNull();
+    }
+    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1' AND revoked = 0`)).toBe(2);
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.sign_in'`)).toBe(2);
+  });
   it('does not open an Access session on the bootstrap page', async () => {
     const { locals } = await invokeHooks(ACCESS_ENV, { 'cf-access-jwt-assertion': await accessToken(SUB_A, 'person@example.test') }, '/bootstrap');
     expect(locals.user).toBeNull();

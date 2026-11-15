@@ -300,21 +300,18 @@ async function denyAccess(
 }
 
 /**
- * Resolves the account and gives the request a session, with the same
- * country gate, session cap and audit trail as an OAuth sign-in.
- *
- * Every request already needs a valid Access token, so a request that
- * arrives without a cmail cookie reuses the account's newest live session
- * when it has one (no cookie, no sign-in row, no eviction of the user's
- * other sessions). A new session and cookie are minted only when none is
- * live. Returns null (signed out) on any refusal.
+ * Resolves the account and mints a session and cookie for this browser,
+ * with the same country gate, session cap, eviction and audit trail as an
+ * OAuth sign-in. hooks.server.ts calls this only when the request has no
+ * valid cmail cookie, so a browser mints once and then reuses its own
+ * cookie. Returns null (signed out) on any refusal.
  */
 export async function establishAccessSession(
   env: Record<string, unknown> & { DB: D1Database; SESSION_SECRET: string },
   identity: AccessIdentity,
   request: Request,
   options: { autoProvision: boolean; secureCookie: boolean },
-): Promise<{ user: User; sessionId: string; cookie: string | null } | null> {
+): Promise<{ user: User; sessionId: string; cookie: string } | null> {
   const db = env.DB;
   const clientIp = (request.headers.get('cf-connecting-ip') || '').slice(0, 64);
   const country = requestCountry(request);
@@ -349,18 +346,6 @@ export async function establishAccessSession(
       detail: 'Cloudflare Access email differs from the account email; binding kept by subject',
       ip_address: clientIp,
     });
-  }
-
-  const live = await db.prepare(
-    `SELECT id FROM sessions
-     WHERE user_id = ? AND revoked = 0 AND expires_at > datetime('now')
-     ORDER BY expires_at DESC, id DESC LIMIT 1`,
-  ).bind(user.id).first<{ id: string }>();
-  if (live) {
-    const current = await db.prepare(
-      `SELECT * FROM users WHERE id = ? AND status IN ('active', 'pending')`,
-    ).bind(user.id).first<User>();
-    return current ? { user: current, sessionId: live.id, cookie: null } : null;
   }
 
   await db.prepare(
