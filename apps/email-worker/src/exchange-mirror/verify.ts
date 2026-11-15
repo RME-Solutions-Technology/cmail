@@ -32,7 +32,8 @@ const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2
 const LOCAL = /^[^\s@<>",;:()[\]\\]{1,64}$/;
 
 export function headerValues(headers: readonly Header[] | undefined, name: string): string[] {
-  return (headers ?? []).filter((header) => header.key.toLowerCase() === name).map((header) => header.value ?? '');
+  // Keys are trimmed: `From :` (space before the colon) is still From.
+  return (headers ?? []).filter((header) => header.key.trim().toLowerCase() === name).map((header) => header.value ?? '');
 }
 
 /**
@@ -65,6 +66,38 @@ export function fromDomain(fromHeader: string | undefined): string | null {
   return domain;
 }
 
+/**
+ * Whether a raw message's header block is well formed: every line up to the
+ * first empty line is a field (`name:` with printable name characters, space
+ * allowed before the colon) or a folded continuation. postal-mime silently
+ * drops a line without a colon, so headers read from a message with one
+ * cannot be trusted to be all the headers it carries.
+ */
+export function headerBlockWellFormed(raw: Uint8Array): boolean {
+  const limit = Math.min(raw.byteLength, 512 * 1024);
+  // Find the empty line that ends the header block (LF LF or LF CR LF).
+  let end = -1;
+  for (let index = 1; index < limit; index += 1) {
+    if (raw[index] !== 0x0a) continue;
+    if (raw[index - 1] === 0x0a) { end = index - 1; break; }
+    if (raw[index - 1] === 0x0d && index >= 2 && raw[index - 2] === 0x0a) { end = index - 2; break; }
+  }
+  if (end < 0 && raw.byteLength > limit) return false;
+  const stop = end < 0 ? limit : end;
+  let block = '';
+  for (let index = 0; index < stop; index += 1) block += String.fromCharCode(raw[index] as number);
+  const lines = block.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    if (/^[ \t]/.test(line)) {
+      if (index === 0) return false;
+      continue;
+    }
+    if (!/^[!-9;-~]+[ \t]*:/.test(line)) return false;
+  }
+  return true;
+}
+
 export function verifyJournalReport(
   headers: readonly Header[] | undefined,
   config: Pick<ExchangeMirrorConfig, 'tenantId' | 'requireAuth' | 'authservId' | 'senderDomains'>,
@@ -90,6 +123,7 @@ export function verifyJournalReport(
   // DMARC is evaluated on the RFC 5322 From domain, so a pass ties the From
   // domain to an aligned SPF or DKIM result. When the boundary also names
   // the domain it evaluated, it must be the same one.
+  // An invalid header.from ('invalid') matches nothing, so it fails.
   const dmarcDomainOk = identities.dmarcHeaderFrom === null || identities.dmarcHeaderFrom === domain;
   if (identities.dmarc === 'pass' && domain && allowed.has(domain) && dmarcDomainOk) return { ok: true };
   if (identities.dkimPassDomains.some((item) => allowed.has(item))) return { ok: true };

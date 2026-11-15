@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseAuthenticationIdentities } from '../authentication-results';
+import { parseAuthenticationIdentities, parseAuthenticationResults } from '../authentication-results';
 import { exchangeMirrorConfig, isJournalAddress, maskJournalAddress } from '@cmail/shared/exchange-mirror';
 import { attachedOriginal, envelopeAddress, envelopeText, MAX_JOURNAL_RECIPIENTS, parseJournalEnvelope } from './report';
-import { fromDomain, verifyJournalReport } from './verify';
+import { fromDomain, headerBlockWellFormed, headerValues, verifyJournalReport } from './verify';
 import { sentCopyAllowed } from './ingest';
 import { JOURNAL, TENANT } from './fixtures';
 
@@ -100,6 +100,32 @@ describe('journal report trust', () => {
       .toEqual({ dmarc: 'pass', dkimPassDomains: [], dmarcHeaderFrom: 'example.test' });
   });
 
+  it('reads quoted property values whole, so they cannot inject a verdict or a domain', () => {
+    // A verdict inside a quoted smtp.mailfrom is not a verdict.
+    expect(parseAuthenticationResults('mx.example.test; spf=pass smtp.mailfrom="x dmarc=pass"', 'mx.example.test').dmarc).toBeNull();
+    expect(parseAuthenticationIdentities('mx.example.test; spf=pass smtp.mailfrom="x dmarc=pass"', 'mx.example.test').dmarc).toBeNull();
+    // A header.d inside a quoted reason is not the DKIM domain.
+    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="k header.d=tenant"', 'mx.example.test').dkimPassDomains).toEqual([]);
+    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="k header.d=example.test"', 'mx.example.test').dkimPassDomains).toEqual([]);
+    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="ok; fine" header.d=example.test', 'mx.example.test').dkimPassDomains).toEqual(['example.test']);
+    // An unclosed quote drops that result rather than half-reading it.
+    expect(parseAuthenticationResults('mx.example.test; dkim=pass reason="open header.d=example.test', 'mx.example.test').dkim).toBeNull();
+    // An invalid header.from is invalid, not absent, and fails the DMARC path.
+    expect(parseAuthenticationIdentities('mx.example.test; dmarc=pass header.from=evil.example_', 'mx.example.test').dmarcHeaderFrom).toBe('invalid');
+    const from = { key: 'from', value: 'Microsoft Outlook <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@example.test>' };
+    expect(verifyJournalReport([...headers([]), from, { key: 'authentication-results', value: 'mx.example.test; dkim=none; dmarc=pass header.from=evil.example_' }], config))
+      .toEqual({ ok: false, reason: 'auth_failed' });
+  });
+
+  it('trims header keys and refuses a header block with a colon-less line', () => {
+    expect(headerValues([{ key: 'From ', value: 'a@example.test' }], 'from')).toEqual(['a@example.test']);
+    const block = (lines: string[]) => new TextEncoder().encode(`${lines.join('\r\n')}\r\n\r\nbody\r\nX-Junk\r\n`);
+    expect(headerBlockWellFormed(block(['From : a@example.test', 'Subject: x', '  folded', 'X-MS-Exchange-CrossTenant-AuthAs: Internal']))).toBe(true);
+    expect(headerBlockWellFormed(block(['X-MS-Exchange-CrossTenant-AuthAs: Internal', 'X-Junk', 'X-MS-Exchange-CrossTenant-AuthAs: Anonymous']))).toBe(false);
+    expect(headerBlockWellFormed(block([' folded first', 'Subject: x']))).toBe(false);
+    expect(headerBlockWellFormed(new TextEncoder().encode('Subject: x\nFrom: a@example.test\n\nbody'))).toBe(true);
+  });
+
   it('takes the From domain only as a whole, plain domain', () => {
     expect(fromDomain('x@tenant.com_.evil.net')).toBeNull();
     expect(fromDomain('x@example.test_.evil.example')).toBeNull();
@@ -145,7 +171,7 @@ describe('journal report trust', () => {
   it('allows a Sent copy only with AuthAs Internal and this tenant on every instance (fail closed)', () => {
     const envelope = { sender: 'alice@example.test', onBehalfOf: null, messageId: null, recipients: [], addressingKnown: true };
     const internal = [{ key: 'x-ms-exchange-crosstenant-authas', value: 'Internal' }, { key: 'x-ms-exchange-crosstenant-id', value: TENANT }];
-    const base = { config: { mirrorSent: true, tenantId: TENANT }, envelope, innerHeaders: internal, innerFrom: 'alice@example.test', innerSender: null };
+    const base = { config: { mirrorSent: true, tenantId: TENANT }, envelope, innerHeaders: internal, innerFrom: 'alice@example.test', innerSender: null, innerHeaderBlockOk: true };
     expect(sentCopyAllowed(base)).toBe(true);
     expect(sentCopyAllowed({ ...base, innerFrom: 'boss@example.test', innerSender: 'alice@example.test' })).toBe(true);
     expect(sentCopyAllowed({ ...base, innerFrom: 'boss@example.test' })).toBe(false);
@@ -157,6 +183,7 @@ describe('journal report trust', () => {
     expect(sentCopyAllowed({ ...base, innerHeaders: [...internal, { key: 'x-ms-exchange-crosstenant-id', value: '00000000-0000-0000-0000-000000000001' }] })).toBe(false);
     expect(sentCopyAllowed({ ...base, config: { mirrorSent: true, tenantId: null } })).toBe(false);
     expect(sentCopyAllowed({ ...base, config: { mirrorSent: false, tenantId: TENANT } })).toBe(false);
+    expect(sentCopyAllowed({ ...base, innerHeaderBlockOk: false })).toBe(false);
   });
 });
 

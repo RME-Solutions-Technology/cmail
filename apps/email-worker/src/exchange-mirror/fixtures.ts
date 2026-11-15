@@ -22,6 +22,8 @@ export interface InnerOptions {
    * this tenant submitted (AuthAs Internal, this tenant id). false: none.
    */
   internal?: boolean;
+  /** Header lines written exactly as given (for malformed-header tests). */
+  rawHeaderLines?: string[];
   attachment?: { filename: string; type: string; base64: string };
 }
 
@@ -37,6 +39,7 @@ export function innerMessage(options: InnerOptions = {}): string {
     'Date: Mon, 16 Nov 2026 09:00:00 +1100',
     ...(options.internal === false ? [] : ['X-MS-Exchange-CrossTenant-AuthAs: Internal', `X-MS-Exchange-CrossTenant-Id: ${TENANT}`]),
     ...Object.entries(options.headers ?? {}).map(([key, value]) => `${key}: ${value}`),
+    ...(options.rawHeaderLines ?? []),
     'MIME-Version: 1.0',
   ];
   if (!options.attachment) {

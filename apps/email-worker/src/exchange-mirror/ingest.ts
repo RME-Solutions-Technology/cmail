@@ -11,7 +11,7 @@
 // is Cloudflare's own reject of a report that fails the checks in verify.ts.
 import PostalMime from 'postal-mime';
 import {
-  aliasesUsable,
+  aliasImportState,
   emptyMirrorCounts,
   exchangeMirrorConfig,
   loadExchangeMirrorSwitch,
@@ -30,7 +30,7 @@ import {
 import { mailboxStorageQuotaBytes } from '@cmail/shared/mailbox-storage';
 import { releaseInboundReservation, type InboundGuardEnv } from '../inbound-guard';
 import { attachedOriginal, envelopeText, parseJournalEnvelope, type JournalEnvelope } from './report';
-import { headerValues, verifyJournalReport } from './verify';
+import { headerBlockWellFormed, headerValues, verifyJournalReport } from './verify';
 
 /** SMTP text for a refused report. Deliberately says nothing about why. */
 export const JOURNAL_REJECT_RESPONSE = 'cmail: journal report refused';
@@ -121,6 +121,8 @@ interface Processed {
   counts: ExchangeMirrorCounts;
   /** First reason a copy was not filed, or ''. */
   skipReason: string;
+  /** A problem worth showing that filed nothing less (e.g. 'aliases_stale'), or ''. */
+  notice: string;
   /** A copy failed for a reason a later redelivery may fix. */
   incomplete: boolean;
   messageIdHeader: string | null;
@@ -268,9 +270,12 @@ export function sentCopyAllowed(input: {
   innerHeaders: readonly Header[] | undefined;
   innerFrom: string | null;
   innerSender: string | null;
+  /** headerBlockWellFormed() of the original: a dropped line could have hidden a header. */
+  innerHeaderBlockOk: boolean;
 }): boolean {
   const { config, envelope } = input;
   if (!config.mirrorSent || !config.tenantId || !envelope.sender || !envelope.addressingKnown) return false;
+  if (!input.innerHeaderBlockOk) return false;
   if (envelope.sender !== input.innerFrom && envelope.sender !== input.innerSender) return false;
   const authAs = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-authas').map((value) => value.trim().toLowerCase());
   if (!authAs.length || authAs.some((value) => value !== 'internal')) return false;
@@ -283,6 +288,7 @@ async function processReport(
   message: ForwardableEmailMessage,
   env: JournalEnv,
   tools: InboundTools,
+  now: number,
 ): Promise<Rejected | Processed> {
   const check = exchangeMirrorConfig(env);
   if (!check.configured) return { kind: 'rejected', reason: 'not_configured' };
@@ -312,7 +318,7 @@ async function processReport(
 
   const counts = emptyMirrorCounts();
   const skipAll = (reason: string, size: number): Processed => ({
-    kind: 'processed', counts: { ...counts, skipped: 1 }, skipReason: reason, incomplete: false,
+    kind: 'processed', counts: { ...counts, skipped: 1 }, skipReason: reason, notice: '', incomplete: false,
     messageIdHeader: null, headerFrom: '', subject: '', size,
   });
   if (original.raw.byteLength > inboundLimit) return skipAll('too_large', original.raw.byteLength);
@@ -371,8 +377,8 @@ async function processReport(
   // Map recipients (and the sender, for a Sent copy) to active mailboxes by
   // primary address or imported alias. Unknown addresses are only counted.
   const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : [])])];
-  const useAliases = await aliasesUsable(env.DB, Date.now()).catch(() => false);
-  const mailboxes = await resolveMailboxes(env.DB, lookups, useAliases);
+  const aliasState = await aliasImportState(env.DB, now).catch(() => 'stale' as const);
+  const mailboxes = await resolveMailboxes(env.DB, lookups, aliasState === 'fresh');
   const targets: Target[] = [];
   const seenInbound = new Set<string>();
   for (const recipient of envelope.recipients) {
@@ -387,7 +393,14 @@ async function processReport(
   }
   const innerSender = tools.inboundFromParticipant(inner.sender as ParsedMailbox | undefined, '', firstHeader(inner.headers as Header[], 'sender')).address || null;
   const senderMailbox = envelope.sender ? mailboxes.get(envelope.sender) : undefined;
-  if (senderMailbox && sentCopyAllowed({ config, envelope, innerHeaders: inner.headers as Header[], innerFrom: headerFrom || null, innerSender })) {
+  if (senderMailbox && sentCopyAllowed({
+    config,
+    envelope,
+    innerHeaders: inner.headers as Header[],
+    innerFrom: headerFrom || null,
+    innerSender,
+    innerHeaderBlockOk: headerBlockWellFormed(original.raw),
+  })) {
     targets.push({ mailboxId: senderMailbox, address: envelope.sender as string, role: 'sent' });
   }
 
@@ -534,7 +547,9 @@ async function processReport(
       }
     });
   }
-  return { kind: 'processed', counts, skipReason, incomplete, messageIdHeader, headerFrom, subject, size };
+  // Unmatched recipients while the alias import is on but stale: say why.
+  const notice = aliasState === 'stale' && counts.unmatched > 0 ? 'aliases_stale' : '';
+  return { kind: 'processed', counts, skipReason, notice, incomplete, messageIdHeader, headerFrom, subject, size };
 }
 
 async function audit(db: D1Database, eventType: string, detail: string): Promise<void> {
@@ -603,7 +618,7 @@ export async function handleJournalDelivery(
 
   const now = (deps.now ?? Date.now)();
   const envelopeFrom = (message.from || '').trim().toLowerCase();
-  const outcome = await processReport(message, env, tools);
+  const outcome = await processReport(message, env, tools, now);
 
   if (outcome.kind === 'rejected') {
     message.setReject(JOURNAL_REJECT_RESPONSE);
@@ -638,7 +653,7 @@ export async function handleJournalDelivery(
 
   const { counts } = outcome;
   try {
-    const day = await recordDay(env.DB, now, counts, outcome.skipReason);
+    const day = await recordDay(env.DB, now, counts, outcome.skipReason || outcome.notice);
     if (day && Number(day.received) === 1) await env.DB.prepare('DELETE FROM exchange_mirror_days WHERE day < ?').bind(mirrorDay(now - KEEP_DAYS * 86_400_000)).run();
     if (counts.skipped > 0 && (!day || Number(day.skipped) - counts.skipped < AUDIT_PER_DAY)) {
       await audit(env.DB, 'exchange_mirror.copies_skipped', `Exchange mirror skipped ${counts.skipped} cop${counts.skipped === 1 ? 'y' : 'ies'}: ${outcome.skipReason || 'unknown'}`);

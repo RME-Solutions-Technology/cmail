@@ -137,6 +137,30 @@ describe('Microsoft 365 alias import', () => {
     expect(await loadAliasSyncState(t.d1)).toMatchObject({ lastResult: 'ok', lastOkAt: T0 + 2 * HOUR });
   });
 
+  it('an approval is good for one run only: an unused one never authorises a later mass removal', async () => {
+    const t = setup();
+    const many = Array.from({ length: 10 }, (_, index) => `smtp:a${index}@${DOMAIN}`);
+    t.listing([{ id: oid(1), proxyAddresses: many }]);
+    await t.tick();
+    // Approved, but the next run removes nothing: the approval is still used up.
+    t.setting('m365_alias_sync_approve_removals', true);
+    t.advance(HOUR);
+    t.listing([{ id: oid(1), proxyAddresses: many }]);
+    expect(await t.tick()).toMatchObject({ status: 'worked', counts: { removed: 0 } });
+    expect(t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_alias_sync_approve_removals'`).get()).toEqual({ value: 'false' });
+    // A later mass removal is held.
+    t.advance(HOUR);
+    t.listing([{ id: oid(1), proxyAddresses: many.slice(0, 2) }]);
+    expect(await t.tick()).toMatchObject({ status: 'held', counts: { heldRemovals: 8 } });
+    expect(t.aliases()).toHaveLength(10);
+    // Also cleared by a run that fails.
+    t.setting('m365_alias_sync_approve_removals', true);
+    t.advance(HOUR);
+    t.fake.queue(ALIAS_USERS_URL, { status: 403, body: { error: { code: 'Authorization_RequestDenied' } } });
+    expect(await t.tick()).toEqual({ status: 'error' });
+    expect(t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_alias_sync_approve_removals'`).get()).toEqual({ value: 'false' });
+  });
+
   it('holds instead of removing everything when the listing comes back empty, and records a Graph failure', async () => {
     const t = setup();
     t.listing([ALICE, BOB]);

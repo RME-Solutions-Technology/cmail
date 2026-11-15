@@ -147,7 +147,7 @@ describe('Exchange mirror: filing', () => {
       const stale = withAliases(options);
       await stale.deliver(report());
       expect(stale.messages().filter((row) => row.direction === 'inbound').map((row) => row.mailbox_id), JSON.stringify(options)).toEqual(['mbx-carol']);
-      expect(stale.days()[0]).toMatchObject({ filed: 1, unmatched: 2 });
+      expect(stale.days()[0]).toMatchObject({ filed: 1, unmatched: 2, last_problem: options.importOn ? 'aliases_stale' : '' });
     }
   });
 
@@ -217,6 +217,15 @@ describe('Exchange mirror: Sent copies', () => {
       { name: 'a second AuthAs instance says Anonymous', report: journalReport({ inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-AuthAs': 'Anonymous' } }) }) },
       { name: 'a second tenant id instance is another tenant', report: journalReport({ inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-Id': OTHER_TENANT } }) }) },
       { name: 'sender is not the From', report: journalReport({ envelope: ['Sender: dave@example.test', ...defaultEnvelope().slice(1)] }) },
+      // A colon-less line, which postal-mime drops, between two AuthAs headers.
+      {
+        name: 'malformed header block (AuthAs: Internal / X-Junk / AuthAs: Anonymous)',
+        report: journalReport({ inner: innerMessage({ internal: false, rawHeaderLines: ['X-MS-Exchange-CrossTenant-AuthAs: Internal', `X-MS-Exchange-CrossTenant-Id: ${TENANT}`, 'X-Junk', 'X-MS-Exchange-CrossTenant-AuthAs: Anonymous'] }) }),
+      },
+      {
+        name: 'malformed header block (one colon-less line, headers otherwise internal)',
+        report: journalReport({ inner: innerMessage({ rawHeaderLines: ['X-Junk'] }) }),
+      },
       { name: 'switched off', report: journalReport(), env: { M365_JOURNAL_MIRROR_SENT: 'false' } },
       { name: 'not set (default off)', report: journalReport(), env: { M365_JOURNAL_MIRROR_SENT: undefined } },
     ];

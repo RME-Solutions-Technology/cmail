@@ -306,15 +306,18 @@ export async function loadAliasSyncState(db: D1Database): Promise<AliasSyncState
 }
 
 /**
- * Whether the Exchange mirror may use imported aliases now: the import is
- * switched on and its last full, successful run is under ALIAS_MAX_AGE_MS
- * old. Stale aliases are ignored rather than trusted.
+ * Whether the Exchange mirror may use imported aliases now. 'fresh': the
+ * import is switched on and its last full, successful run is under
+ * ALIAS_MAX_AGE_MS old. 'stale': switched on, but no such run. 'off':
+ * switched off. Only 'fresh' aliases are used; stale ones are ignored rather
+ * than trusted.
  */
-export async function aliasesUsable(db: D1Database, now: number): Promise<boolean> {
+export async function aliasImportState(db: D1Database, now: number): Promise<'off' | 'fresh' | 'stale'> {
   const row = await db.prepare(
-    `SELECT 1 AS ok FROM m365_alias_sync_state
-     WHERE id = 1 AND last_ok_at >= ?
-       AND EXISTS (SELECT 1 FROM org_settings WHERE key = ? AND value = 'true')`,
-  ).bind(now - ALIAS_MAX_AGE_MS, M365_ALIAS_SYNC_SETTING_ENABLED).first<{ ok: number }>();
-  return Boolean(row);
+    `SELECT (SELECT value FROM org_settings WHERE key = ?) AS enabled,
+            (SELECT last_ok_at FROM m365_alias_sync_state WHERE id = 1) AS last_ok_at`,
+  ).bind(M365_ALIAS_SYNC_SETTING_ENABLED).first<{ enabled: string | null; last_ok_at: number | null }>();
+  if (row?.enabled !== 'true') return 'off';
+  const lastOk = Number(row.last_ok_at ?? 0);
+  return lastOk > 0 && lastOk >= now - ALIAS_MAX_AGE_MS ? 'fresh' : 'stale';
 }

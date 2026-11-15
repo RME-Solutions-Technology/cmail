@@ -19,7 +19,7 @@
 //   least 5) applies its additions and moves but holds the removals until a
 //   manager approves them in Admin; the run counts as held, not successful.
 // - The mirror uses aliases only while the import is on and its last
-//   successful run is under 3 days old (aliasesUsable).
+//   successful run is under 3 days old (aliasImportState).
 // - Only the Exchange mirror reads aliases; normal inbound delivery does not.
 import {
   loadM365SyncSwitch,
@@ -113,163 +113,170 @@ export async function runAliasSyncTick(env: M365SyncWorkerEnv, deps: AliasSyncDe
     return { status: row && Number(row.lease_until) > now ? 'busy' : 'idle' };
   }
 
-  if (!check.configured) {
-    await saveState(db, now, { lastResult: 'not_configured', lastError: null, counts: null });
-    return { status: 'not_configured' };
-  }
-  const config = check.config;
-
+  // A manager's approval of a mass removal is good for this one run only:
+  // whatever this run does, an approval that was there when it started is
+  // cleared at its end, so it can never authorise a later run.
+  const approvedAtStart = await db.prepare('SELECT value FROM org_settings WHERE key = ?')
+    .bind(M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS).first<{ value: string }>()
+    .then((row) => row?.value === 'true', () => false);
   try {
-    // 1. Read every user's proxyAddresses (whole listing or nothing).
-    const graph = new GraphClient({
-      tenantId: config.tenantId,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      fetcher: deps.fetcher,
-      sleep: deps.sleep,
-      now: deps.now,
-    });
-    const byObject = new Map<string, string[]>();
-    let url: string | null = ALIAS_USERS_URL;
-    let pages = 0;
-    let usersSeen = 0;
-    while (url) {
-      if (pages >= MAX_PAGES) throw new GraphError('bad_response', 200);
-      const page = await graph.proxyAddressPage(url);
-      pages += 1;
-      usersSeen += page.users.length;
-      for (const user of page.users) {
-        const aliases = smtpAliases(user.proxyAddresses, config.mailDomain);
-        if (aliases.length) byObject.set(user.id.toLowerCase(), aliases);
+    if (!check.configured) {
+      await saveState(db, now, { lastResult: 'not_configured', lastError: null, counts: null });
+      return { status: 'not_configured' };
+    }
+    const config = check.config;
+
+    try {
+      // 1. Read every user's proxyAddresses (whole listing or nothing).
+      const graph = new GraphClient({
+        tenantId: config.tenantId,
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        fetcher: deps.fetcher,
+        sleep: deps.sleep,
+        now: deps.now,
+      });
+      const byObject = new Map<string, string[]>();
+      let url: string | null = ALIAS_USERS_URL;
+      let pages = 0;
+      let usersSeen = 0;
+      while (url) {
+        if (pages >= MAX_PAGES) throw new GraphError('bad_response', 200);
+        const page = await graph.proxyAddressPage(url);
+        pages += 1;
+        usersSeen += page.users.length;
+        for (const user of page.users) {
+          const aliases = smtpAliases(user.proxyAddresses, config.mailDomain);
+          if (aliases.length) byObject.set(user.id.toLowerCase(), aliases);
+        }
+        url = page.nextLink;
       }
-      url = page.nextLink;
-    }
 
-    // 2. Which cmail mailbox each linked object feeds (a person's own
-    //    personal mailbox, only when there is exactly one; a shared mailbox).
-    const { results: links } = await db.prepare(
-      `SELECT l.object_id AS object_id,
-              CASE WHEN l.kind = 'shared' THEN l.mailbox_id
-                   ELSE (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(m.id) END FROM mailboxes m
-                         WHERE m.owner_user_id = l.user_id AND m.type = 'personal')
-              END AS mailbox_id
-       FROM m365_sync_links l
-       WHERE l.source_state = 'in_scope'`,
-    ).all<LinkRow>();
-    const mailboxOf = new Map<string, string>();
-    for (const link of links ?? []) if (link.mailbox_id) mailboxOf.set(link.object_id.toLowerCase(), link.mailbox_id);
+      // 2. Which cmail mailbox each linked object feeds (a person's own
+      //    personal mailbox, only when there is exactly one; a shared mailbox).
+      const { results: links } = await db.prepare(
+        `SELECT l.object_id AS object_id,
+                CASE WHEN l.kind = 'shared' THEN l.mailbox_id
+                     ELSE (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(m.id) END FROM mailboxes m
+                           WHERE m.owner_user_id = l.user_id AND m.type = 'personal')
+                END AS mailbox_id
+         FROM m365_sync_links l
+         WHERE l.source_state = 'in_scope'`,
+      ).all<LinkRow>();
+      const mailboxOf = new Map<string, string>();
+      for (const link of links ?? []) if (link.mailbox_id) mailboxOf.set(link.object_id.toLowerCase(), link.mailbox_id);
 
-    // 3. Desired address -> mailbox, refusing double claims.
-    const counts = emptyAliasCounts();
-    const desired = new Map<string, { mailboxId: string; objectId: string }>();
-    const doubled = new Set<string>();
-    for (const [objectId, aliases] of byObject) {
-      const mailboxId = mailboxOf.get(objectId);
-      if (!mailboxId) {
-        counts.unlinked += 1;
-        continue;
+      // 3. Desired address -> mailbox, refusing double claims.
+      const counts = emptyAliasCounts();
+      const desired = new Map<string, { mailboxId: string; objectId: string }>();
+      const doubled = new Set<string>();
+      for (const [objectId, aliases] of byObject) {
+        const mailboxId = mailboxOf.get(objectId);
+        if (!mailboxId) {
+          counts.unlinked += 1;
+          continue;
+        }
+        for (const address of aliases) {
+          const existing = desired.get(address);
+          if (existing && existing.mailboxId !== mailboxId) doubled.add(address);
+          else desired.set(address, { mailboxId, objectId });
+        }
       }
-      for (const address of aliases) {
-        const existing = desired.get(address);
-        if (existing && existing.mailboxId !== mailboxId) doubled.add(address);
-        else desired.set(address, { mailboxId, objectId });
+      for (const address of doubled) desired.delete(address);
+      counts.conflicts += doubled.size;
+      if (desired.size > MAX_ALIASES) throw new GraphError('bad_response', 200);
+
+      // 4. Never another mailbox's own address (this also drops each mailbox's
+      //    own primary SMTP address, which Exchange lists too).
+      const addresses = [...desired.keys()];
+      for (const slice of chunks(addresses, IN_CHUNK)) {
+        const { results } = await db.prepare(
+          `SELECT address, id FROM mailboxes WHERE address IN (${slice.map(() => '?').join(', ')})`,
+        ).bind(...slice).all<{ address: string; id: string }>();
+        for (const row of results ?? []) {
+          const wanted = desired.get(row.address);
+          if (wanted && wanted.mailboxId !== row.id) counts.conflicts += 1;
+          desired.delete(row.address);
+        }
       }
-    }
-    for (const address of doubled) desired.delete(address);
-    counts.conflicts += doubled.size;
-    if (desired.size > MAX_ALIASES) throw new GraphError('bad_response', 200);
 
-    // 4. Never another mailbox's own address (this also drops each mailbox's
-    //    own primary SMTP address, which Exchange lists too).
-    const addresses = [...desired.keys()];
-    for (const slice of chunks(addresses, IN_CHUNK)) {
-      const { results } = await db.prepare(
-        `SELECT address, id FROM mailboxes WHERE address IN (${slice.map(() => '?').join(', ')})`,
-      ).bind(...slice).all<{ address: string; id: string }>();
-      for (const row of results ?? []) {
-        const wanted = desired.get(row.address);
-        if (wanted && wanted.mailboxId !== row.id) counts.conflicts += 1;
-        desired.delete(row.address);
+      // 5. Diff with what is held.
+      const { results: heldRows } = await db.prepare(
+        `SELECT address, mailbox_id FROM mailbox_aliases WHERE source = 'm365'`,
+      ).all<{ address: string; mailbox_id: string }>();
+      const held = new Map((heldRows ?? []).map((row) => [row.address, row.mailbox_id]));
+      const inserts: Array<[string, { mailboxId: string; objectId: string }]> = [];
+      const moves: Array<[string, { mailboxId: string; objectId: string }]> = [];
+      for (const entry of desired) {
+        const current = held.get(entry[0]);
+        if (current === undefined) inserts.push(entry);
+        else if (current !== entry[1].mailboxId) moves.push(entry);
       }
-    }
+      const removes = [...held.keys()].filter((address) => !desired.has(address));
+      counts.added = inserts.length;
+      counts.moved = moves.length;
+      counts.removed = removes.length;
+      counts.total = desired.size;
 
-    // 5. Diff with what is held.
-    const { results: heldRows } = await db.prepare(
-      `SELECT address, mailbox_id FROM mailbox_aliases WHERE source = 'm365'`,
-    ).all<{ address: string; mailbox_id: string }>();
-    const held = new Map((heldRows ?? []).map((row) => [row.address, row.mailbox_id]));
-    const inserts: Array<[string, { mailboxId: string; objectId: string }]> = [];
-    const moves: Array<[string, { mailboxId: string; objectId: string }]> = [];
-    for (const entry of desired) {
-      const current = held.get(entry[0]);
-      if (current === undefined) inserts.push(entry);
-      else if (current !== entry[1].mailboxId) moves.push(entry);
-    }
-    const removes = [...held.keys()].filter((address) => !desired.has(address));
-    counts.added = inserts.length;
-    counts.moved = moves.length;
-    counts.removed = removes.length;
-    counts.total = desired.size;
+      if ((usersSeen === 0 || desired.size === 0) && held.size > 0) {
+        // A listing that suddenly holds nothing is more likely a fault than a fact.
+        counts.removed = 0;
+        counts.total = held.size;
+        await saveState(db, now, { lastResult: 'held', lastError: 'empty_result', counts });
+        return { status: 'held', counts };
+      }
+      if (sync.dryRun) {
+        await saveState(db, now, { lastResult: 'dry_run', lastError: null, counts });
+        return { status: 'dry_run', counts };
+      }
 
-    if ((usersSeen === 0 || desired.size === 0) && held.size > 0) {
-      // A listing that suddenly holds nothing is more likely a fault than a fact.
-      counts.removed = 0;
-      counts.total = held.size;
-      await saveState(db, now, { lastResult: 'held', lastError: 'empty_result', counts });
-      return { status: 'held', counts };
-    }
-    if (sync.dryRun) {
-      await saveState(db, now, { lastResult: 'dry_run', lastError: null, counts });
-      return { status: 'dry_run', counts };
-    }
-
-    // Mass-removal brake: a listing that drops many aliases at once is more
-    // likely partial than real. Additions and moves still apply; removals
-    // wait until a manager approves them in Admin (one run).
-    const brakeLimit = Math.max(ALIAS_BRAKE_MIN, Math.floor((held.size * ALIAS_BRAKE_PERCENT) / 100));
-    let applyRemoves = removes;
-    if (removes.length > brakeLimit) {
-      const approval = await db.prepare('SELECT value FROM org_settings WHERE key = ?')
-        .bind(M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS).first<{ value: string }>();
-      if (approval?.value === 'true') {
-        await db.prepare(`UPDATE org_settings SET value = 'false', updated_at = datetime('now') WHERE key = ?`)
-          .bind(M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS).run();
-      } else {
+      // Mass-removal brake: a listing that drops many aliases at once is more
+      // likely partial than real. Additions and moves still apply; removals
+      // wait until a manager approves them in Admin (one run).
+      const brakeLimit = Math.max(ALIAS_BRAKE_MIN, Math.floor((held.size * ALIAS_BRAKE_PERCENT) / 100));
+      let applyRemoves = removes;
+      if (removes.length > brakeLimit && !approvedAtStart) {
         applyRemoves = [];
         counts.heldRemovals = removes.length;
         counts.removed = 0;
         counts.total = desired.size + removes.length;
       }
-    }
 
-    // 6. Apply: removals first, so an address that moved is free again.
-    const statements: D1PreparedStatement[] = [];
-    for (const address of applyRemoves) {
-      statements.push(db.prepare(`DELETE FROM mailbox_aliases WHERE address = ? AND source = 'm365'`).bind(address));
+      // 6. Apply: removals first, so an address that moved is free again.
+      const statements: D1PreparedStatement[] = [];
+      for (const address of applyRemoves) {
+        statements.push(db.prepare(`DELETE FROM mailbox_aliases WHERE address = ? AND source = 'm365'`).bind(address));
+      }
+      for (const [address, target] of [...moves, ...inserts]) {
+        statements.push(db.prepare(
+          `INSERT INTO mailbox_aliases (address, mailbox_id, source, object_id)
+           SELECT ?, ?, 'm365', ? WHERE NOT EXISTS (SELECT 1 FROM mailboxes WHERE address = ?)
+           ON CONFLICT(address) DO UPDATE SET mailbox_id = excluded.mailbox_id, object_id = excluded.object_id, updated_at = datetime('now')`,
+        ).bind(address, target.mailboxId, target.objectId, address));
+      }
+      for (const slice of chunks(statements, BATCH)) await db.batch(slice);
+      if (inserts.length || moves.length || applyRemoves.length || counts.heldRemovals) {
+        await db.prepare(
+          `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
+           VALUES (?, datetime('now'), NULL, 'system', 'm365_sync.aliases_changed', 'mailbox_aliases', ?)`,
+        ).bind(crypto.randomUUID(), `Microsoft 365 alias import: ${inserts.length} added, ${moves.length} moved, ${applyRemoves.length} removed, ${counts.conflicts} refused (conflict)${counts.heldRemovals ? `, ${counts.heldRemovals} removals held for approval` : ''}`).run();
+      }
+      if (counts.heldRemovals) {
+        await saveState(db, now, { lastResult: 'held', lastError: 'mass_removal', counts });
+        return { status: 'held', counts };
+      }
+      await saveState(db, now, { lastResult: 'ok', lastError: null, counts });
+      return { status: 'worked', counts };
+    } catch (caught) {
+      const code = caught instanceof GraphError ? caught.code : 'error';
+      await saveState(db, now, { lastResult: 'error', lastError: String(code).slice(0, 64), counts: null }).catch(() => undefined);
+      return { status: 'error' };
     }
-    for (const [address, target] of [...moves, ...inserts]) {
-      statements.push(db.prepare(
-        `INSERT INTO mailbox_aliases (address, mailbox_id, source, object_id)
-         SELECT ?, ?, 'm365', ? WHERE NOT EXISTS (SELECT 1 FROM mailboxes WHERE address = ?)
-         ON CONFLICT(address) DO UPDATE SET mailbox_id = excluded.mailbox_id, object_id = excluded.object_id, updated_at = datetime('now')`,
-      ).bind(address, target.mailboxId, target.objectId, address));
+  } finally {
+    if (approvedAtStart) {
+      await db.prepare(`UPDATE org_settings SET value = 'false', updated_at = datetime('now') WHERE key = ? AND value = 'true'`)
+        .bind(M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS).run()
+        .catch(() => console.error('Alias removal approval could not be cleared'));
     }
-    for (const slice of chunks(statements, BATCH)) await db.batch(slice);
-    if (inserts.length || moves.length || applyRemoves.length || counts.heldRemovals) {
-      await db.prepare(
-        `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
-         VALUES (?, datetime('now'), NULL, 'system', 'm365_sync.aliases_changed', 'mailbox_aliases', ?)`,
-      ).bind(crypto.randomUUID(), `Microsoft 365 alias import: ${inserts.length} added, ${moves.length} moved, ${applyRemoves.length} removed, ${counts.conflicts} refused (conflict)${counts.heldRemovals ? `, ${counts.heldRemovals} removals held for approval` : ''}`).run();
-    }
-    if (counts.heldRemovals) {
-      await saveState(db, now, { lastResult: 'held', lastError: 'mass_removal', counts });
-      return { status: 'held', counts };
-    }
-    await saveState(db, now, { lastResult: 'ok', lastError: null, counts });
-    return { status: 'worked', counts };
-  } catch (caught) {
-    const code = caught instanceof GraphError ? caught.code : 'error';
-    await saveState(db, now, { lastResult: 'error', lastError: String(code).slice(0, 64), counts: null }).catch(() => undefined);
-    return { status: 'error' };
   }
 }

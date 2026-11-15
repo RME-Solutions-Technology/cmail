@@ -167,8 +167,12 @@ a day, the daily count is always exact). It never reaches a mailbox.
    domains. Domains match only whole: the From must be one plain address
    whose domain is a valid domain name from end to end (so
    `x@example.com_.evil.example` is not `example.com`), and if the record
-   names the domain DMARC evaluated (`header.from`) it must be the same one.
-   Records added further out are never read.
+   names the domain DMARC evaluated (`header.from`) it must be the same one
+   (a `header.from` that is not a valid domain fails). The record is read
+   with an RFC 8601 tokenizer: a quoted value is one value, so text inside
+   it (`smtp.mailfrom="x dmarc=pass"`, `reason="k header.d=tenant"`) can
+   never count as a verdict or a domain. Records added further out are never
+   read.
 6. **A safe envelope:** a plain-text envelope (an HTML-only report is
    refused), exactly one attached original (`message/rfc822`), recipient
    lines only after the envelope's single Message-Id line (the Subject line
@@ -212,7 +216,9 @@ a day, the daily count is always exact). It never reaches a mailbox.
   `Recipient` lines); the sender is the original's From or Sender; and the
   original carries `X-MS-Exchange-CrossTenant-AuthAs: Internal` and
   `X-MS-Exchange-CrossTenant-Id` equal to `M365_TENANT_ID`, at least once
-  each and on every instance. A missing header means no Sent copy (fail
+  each and on every instance, and the original's header block is well
+  formed (a line without a colon, which the parser would silently drop, could
+  hide a header). Anything missing or malformed means no Sent copy (fail
   closed). So a forged From from the internet never lands in anyone's Sent
   folder. Why mirror Sent at all: after a switch, people need their recent
   sent mail to follow up and to keep reply threads together. It stays off
@@ -264,12 +270,13 @@ off by default) adds them:
   real change: it applies its additions and moves, holds the removals, and
   counts as held. Admin shows **Approve alias removals**; after a manager
   approves (audited, `org.m365_alias_removals_approved`), the next run
-  applies them, once. Changes are audited (`m365_sync.aliases_changed`,
+  applies them. An approval is cleared at the end of that next run whatever
+  it did, so an unused approval never authorises a later removal. Changes are audited (`m365_sync.aliases_changed`,
   counts only).
 - **Freshness.** The mirror uses imported aliases only while the import is
   switched on and its last full, successful run (not held, not failed) is
-  under 3 days old. Otherwise mail to an alias counts as unmatched, and
-  Admin says so.
+  under 3 days old. Otherwise mail to an alias counts as unmatched, Admin
+  says so, and the day's latest problem reads `aliases_stale`.
 - Only the Exchange mirror reads aliases. Normal inbound mail to an alias is
   still refused as an unknown address, so turning this on changes nothing for
   cmail's own mail. (Accepting aliases on the normal path, for after a switch

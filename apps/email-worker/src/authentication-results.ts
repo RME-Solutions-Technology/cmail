@@ -105,6 +105,102 @@ function safeIp(value: string): string | null {
   return null;
 }
 
+const IP_PROPERTIES = new Set(['smtp.remote-ip', 'policy.iprev', 'policy.client-ip']);
+
+interface ResinfoProperty {
+  /** Lower-case `ptype.property`, or `reason`. */
+  name: string;
+  /** Unquoted value, case kept. */
+  value: string;
+}
+
+interface Resinfo {
+  /** Lower-case method, version dropped (`dkim/1` is `dkim`). */
+  method: string;
+  /** Lower-case result. */
+  result: string;
+  properties: ResinfoProperty[];
+}
+
+/**
+ * Tokenizes the resinfo list of one record (comments already removed) per
+ * RFC 8601 §2.2: `;`-separated resinfos, each `method=result`, then an
+ * optional `reason=value` and `ptype.property=value` pairs, where a value is
+ * a token or a quoted string. Quoted strings are read whole, so text inside
+ * one (`smtp.mailfrom="x dmarc=pass"`, `reason="k header.d=tenant"`) is only
+ * ever that property's value. A resinfo that does not tokenize (unclosed
+ * quote, stray text) is dropped whole rather than half-read.
+ */
+function parseResinfos(body: string): Resinfo[] {
+  const out: Resinfo[] = [];
+  for (const segment of resultSegments(body)) {
+    const pairs = tokenizePairs(segment);
+    if (!pairs || !pairs.length) continue;
+    const [first, ...rest] = pairs;
+    if (!first || !/^[a-z0-9-]+(?:\/[0-9]+)?$/i.test(first.name) || !/^[a-z]+$/i.test(first.value) || first.quoted) continue;
+    out.push({
+      method: first.name.toLowerCase().replace(/\/[0-9]+$/, ''),
+      result: first.value.toLowerCase(),
+      properties: rest.map((pair) => ({ name: pair.name.toLowerCase(), value: pair.value })),
+    });
+  }
+  return out;
+}
+
+/** `name = value` pairs of one resinfo, or null if anything else is there. */
+function tokenizePairs(segment: string): Array<{ name: string; value: string; quoted: boolean }> | null {
+  const pairs: Array<{ name: string; value: string; quoted: boolean }> = [];
+  const text = segment;
+  let index = 0;
+  const skipSpace = () => {
+    while (index < text.length && /\s/.test(text[index] as string)) index += 1;
+  };
+  skipSpace();
+  while (index < text.length) {
+    const nameStart = index;
+    while (index < text.length && /[A-Za-z0-9._\/-]/.test(text[index] as string)) index += 1;
+    const name = text.slice(nameStart, index);
+    if (!name) return null;
+    skipSpace();
+    if (text[index] !== '=') return null;
+    index += 1;
+    skipSpace();
+    let value = '';
+    let quoted = false;
+    if (text[index] === '"') {
+      quoted = true;
+      index += 1;
+      let closed = false;
+      while (index < text.length) {
+        const char = text[index] as string;
+        if (char === '\\' && index + 1 < text.length) {
+          value += text[index + 1];
+          index += 2;
+        } else if (char === '"') {
+          index += 1;
+          closed = true;
+          break;
+        } else {
+          value += char;
+          index += 1;
+        }
+      }
+      if (!closed) return null;
+    } else {
+      const valueStart = index;
+      while (index < text.length && !/[\s";]/.test(text[index] as string)) index += 1;
+      value = text.slice(valueStart, index);
+      if (!value) return null;
+    }
+    pairs.push({ name, value, quoted });
+    const before = index;
+    skipSpace();
+    // Two pairs must be separated by space.
+    if (index < text.length && index === before) return null;
+  }
+  return pairs;
+}
+
 /**
  * @param headerValue The raw Authentication-Results header, or null.
  * @param trustedAuthservId The operator's boundary identifier. Empty disables
@@ -129,20 +225,24 @@ export function parseAuthenticationResults(
   if (identifier.toLowerCase() !== trusted) return { ...NO_FACTS };
 
   const facts: AuthenticationFacts = { ...NO_FACTS };
-  const body = record.slice(separator + 1);
+  const resinfos = parseResinfos(record.slice(separator + 1));
 
   for (const method of METHODS) {
-    // First occurrence wins; `\b` would match inside "dkim-atps".
-    const match = new RegExp(`(?:^|[;\\s])${method}\\s*=\\s*([A-Za-z]+)`, 'i').exec(body);
-    if (!match) continue;
-    const result = (match[1] || '').toLowerCase();
-    if (RESULTS.has(result)) facts[method as Method] = result;
+    // First occurrence wins. Only a resinfo's own leading `method=result`
+    // counts: text inside a quoted property value is never read as one.
+    const info = resinfos.find((item) => item.method === method);
+    if (info && RESULTS.has(info.result)) facts[method as Method] = info.result;
   }
 
   // Some boundaries publish the connecting address as a property. Take it only
   // from the record we already decided to trust.
-  const ip = /(?:smtp\.remote-ip|policy\.iprev|policy\.client-ip)\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(body);
-  if (ip?.[1]) facts.sourceIp = safeIp(ip[1]);
+  for (const info of resinfos) {
+    const ip = info.properties.find((property) => IP_PROPERTIES.has(property.name));
+    if (ip) {
+      facts.sourceIp = safeIp(ip.value);
+      break;
+    }
+  }
 
   return facts;
 }
@@ -152,8 +252,12 @@ export interface AuthenticationIdentities {
   dmarc: string | null;
   /** Lower-case `header.d` (or the domain of `header.i`) of every `dkim=pass` in the trusted record. */
   dkimPassDomains: string[];
-  /** Lower-case `header.from` of the first `dmarc=` result in the trusted record, when the boundary wrote one and it is a whole domain. */
-  dmarcHeaderFrom: string | null;
+  /**
+   * `header.from` of the first `dmarc=` result in the trusted record:
+   * the lower-case domain; 'invalid' when the boundary wrote a value that is
+   * not a whole domain (never treated as absent); null when it wrote none.
+   */
+  dmarcHeaderFrom: string | 'invalid' | null;
 }
 
 /** Split on `;` outside quoted strings (comments are already stripped). */
@@ -200,26 +304,22 @@ export function parseAuthenticationIdentities(
   const identifier = record.slice(0, separator).trim().split(/\s+/)[0] || '';
   if (identifier.toLowerCase() !== trusted) return none;
 
+  const resinfos = parseResinfos(record.slice(separator + 1));
   const domains = new Set<string>();
-  let dmarcHeaderFrom: string | null = null;
-  let dmarcSeen = false;
-  for (const segment of resultSegments(record.slice(separator + 1))) {
-    const dmarc = /^\s*dmarc\s*=\s*[A-Za-z]+\b([\s\S]*)$/i.exec(segment);
-    if (dmarc && !dmarcSeen) {
-      dmarcSeen = true;
-      const from = /(?:^|\s)header\.from\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(dmarc[1] || '')?.[1];
-      const value = from ? unquote(from).toLowerCase().replace(/\.$/, '') : '';
-      dmarcHeaderFrom = DKIM_DOMAIN.test(value) ? value : null;
-      continue;
-    }
-    const match = /^\s*dkim\s*=\s*([A-Za-z]+)\b([\s\S]*)$/i.exec(segment);
-    if (!match || (match[1] || '').toLowerCase() !== 'pass') continue;
-    const properties = match[2] || '';
-    const d = /(?:^|\s)header\.d\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(properties)?.[1];
-    const i = /(?:^|\s)header\.i\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(properties)?.[1];
-    const fromI = i ? unquote(i).split('@').pop() : '';
-    const domain = (d ? unquote(d) : fromI || '').toLowerCase().replace(/\.$/, '');
+  for (const info of resinfos) {
+    if (info.method !== 'dkim' || info.result !== 'pass') continue;
+    // header.d when present (an invalid one is not replaced by header.i).
+    const d = info.properties.find((property) => property.name === 'header.d');
+    const i = info.properties.find((property) => property.name === 'header.i');
+    const domain = (d ? d.value : (i?.value.split('@').pop() ?? '')).toLowerCase().replace(/\.$/, '');
     if (DKIM_DOMAIN.test(domain)) domains.add(domain);
+  }
+  let dmarcHeaderFrom: AuthenticationIdentities['dmarcHeaderFrom'] = null;
+  const dmarc = resinfos.find((info) => info.method === 'dmarc');
+  const from = dmarc?.properties.find((property) => property.name === 'header.from');
+  if (from) {
+    const value = from.value.toLowerCase().replace(/\.$/, '');
+    dmarcHeaderFrom = DKIM_DOMAIN.test(value) ? value : 'invalid';
   }
   return { dmarc: facts.dmarc, dkimPassDomains: [...domains], dmarcHeaderFrom };
 }
