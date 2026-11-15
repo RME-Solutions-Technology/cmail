@@ -12,6 +12,18 @@ export class Refusal extends Error {
   }
 }
 
+/**
+ * Exit codes, the same for both scripts (docs/standby-switch.md, "Exit codes").
+ * 1 always means nothing was changed.
+ */
+export const EXIT = Object.freeze({
+  DONE: 0,
+  NOTHING_CHANGED: 1,
+  NOT_AS_PLANNED: 2,
+  UNKNOWN: 3,
+  UNLOCKED_ONLY: 4,
+});
+
 /** Default dependencies; the tests replace every one of them. */
 export function realDeps() {
   return {
@@ -20,7 +32,26 @@ export function realDeps() {
     now: () => new Date(),
     out: (line) => process.stdout.write(`${line}\n`),
     prompt: askOnTerminal,
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
   };
+}
+
+/** Re-reads after a write, retrying a few times; returns null if every try failed. */
+export async function rereadWithRetry(read, deps, { attempts = 4, delayMs = 5000 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      deps.out(`  re-read ${attempt} of ${attempts} failed (${error instanceof CloudflareError ? error.message : 'error'})`);
+      if (attempt < attempts) await deps.sleep(delayMs);
+    }
+  }
+  return null;
+}
+
+/** A write whose outcome is unknown must never be reported as "nothing changed". */
+export function isDefiniteRefusal(error) {
+  return error instanceof CloudflareError && error.definite;
 }
 
 /** Typed confirmation. Only an interactive terminal counts: piped input is refused. */
@@ -66,7 +97,7 @@ export function parseOrRefuse(config) {
   }
 }
 
-/** Prints a CloudflareError or Refusal and returns the exit code. */
+/** For failures before any write: prints the error and returns 1 (nothing changed). */
 export function reportFailure(error, out, redact = (text) => text) {
   if (error instanceof Refusal) {
     out('');

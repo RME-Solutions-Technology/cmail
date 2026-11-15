@@ -31,6 +31,7 @@ export async function run(tool, argv, { mock, env = {}, answer, clock } = {}) {
     fetch: mock.fetch,
     now: () => new Date(clock ?? mock.now),
     out: (line) => lines.push(...String(line).split('\n')),
+    sleep: async () => {},
     prompt: async () => {
       state.prompted = true;
       if (answer instanceof Error) throw answer;

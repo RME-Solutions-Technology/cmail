@@ -17,7 +17,7 @@ test('dry run prints both change sets, writes a snapshot and changes nothing', a
   assert.match(result.text, /- delete {2}MX {2}example\.com {2}0 example-com\.mail\.protection\.outlook\.test/);
   for (const host of ['route1', 'route2', 'route3']) assert.match(result.text, new RegExp(`\\+ add {5}MX {2}example\\.com {2}\\d+ ${host}\\.mx\\.cloudflare\\.net`));
   assert.match(result.text, /Reverse change set/);
-  assert.match(result.text, /include:_spf\.mx\.cloudflare\.net include:spf\.protection\.outlook\.com -all/);
+  assert.match(result.text, /SPF left exactly as it is/);
   assert.match(result.text, /Standby probe: GREEN/);
   assert.equal(result.prompted, false);
   assert.deepEqual(mock.writes(), [], 'a dry run makes no write calls');
@@ -71,12 +71,15 @@ test('apply with the typed domain makes one batch and points the apex at Cloudfl
     assert.match(post.comment, /^cmail standby switch /);
   }
   assert.deepEqual(mock.apexMx(), ['13 route1.mx.cloudflare.net ttl 1', '24 route2.mx.cloudflare.net ttl 1', '86 route3.mx.cloudflare.net ttl 1']);
-  assert.deepEqual(mock.spf(), ['"v=spf1 include:_spf.mx.cloudflare.net include:spf.protection.outlook.com -all"']);
+  assert.deepEqual(mock.spf(), ['"v=spf1 include:spf.protection.outlook.com -all"'], 'SPF untouched by default');
   const files = await snapshotFiles(dir);
-  assert.equal(files.length, 2);
+  assert.equal(files.length, 2, 'the apply snapshot and its result; no dry-run snapshot on an apply');
   assert.ok(files.some((f) => /-switch-apply\.json$/.test(f)));
   const resultFile = files.find((f) => f.endsWith('.result.json'));
-  assert.equal(JSON.parse(await readFile(join(dir, resultFile), 'utf8')).verified, true);
+  const written = JSON.parse(await readFile(join(dir, resultFile), 'utf8'));
+  assert.equal(written.applied, true);
+  assert.equal(written.verified, true);
+  assert.match(result.text, /Rollback snapshot saved and checked/);
   assert.match(result.text, /switch-back\.mjs --domain example\.com --snapshot/);
 });
 
@@ -88,6 +91,7 @@ test('apply stops when the typed confirmation does not match', async (t) => {
     assert.equal(result.code, 1);
     assert.match(result.text, /confirmation did not match/);
     assert.deepEqual(mock.writes(), []);
+    assert.deepEqual(await snapshotFiles(dir), [], 'no apply snapshot before the confirmation passes');
   }
 });
 
@@ -285,46 +289,63 @@ test('Cloudflare MX come from Cloudflare, or from --cloudflare-mx only when Clou
   assert.match(r4.text, /not a valid \*\.mx\.cloudflare\.net host/);
 });
 
-test('SPF: keeps Exchange, adds Cloudflare once, and refuses what it cannot edit safely', async (t) => {
+test('SPF is left alone by default, even when it is one the edit would refuse', async (t) => {
+  const mock = newMock();
+  const r = await run('switch', [...withProbe(await tempDir(t)), '--apply'], { mock, answer: DOMAIN });
+  assert.equal(r.code, 0, r.text);
+  assert.equal(mock.writes()[0].body.patches.length, 0);
+  assert.deepEqual(mock.spf(), ['"v=spf1 include:spf.protection.outlook.com -all"']);
+  assert.match(r.text, /SPF left exactly as it is/);
+
+  const split = newMock((s) => { s.records[1] = { ...s.records[1], content: '"v=spf1 include:spf.protection.outlook.com " "-all"' }; });
+  const sp = await run('switch', withProbe(await tempDir(t)), { mock: split });
+  assert.equal(sp.code, 0, sp.text);
+});
+
+test('--spf-include: keeps Exchange, adds Cloudflare once, and refuses what it cannot edit safely', async (t) => {
   const spfAt = (content) => (s) => { s.records[1] = { ...s.records[1], content }; };
+  const flag = '--spf-include';
+
+  const plain = newMock();
+  const p = await run('switch', [...withProbe(await tempDir(t)), '--apply', flag], { mock: plain, answer: DOMAIN });
+  assert.equal(p.code, 0, p.text);
+  assert.deepEqual(plain.spf(), ['"v=spf1 include:_spf.mx.cloudflare.net include:spf.protection.outlook.com -all"']);
 
   const already = newMock(spfAt('"v=spf1 include:_spf.mx.cloudflare.net include:spf.protection.outlook.com -all"'));
-  const a = await run('switch', [...withProbe(await tempDir(t)), '--apply'], { mock: already, answer: DOMAIN });
+  const a = await run('switch', [...withProbe(await tempDir(t)), '--apply', flag], { mock: already, answer: DOMAIN });
   assert.equal(a.code, 0, a.text);
   assert.equal(already.writes()[0].body.patches.length, 0);
 
   const unquoted = newMock(spfAt('v=spf1 include:spf.protection.outlook.com ~all'));
-  const u = await run('switch', [...withProbe(await tempDir(t)), '--apply'], { mock: unquoted, answer: DOMAIN });
+  const u = await run('switch', [...withProbe(await tempDir(t)), '--apply', flag], { mock: unquoted, answer: DOMAIN });
   assert.equal(u.code, 0, u.text);
   assert.deepEqual(unquoted.spf(), ['v=spf1 include:_spf.mx.cloudflare.net include:spf.protection.outlook.com ~all']);
 
   const split = newMock(spfAt('"v=spf1 include:spf.protection.outlook.com " "-all"'));
-  const sp = await run('switch', withProbe(await tempDir(t)), { mock: split });
+  const sp = await run('switch', [...withProbe(await tempDir(t)), flag], { mock: split });
   assert.equal(sp.code, 1);
   assert.match(sp.text, /split into several strings/);
-  const spNo = await run('switch', [...withProbe(await tempDir(t)), '--no-spf-change'], { mock: split });
-  assert.equal(spNo.code, 0, spNo.text);
 
   const two = newMock((s) => { s.records.push({ type: 'TXT', name: DOMAIN, content: '"v=spf1 -all"', ttl: 1 }); });
-  const tw = await run('switch', withProbe(await tempDir(t)), { mock: two });
+  const tw = await run('switch', [...withProbe(await tempDir(t)), flag], { mock: two });
   assert.equal(tw.code, 1);
   assert.match(tw.text, /2 SPF records/);
 
   const many = newMock(spfAt(`"v=spf1 ${Array.from({ length: 10 }, (_, i) => `include:s${i}.example.net`).join(' ')} -all"`));
-  const m = await run('switch', withProbe(await tempDir(t)), { mock: many });
+  const m = await run('switch', [...withProbe(await tempDir(t)), flag], { mock: many });
   assert.equal(m.code, 1);
   assert.match(m.text, /11 top-level SPF lookups/);
 
+  const near = newMock(spfAt(`"v=spf1 ${Array.from({ length: 5 }, (_, i) => `include:s${i}.example.net`).join(' ')} -all"`));
+  const nr = await run('switch', [...withProbe(await tempDir(t)), flag], { mock: near });
+  assert.equal(nr.code, 0, nr.text);
+  assert.match(nr.text, /6 top-level lookups after the edit, close to the limit/);
+
   const none = newMock((s) => { s.records.splice(1, 1); });
-  const n = await run('switch', [...withProbe(await tempDir(t)), '--apply'], { mock: none, answer: DOMAIN });
+  const n = await run('switch', [...withProbe(await tempDir(t)), '--apply', flag], { mock: none, answer: DOMAIN });
   assert.equal(n.code, 0, n.text);
   assert.match(n.text, /does not create one/);
   assert.deepEqual(none.spf(), []);
-
-  const noChange = newMock();
-  const nc = await run('switch', [...withProbe(await tempDir(t)), '--apply', '--no-spf-change'], { mock: noChange, answer: DOMAIN });
-  assert.equal(nc.code, 0, nc.text);
-  assert.deepEqual(noChange.spf(), ['"v=spf1 include:spf.protection.outlook.com -all"']);
 });
 
 test('a failed batch changes nothing', async (t) => {
@@ -334,8 +355,45 @@ test('a failed batch changes nothing', async (t) => {
   const before = mock.apexMx();
   const result = await run('switch', [...withProbe(dir), '--apply'], { mock, answer: DOMAIN });
   assert.equal(result.code, 1);
-  assert.match(result.text, /STOPPED: POST .*dns_records\/batch: HTTP 400: 81053/);
+  assert.match(result.text, /Cloudflare refused the DNS batch \(POST .*dns_records\/batch: HTTP 400: 81053/);
+  assert.match(result.text, /Nothing was changed/);
   assert.deepEqual(mock.apexMx(), before);
+  const resultFile = (await snapshotFiles(dir)).find((f) => f.endsWith('.result.json'));
+  assert.equal(JSON.parse(await readFile(join(dir, resultFile), 'utf8')).applied, false);
+});
+
+test('a batch call with no clear answer is exit 3, never exit 1, with a re-read and the undo command', async (t) => {
+  const cases = [
+    ['lost before commit', 'before', /It looks NOT applied/],
+    ['lost after commit', 'after', /It looks APPLIED/],
+    ['5xx after commit', '502-after', /It looks APPLIED/],
+  ];
+  for (const [name, lost, pattern] of cases) {
+    const dir = await tempDir(t);
+    const mock = newMock();
+    mock.batchLost = lost;
+    const result = await run('switch', [...withProbe(dir), '--apply'], { mock, answer: DOMAIN });
+    assert.equal(result.code, 3, `${name}\n${result.text}`);
+    assert.match(result.text, /OUTCOME UNKNOWN/, name);
+    assert.match(result.text, pattern, name);
+    assert.match(result.text, /switch-back\.mjs --domain example\.com --snapshot ".*-switch-apply\.json"/, name);
+  }
+});
+
+test('a failed read-back after the batch is exit 3; a passing failure is retried', async (t) => {
+  const dir = await tempDir(t);
+  const mock = newMock();
+  mock.failReadsAfterBatch = 100;
+  const result = await run('switch', [...withProbe(dir), '--apply'], { mock, answer: DOMAIN });
+  assert.equal(result.code, 3, result.text);
+  assert.match(result.text, /could not be read back/);
+  assert.match(result.text, /switch-back\.mjs --domain example\.com --snapshot/);
+
+  const retried = newMock();
+  retried.failReadsAfterBatch = 2;
+  const ok = await run('switch', [...withProbe(await tempDir(t)), '--apply'], { mock: retried, answer: DOMAIN });
+  assert.equal(ok.code, 0, ok.text);
+  assert.match(ok.text, /re-read 1 of 4 failed/);
 });
 
 test('refuses to apply when records changed while waiting for the confirmation', async (t) => {

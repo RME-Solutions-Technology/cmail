@@ -8,19 +8,24 @@
 
 export const API_BASE = 'https://api.cloudflare.com/client/v4/';
 const TIMEOUT_MS = 30_000;
-const PER_PAGE = 500;
 const MAX_PAGES = 200;
+/** Documented per_page limits: zones and Email Routing rules 5 to 50; DNS records 1 to 5,000,000. */
+export const PER_PAGE = { zones: 50, rules: 50, dnsRecords: 100 };
 
 export class CloudflareError extends Error {
   /**
    * @param {string} message already redacted
-   * @param {{ status?: number, codes?: number[] }} [info]
+   * @param {{ status?: number, codes?: number[], definite?: boolean }} [info]
    */
   constructor(message, info = {}) {
     super(message);
     this.name = 'CloudflareError';
     this.status = info.status ?? 0;
     this.codes = info.codes ?? [];
+    // True only when Cloudflare answered with a 4xx and success:false: the
+    // request was refused, so a write made no change. A timeout, network
+    // error, 5xx or unreadable answer leaves the outcome unknown.
+    this.definite = info.definite === true;
   }
 }
 
@@ -81,21 +86,22 @@ export function createClient({ token, fetch: fetchImpl = globalThis.fetch }) {
       throw new CloudflareError(redact(`${method} ${url.pathname}: HTTP ${response.status}: ${detail}`), {
         status: response.status,
         codes,
+        definite: response.status >= 400 && response.status < 500 && payload?.success === false,
       });
     }
     return payload;
   }
 
   /** GET every page of a list endpoint. */
-  async function list(path, query = {}) {
+  async function list(path, query, perPage) {
     const items = [];
     for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const params = new URLSearchParams({ ...query, page: String(page), per_page: String(PER_PAGE) });
+      const params = new URLSearchParams({ ...query, page: String(page), per_page: String(perPage) });
       const payload = await request('GET', `${path}?${params}`);
       const result = Array.isArray(payload.result) ? payload.result : [];
       items.push(...result);
       const totalPages = Number(payload.result_info?.total_pages);
-      if (Number.isFinite(totalPages) ? page >= totalPages : result.length < PER_PAGE) return items;
+      if (Number.isFinite(totalPages) && totalPages > 0 ? page >= totalPages : result.length < perPage) return items;
     }
     throw new CloudflareError(`${path}: more than ${MAX_PAGES} pages; refusing to continue.`);
   }
@@ -105,15 +111,15 @@ export function createClient({ token, fetch: fetchImpl = globalThis.fetch }) {
     request,
     list,
     /** Zones whose name is exactly `name` (normally zero or one). */
-    findZones: async (name) => list('zones', { name }),
-    listRecords: async (zoneId, type) => list(`zones/${encodeId(zoneId)}/dns_records`, { type }),
+    findZones: async (name) => list('zones', { name }, PER_PAGE.zones),
+    listRecords: async (zoneId, type) => list(`zones/${encodeId(zoneId)}/dns_records`, { type }, PER_PAGE.dnsRecords),
     emailRoutingSettings: async (zoneId) => (await request('GET', `zones/${encodeId(zoneId)}/email/routing`)).result ?? null,
     emailRoutingRequiredDns: async (zoneId) => {
       const result = (await request('GET', `zones/${encodeId(zoneId)}/email/routing/dns`)).result;
       return Array.isArray(result) ? result : [];
     },
     emailRoutingCatchAll: async (zoneId) => (await request('GET', `zones/${encodeId(zoneId)}/email/routing/rules/catch_all`)).result ?? null,
-    emailRoutingRules: async (zoneId) => list(`zones/${encodeId(zoneId)}/email/routing/rules`),
+    emailRoutingRules: async (zoneId) => list(`zones/${encodeId(zoneId)}/email/routing/rules`, {}, PER_PAGE.rules),
     /** PATCH /zones/{id}/email/routing/dns: "Unlock MX records" (Zone Settings Write). */
     unlockEmailRoutingDns: async (zoneId) => (await request('PATCH', `zones/${encodeId(zoneId)}/email/routing/dns`, {})).result ?? null,
     /** POST /zones/{id}/dns_records/batch: one database transaction (DNS Write). */

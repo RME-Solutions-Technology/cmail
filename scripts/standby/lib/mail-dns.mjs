@@ -10,6 +10,8 @@ export const AUTO_TTL = 1;
 export const AUTO_TTL_SECONDS = 300;
 export const DEFAULT_MAX_TTL = 300;
 const SPF_LOOKUP_LIMIT = 10;
+/** Nested includes are not resolved, so warn well before the limit. */
+const SPF_LOOKUP_WARN = 6;
 
 const DOMAIN_RX = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 const HOST_RX = /^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -46,6 +48,9 @@ export function pickRecord(record) {
     ttl: Number(record.ttl),
     proxied: record.proxied === true,
     comment: typeof record.comment === 'string' ? record.comment : null,
+    // Recorded for the person reading the snapshot; switch-back does not
+    // re-apply tags (they are a plan-dependent feature).
+    tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
   };
 }
 
@@ -116,12 +121,16 @@ export function planSpf(spfRecords) {
     return { action: 'refuse', note: `Adding the include would make ${lookups} top-level SPF lookups (limit ${SPF_LOOKUP_LIMIT}). Flatten the record first, or run with --no-spf-change.` };
   }
   const afterContent = quoted ? `"${after}"` : after;
+  const near = lookups >= SPF_LOOKUP_WARN;
   return {
     action: 'edit',
     recordId: record.id,
     before: record.content,
     after: afterContent,
-    note: `Adds ${CLOUDFLARE_SPF_INCLUDE} and keeps every existing term (${lookups} top-level lookups after; nested includes are not counted, check the total with an SPF checker).`,
+    warn: near
+      ? `SPF would have ${lookups} top-level lookups after the edit, close to the limit of ${SPF_LOOKUP_LIMIT}; nested includes add more. Check the full count with an SPF checker before applying, or drop --spf-include.`
+      : null,
+    note: `Adds ${CLOUDFLARE_SPF_INCLUDE} and keeps every existing term (${lookups} top-level lookups after, plus whatever the includes themselves look up: check the full count with an SPF checker).`,
   };
 }
 
@@ -321,9 +330,9 @@ export function planSwitch({ domain, mail, targetMx, spfPlan, maxTtl, stamp }) {
 
 /**
  * The switch-back's change set, from a snapshot's original records and the
- * zone as it is now. Restores the original MX records exactly (host,
- * priority, TTL, comment) and the SPF record only if it still holds what the
- * switch wrote.
+ * zone as it is now. Re-creates the original MX records with their host,
+ * priority, TTL and comment (not their tags or record ids), and restores the
+ * SPF record only if it still holds what the switch wrote.
  */
 export function planSwitchBack({ snapshot, mail }) {
   const original = snapshot.records.apexMx;
@@ -373,6 +382,21 @@ function planSpfRestore(snapshot, mail) {
     describe: { before: change.after, after: change.before },
     note: 'Restores the SPF record to its content before the switch.',
   };
+}
+
+/**
+ * The apex as it will be after the switch's batch, for checking before the
+ * switch that switch-back would accept the snapshot and restore the originals.
+ */
+export function simulateSwitch(mail, plan) {
+  const deleted = new Set(plan.batch.deletes.map((d) => d.id));
+  const apexMx = [
+    ...mail.apexMx.filter((r) => !deleted.has(r.id)),
+    ...plan.batch.posts.map((p, i) => pickRecord({ ...p, id: `simulated-${i}` })),
+  ];
+  const patches = new Map(plan.batch.patches.map((p) => [p.id, p.content]));
+  const apexSpf = mail.apexSpf.map((r) => (patches.has(r.id) ? { ...r, content: patches.get(r.id) } : r));
+  return { ...mail, apexMx, apexSpf };
 }
 
 /** Did the zone end up as planned? Compares MX by host and priority, SPF by content. */

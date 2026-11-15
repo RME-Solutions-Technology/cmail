@@ -10,7 +10,7 @@ async function switched(t, mutate) {
   const dir = await tempDir(t);
   const mock = newMock(mutate);
   const before = { mx: mock.apexMx(), spf: mock.spf() };
-  const result = await run('switch', ['--domain', DOMAIN, '--worker', WORKER, '--snapshot-dir', dir, '--probe-d1', D1_ID, '--apply'], { mock, answer: DOMAIN });
+  const result = await run('switch', ['--domain', DOMAIN, '--worker', WORKER, '--snapshot-dir', dir, '--probe-d1', D1_ID, '--apply', '--spf-include'], { mock, answer: DOMAIN });
   assert.equal(result.code, 0, result.text);
   const files = await snapshotFiles(dir);
   const snapshot = join(dir, files.find((f) => f.endsWith('-switch-apply.json')));
@@ -122,8 +122,10 @@ test('refuses a tampered, foreign or wrong snapshot', async (t) => {
   assert.match(r4.text, /Cannot read the snapshot/);
 
   // A snapshot written by switch-back (after-switch state) cannot be used to switch back.
-  await run('switch-back', back(dir, snapshot), { mock });
-  const own = (await snapshotFiles(dir)).find((f) => /-switch-back-dry-run\.json$/.test(f) && !files.includes(f));
+  const applied = await run('switch-back', [...back(dir, snapshot), '--apply'], { mock, answer: DOMAIN });
+  assert.equal(applied.code, 0, applied.text);
+  mock.calls.length = 0;
+  const own = (await snapshotFiles(dir)).find((f) => /-switch-back-apply\.json$/.test(f) && !files.includes(f));
   const r5 = await run('switch-back', back(dir, join(dir, own)), { mock });
   assert.equal(r5.code, 1);
   assert.match(r5.text, /written by switch-back/);
@@ -161,7 +163,7 @@ test('a dry-run snapshot of the original records works for First-time setup', as
   const mock = newMock((s) => { s.settings = { enabled: false, status: 'unconfigured' }; s.requiredDns = []; s.catchAll = null; });
   const before = mock.apexMx();
   const spfBefore = mock.spf();
-  const dry = await run('switch', ['--domain', DOMAIN, '--worker', WORKER, '--snapshot-dir', dir], { mock });
+  const dry = await run('switch', ['--domain', DOMAIN, '--worker', WORKER, '--snapshot-dir', dir, '--spf-include'], { mock });
   assert.equal(dry.code, 1);
   const snapshot = join(dir, (await snapshotFiles(dir))[0]);
   // 2. A person onboards Email Routing in the dashboard: Exchange MX deleted, Cloudflare's added and locked.
@@ -178,10 +180,64 @@ test('a dry-run snapshot of the original records works for First-time setup', as
     }
   }
   // 3. switch-back from the dry-run snapshot puts Exchange back.
-  const result = await run('switch-back', [...back(dir, snapshot), '--apply'], { mock, answer: DOMAIN });
+  const refused = await run('switch-back', [...back(dir, snapshot), '--apply'], { mock, answer: DOMAIN });
+  assert.equal(refused.code, 1);
+  assert.match(refused.text, /--allow-dry-run-snapshot/);
+  const result = await run('switch-back', [...back(dir, snapshot), '--apply', '--allow-dry-run-snapshot'], { mock, answer: DOMAIN });
   assert.equal(result.code, 0, result.text);
-  assert.match(result.text, /dry-run snapshot/);
+  assert.match(result.text, /\(dry-run, taken/);
   assert.deepEqual(mock.apexMx(), before);
   assert.deepEqual(mock.spf(), spfBefore);
   assert.equal(mock.settings.status, 'unlocked');
+});
+
+test('unlock: only when the status says locked; a refused unlock is tolerated; --skip-unlock', async (t) => {
+  // "ready" but nothing locked (records the switch created): the unlock is refused, the batch still works.
+  const a = await switched(t);
+  a.mock.settings = { ...a.mock.settings, status: 'ready' };
+  for (const record of a.mock.records.values()) delete record.locked;
+  const ra = await run('switch-back', [...back(a.dir, a.snapshot), '--apply'], { mock: a.mock, answer: DOMAIN });
+  assert.equal(ra.code, 0, ra.text);
+  assert.match(ra.text, /Unlock was refused/);
+  assert.deepEqual(a.mock.apexMx(), a.before.mx);
+
+  // "misconfigured" is not a locked status: no unlock call, and locked records make the batch refuse cleanly.
+  const b = await switched(t);
+  b.mock.settings = { ...b.mock.settings, status: 'misconfigured' };
+  for (const record of b.mock.records.values()) if (record.name === DOMAIN && record.type === 'MX') record.locked = true;
+  const rb = await run('switch-back', [...back(b.dir, b.snapshot), '--apply'], { mock: b.mock, answer: DOMAIN });
+  assert.equal(rb.code, 1, rb.text);
+  assert.ok(!b.mock.writes().some((w) => w.method === 'PATCH'));
+  assert.match(rb.text, /Nothing was changed/);
+
+  // --skip-unlock never calls unlock, even when the status says locked.
+  const c = await switched(t);
+  c.mock.settings = { ...c.mock.settings, status: 'ready' };
+  const rc = await run('switch-back', [...back(c.dir, c.snapshot), '--apply', '--skip-unlock'], { mock: c.mock, answer: DOMAIN });
+  assert.equal(rc.code, 0, rc.text);
+  assert.ok(!c.mock.writes().some((w) => w.method === 'PATCH'));
+});
+
+test('exit 4 when records were unlocked but the batch was refused', async (t) => {
+  const { dir, mock, snapshot, before } = await switched(t);
+  mock.settings = { ...mock.settings, status: 'ready' };
+  for (const record of mock.records.values()) if (record.name === DOMAIN && record.type === 'MX') record.locked = true;
+  mock.failBatch = { code: 9000, message: 'Invalid record.' };
+  const result = await run('switch-back', [...back(dir, snapshot), '--apply'], { mock, answer: DOMAIN });
+  assert.equal(result.code, 4, result.text);
+  assert.match(result.text, /unlocked before the refusal; that is the only change/);
+  assert.notDeepEqual(mock.apexMx(), before.mx);
+});
+
+test('switch-back batch with no clear answer is exit 3 with the command to finish', async (t) => {
+  for (const [lost, pattern] of [['before', /does not look applied/], ['after', /It looks APPLIED/]]) {
+    const { dir, mock, snapshot } = await switched(t);
+    mock.batchLost = lost;
+    mock.batched = false;
+    const result = await run('switch-back', [...back(dir, snapshot), '--apply'], { mock, answer: DOMAIN });
+    assert.equal(result.code, 3, result.text);
+    assert.match(result.text, /OUTCOME UNKNOWN/);
+    assert.match(result.text, pattern);
+    assert.match(result.text, /switch-back\.mjs --domain example\.com --snapshot ".*-switch-apply\.json"/);
+  }
 });

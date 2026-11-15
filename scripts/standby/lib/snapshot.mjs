@@ -1,7 +1,8 @@
 // Rollback snapshots: the mail records as they were, the change set, and a
 // SHA-256 over both so an edited or truncated file is refused. Snapshots
-// hold real domain data: they are written owner-only, never overwritten,
-// and belong outside git (standby-snapshots/ is ignored).
+// hold real domain data: they are never overwritten, are created with mode
+// 0600 (which only POSIX systems honour; on Windows the folder's permissions
+// apply), and belong outside git (standby-snapshots/ is ignored).
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -89,8 +90,10 @@ export async function readSnapshot(file) {
   const mx = parsed.records?.apexMx;
   const valid = Array.isArray(mx) && mx.every((r) => r && r.type === 'MX' && typeof r.content === 'string'
     && Number.isInteger(r.priority) && r.priority >= 0 && r.priority <= 65535
-    && Number.isInteger(r.ttl) && (r.ttl === 1 || (r.ttl >= 60 && r.ttl <= 86400))
+    // 1 = Auto; 30 is the Enterprise minimum, 60 the others'.
+    && Number.isInteger(r.ttl) && (r.ttl === 1 || (r.ttl >= 30 && r.ttl <= 86400))
     && typeof r.name === 'string' && (r.comment === null || typeof r.comment === 'string'));
   if (!valid || !Array.isArray(parsed.records?.apexSpf)) return { ok: false, error: 'The snapshot records are malformed.' };
+  if (parsed.kind !== 'apply' && parsed.kind !== 'dry-run') return { ok: false, error: 'The snapshot kind is not recognised.' };
   return { ok: true, snapshot: parsed };
 }

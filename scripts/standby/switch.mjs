@@ -4,6 +4,7 @@
 // at an interactive terminal. DNS changes are run by a person, after the
 // owner's yes. Runbook, limits and what is proven: docs/standby-switch.md.
 
+import { unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClient, CloudflareError } from './lib/cloudflare.mjs';
@@ -21,11 +22,25 @@ import {
   targetCloudflareMx,
   ttlAdvice,
   ttlProblems,
+  planSwitchBack,
+  simulateSwitch,
   verifyMx,
 } from './lib/mail-dns.mjs';
 import { DEFAULT_PROBE_TIMEOUT_MINUTES, readProbe } from './lib/probe.mjs';
-import { DEFAULT_SNAPSHOT_DIR, writeResult, writeSnapshot } from './lib/snapshot.mjs';
-import { Refusal, formatRecord, parseOrRefuse, positiveInt, realDeps, refuseApplyInCi, reportFailure, token } from './lib/cli.mjs';
+import { DEFAULT_SNAPSHOT_DIR, readSnapshot, writeResult, writeSnapshot } from './lib/snapshot.mjs';
+import {
+  EXIT,
+  Refusal,
+  formatRecord,
+  isDefiniteRefusal,
+  parseOrRefuse,
+  positiveInt,
+  realDeps,
+  refuseApplyInCi,
+  reportFailure,
+  rereadWithRetry,
+  token,
+} from './lib/cli.mjs';
 
 const LABEL_RX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const WORKER_RX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -45,12 +60,15 @@ the owner's yes. Read docs/standby-switch.md first.
                                database (needs CLOUDFLARE_ACCOUNT_ID).
   --probe-timeout-minutes <n>  The probe's timeout (default ${DEFAULT_PROBE_TIMEOUT_MINUTES}).
   --skip-probe-check           Apply without a probe reading (says so loudly).
-  --no-spf-change              Leave the SPF record exactly as it is.
+  --spf-include                Also add include:_spf.mx.cloudflare.net to SPF (off by
+                               default: SPF, and so Exchange outbound, is untouched).
   --cloudflare-mx <list>       host:priority,... only when Cloudflare lists none.
   --standby-label <label>      The standby subdomain label (default "standby").
   --snapshot-dir <dir>         Where snapshots go (default ./${DEFAULT_SNAPSHOT_DIR}).
 
-Environment: CLOUDFLARE_API_TOKEN (never printed), CLOUDFLARE_ACCOUNT_ID (probe only).`;
+Environment: CLOUDFLARE_API_TOKEN (never printed), CLOUDFLARE_ACCOUNT_ID (probe only).
+Exit codes: 0 done or nothing to do; 1 nothing changed (refused or failed);
+2 applied but not as planned; 3 outcome unknown (read the output, check DNS).`;
 
 function parse(argv) {
   const { values } = parseOrRefuse({
@@ -65,7 +83,7 @@ function parse(argv) {
       'probe-d1': { type: 'string' },
       'probe-timeout-minutes': { type: 'string' },
       'skip-probe-check': { type: 'boolean', default: false },
-      'no-spf-change': { type: 'boolean', default: false },
+      'spf-include': { type: 'boolean', default: false },
       'cloudflare-mx': { type: 'string' },
       'standby-label': { type: 'string' },
       'snapshot-dir': { type: 'string' },
@@ -92,7 +110,7 @@ function parse(argv) {
       ? DEFAULT_PROBE_TIMEOUT_MINUTES
       : positiveInt(values['probe-timeout-minutes'], '--probe-timeout-minutes', { min: 2, max: 60 }),
     skipProbeCheck: values['skip-probe-check'],
-    noSpfChange: values['no-spf-change'],
+    spfInclude: values['spf-include'],
     cloudflareMx: values['cloudflare-mx'],
     standbyLabel,
     snapshotDir: values['snapshot-dir'] ?? DEFAULT_SNAPSHOT_DIR,
@@ -120,7 +138,7 @@ export async function runSwitch(argv, deps) {
     const opts = parse(argv);
     if (opts.help) {
       out(SWITCH_HELP);
-      return 0;
+      return EXIT.DONE;
     }
     if (opts.apply) refuseApplyInCi(deps.env);
     const client = createClient({ token: token(deps.env), fetch: deps.fetch });
@@ -218,8 +236,9 @@ export async function runSwitch(argv, deps) {
     const slow = ttlProblems(nonCf, opts.maxTtl);
     if (slow.length) problems.push(ttlAdvice(slow, opts.maxTtl).join('\n'));
 
-    const spfPlan = opts.noSpfChange ? { action: 'none', note: 'SPF left as it is (--no-spf-change).' } : planSpf(mail.apexSpf);
+    const spfPlan = opts.spfInclude ? planSpf(mail.apexSpf) : { action: 'none', note: 'SPF left exactly as it is (default; --spf-include adds Cloudflare\'s include).' };
     if (spfPlan.action === 'refuse') problems.push(spfPlan.note);
+    if (spfPlan.warn) warnings.push(spfPlan.warn);
 
     const stamp = now.toISOString();
     const plan = target.ok ? planSwitch({ domain: opts.domain, mail, targetMx: target.mx, spfPlan, maxTtl: opts.maxTtl, stamp }) : null;
@@ -229,7 +248,7 @@ export async function runSwitch(argv, deps) {
       out('');
       out(plan.note);
       out('Nothing to do. Use switch-back.mjs with the snapshot from before the switch to return mail to the other provider.');
-      return problems.length ? reportFailure(new Refusal(problems), out, redact) : 0;
+      return problems.length ? reportFailure(new Refusal(problems), out, redact) : EXIT.DONE;
     }
 
     if (plan?.ok) {
@@ -254,35 +273,32 @@ export async function runSwitch(argv, deps) {
       for (const w of warnings) out(`  ! ${w}`);
     }
 
-    // Snapshot: always when there is something to switch from, so even a
-    // refused dry run leaves a record of the original MX (First-time setup uses it).
-    const kind = opts.apply && !problems.length ? 'apply' : 'dry-run';
-    let snapshotFile = null;
-    if (nonCf.length) {
-      snapshotFile = await writeSnapshot(opts.snapshotDir, {
-        tool: 'switch',
-        kind,
-        takenAt: now,
-        domain: opts.domain,
-        zoneId: zone.id,
-        emailRouting: { enabled: settings?.enabled === true, status: settings?.status ?? null },
-        records: mail,
-        plan: {
-          // Recorded even when the switch is refused, so switch-back can undo
-          // the same SPF edit made by hand during First-time setup.
-          spf: spfPlan.action === 'edit' ? { before: spfPlan.before, after: spfPlan.after } : null,
-          cloudflareMx: target.ok ? target.mx : [],
-        },
-      });
-      out('');
-      out(`Snapshot saved (keep it private, not in git): ${snapshotFile}`);
-    }
+    const snapshotData = (kind, records) => ({
+      tool: 'switch',
+      kind,
+      takenAt: now,
+      domain: opts.domain,
+      zoneId: zone.id,
+      emailRouting: { enabled: settings?.enabled === true, status: settings?.status ?? null },
+      records,
+      plan: {
+        spf: spfPlan.action === 'edit' ? { before: spfPlan.before, after: spfPlan.after } : null,
+        cloudflareMx: target.ok ? target.mx : [],
+      },
+    });
 
-    if (problems.length) throw new Refusal(problems);
-    if (!opts.apply) {
+    // A dry run (or a refused --apply) always records the original MX, so even
+    // a refused run leaves a snapshot First-time setup can switch back from.
+    if (!opts.apply || problems.length) {
+      if (nonCf.length) {
+        const file = await writeSnapshot(opts.snapshotDir, snapshotData('dry-run', mail));
+        out('');
+        out(`Dry-run snapshot saved (keep it private, not in git): ${file}`);
+      }
+      if (problems.length) throw new Refusal(problems);
       out('');
       out('Dry run only. To apply, the owner says yes, then a person runs this again with --apply.');
-      return 0;
+      return EXIT.DONE;
     }
 
     // Apply.
@@ -297,37 +313,103 @@ export async function runSwitch(argv, deps) {
       throw new Refusal('The MX or SPF records changed since they were read. Run the dry run again.');
     }
 
-    await client.batchRecords(zone.id, plan.batch);
+    // The rollback snapshot is written, read back and proven usable by
+    // switch-back before anything changes.
+    const snapshotFile = await writeSnapshot(opts.snapshotDir, snapshotData('apply', fresh));
+    const proof = await proveSnapshot(snapshotFile, mail, plan);
+    if (!proof.ok) {
+      await unlink(snapshotFile).catch(() => {});
+      throw new Refusal(`The rollback snapshot failed its check (${proof.error}); it was removed.`);
+    }
+    out(`Rollback snapshot saved and checked (keep it private, not in git): ${snapshotFile}`);
+    const undo = `node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${snapshotFile}"`;
+
+    try {
+      await client.batchRecords(zone.id, plan.batch);
+    } catch (error) {
+      if (isDefiniteRefusal(error)) {
+        await writeResult(snapshotFile, { applied: false, at: deps.now().toISOString(), error: redact(error.message) }).catch(() => {});
+        out('');
+        out(`STOPPED: Cloudflare refused the DNS batch (${redact(error.message)}).`);
+        out('Nothing was changed: the batch is one transaction. The snapshot above is marked not applied.');
+        return EXIT.NOTHING_CHANGED;
+      }
+      return await unknownOutcome({ deps, out, redact, error, client, zone, opts, target, undo, snapshotFile });
+    }
     out('Applied the DNS batch.');
 
-    const after = await readMailRecords(client, zone.id, opts.domain, opts.standbyLabel);
+    const after = await rereadWithRetry(() => readMailRecords(client, zone.id, opts.domain, opts.standbyLabel), deps);
+    if (!after) {
+      out('');
+      out('OUTCOME UNKNOWN: Cloudflare accepted the batch, but the records could not be read back.');
+      out('Check DNS > Records in the dashboard now. To undo (safe whatever the state; dry run first):');
+      out(`  ${undo}`);
+      return EXIT.UNKNOWN;
+    }
     const mxCheck = verifyMx(after, target.mx);
     const spfOk = !plan.describe.spf || (after.apexSpf.length === 1 && after.apexSpf[0].content === plan.describe.spf.after);
     await writeResult(snapshotFile, {
-      appliedAt: deps.now().toISOString(),
+      applied: true,
+      at: deps.now().toISOString(),
       verified: mxCheck.ok && spfOk,
       apexMx: after.apexMx,
       apexSpf: after.apexSpf,
-    });
+    }).catch((error) => out(`  ! Could not write the result file (${error?.code || 'error'}); the snapshot is still valid.`));
     out('');
     out('Mail records after:');
     for (const r of [...after.apexMx, ...after.apexSpf]) out(`  ${formatRecord(r)}`);
     if (!mxCheck.ok || !spfOk) {
       out('');
-      out('WARNING: the records are not exactly as planned. Check them in the dashboard now.');
+      out('WARNING: the records are not as planned. Check them in the dashboard now.');
       if (mxCheck.missing.length) out(`  missing MX: ${mxCheck.missing.join(', ')}`);
       if (mxCheck.extra.length) out(`  unexpected MX: ${mxCheck.extra.join(', ')}`);
       if (!spfOk) out('  SPF is not what was planned.');
-      out(`  To undo: node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${snapshotFile}"`);
-      return 2;
+      out(`  To undo: ${undo}`);
+      return EXIT.NOT_AS_PLANNED;
     }
     out('');
-    out('Done. Next: verify mail is arriving (docs/standby-switch.md, "Verify").');
-    out(`To switch back: node scripts/standby/switch-back.mjs --domain ${opts.domain} --snapshot "${snapshotFile}"`);
-    return 0;
+    out('Done. Next: docs/standby-switch.md, "Verify mail is arriving".');
+    out(`To switch back: ${undo}`);
+    return EXIT.DONE;
   } catch (error) {
     return reportFailure(error, out, redact);
   }
+}
+
+/** Reads the snapshot back as switch-back would, and checks switch-back would restore the originals. */
+async function proveSnapshot(file, mail, plan) {
+  const read = await readSnapshot(file);
+  if (!read.ok) return read;
+  if (read.snapshot.kind !== 'apply') return { ok: false, error: 'wrong kind' };
+  const back = planSwitchBack({ snapshot: read.snapshot, mail: simulateSwitch(mail, plan) });
+  if (!back.ok) return back;
+  if (back.nothingToDo) return { ok: false, error: 'switch-back would see nothing to undo' };
+  if (!verifyMx({ apexMx: back.expectedMx }, mail.apexMx).ok || back.describe.posts.length !== mail.apexMx.length) {
+    return { ok: false, error: 'switch-back would not restore the original MX' };
+  }
+  if (plan.describe.spf && back.spf.action !== 'edit') return { ok: false, error: 'switch-back would not restore SPF' };
+  return { ok: true };
+}
+
+/** The batch call failed without a clear answer: Cloudflare may or may not have applied it. */
+async function unknownOutcome({ deps, out, redact, error, client, zone, opts, target, undo, snapshotFile }) {
+  out('');
+  out(`OUTCOME UNKNOWN: the DNS batch call failed without a clear answer (${redact(error?.message || String(error))}).`);
+  out('Cloudflare may or may not have applied it. Reading the records again:');
+  const now = await rereadWithRetry(() => readMailRecords(client, zone.id, opts.domain, opts.standbyLabel), deps);
+  if (now) {
+    for (const r of [...now.apexMx, ...now.apexSpf]) out(`  ${formatRecord(r)}`);
+    const applied = verifyMx(now, target.mx).ok;
+    const untouched = now.apexMx.every((r) => !isCloudflareMxHost(r.content));
+    out(applied ? 'It looks APPLIED: the apex MX are Cloudflare\'s.' : untouched ? 'It looks NOT applied: the apex MX are unchanged.' : 'The apex MX are in neither state. Check the dashboard now.');
+    await writeResult(snapshotFile, { applied: applied ? 'apparently' : untouched ? false : 'unknown', at: deps.now().toISOString(), apexMx: now.apexMx, apexSpf: now.apexSpf }).catch(() => {});
+  } else {
+    out('  The records could not be read. Check DNS > Records in the dashboard now.');
+  }
+  out(`Snapshot: ${snapshotFile}`);
+  out('To undo (safe whatever the state; run without --apply first to see what it would do):');
+  out(`  ${undo}`);
+  return EXIT.UNKNOWN;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

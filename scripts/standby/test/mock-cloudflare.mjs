@@ -64,6 +64,9 @@ export class MockCloudflare {
     for (const record of state.records) this.add(record);
     this.calls = [];
     this.failBatch = null;
+    this.batchLost = null;
+    this.batched = false;
+    this.failReadsAfterBatch = 0;
     this.errorFor = new Map();
     this.fetch = this.fetch.bind(this);
   }
@@ -99,15 +102,21 @@ export class MockCloudflare {
     const z = `/zones/${ZONE_ID}`;
 
     if (method === 'GET' && path === '/zones') {
-      return this.page(this.zones.filter((zone) => zone.name === url.searchParams.get('name')), url);
+      return this.page(this.zones.filter((zone) => zone.name === url.searchParams.get('name')), url, 5, 50);
     }
     if (method === 'GET' && path === `${z}/dns_records`) {
+      if (this.batched && this.failReadsAfterBatch > 0) {
+        this.failReadsAfterBatch -= 1;
+        return reply(503, { success: false, errors: [{ code: 10001, message: 'service unavailable' }] });
+      }
       const type = url.searchParams.get('type');
-      return this.page([...this.records.values()].filter((r) => !type || r.type === type).map(strip), url);
+      return this.page([...this.records.values()].filter((r) => !type || r.type === type).map(strip), url, 1, 5_000_000);
     }
     if (method === 'GET' && path === `${z}/email/routing`) return reply(200, ok(this.settings));
     if (method === 'GET' && path === `${z}/email/routing/dns`) return reply(200, ok(this.requiredDns));
     if (method === 'PATCH' && path === `${z}/email/routing/dns`) {
+      // Assumed behaviour: unlocking when nothing is locked is refused.
+      if (![...this.records.values()].some((r) => r.locked)) return reply(400, fail(2020, 'No locked records to unlock.'));
       for (const record of this.records.values()) delete record.locked;
       this.settings = { ...this.settings, status: 'unlocked' };
       return reply(200, ok(this.settings));
@@ -116,14 +125,28 @@ export class MockCloudflare {
       if (this.catchAll === undefined) return reply(200, ok(null));
       return this.catchAll ? reply(200, ok(this.catchAll)) : reply(404, fail(1000, 'not found'));
     }
-    if (method === 'GET' && path === `${z}/email/routing/rules`) return this.page(this.rules, url);
-    if (method === 'POST' && path === `${z}/dns_records/batch`) return this.batch(body);
+    if (method === 'GET' && path === `${z}/email/routing/rules`) return this.page(this.rules, url, 5, 50);
+    if (method === 'POST' && path === `${z}/dns_records/batch`) {
+      // Lost answers: the connection drops before or after Cloudflare commits.
+      if (this.batchLost === 'before') throw new Error('socket hang up');
+      const answer = this.batch(body);
+      this.batched = true;
+      if (this.batchLost === 'after') throw new Error('socket hang up');
+      if (this.batchLost === '502-after') return reply(502, { success: false, errors: [] });
+      return answer;
+    }
     if (method === 'POST' && path === `/accounts/${ACCOUNT_ID}/d1/database/${D1_ID}/query`) return this.query(body);
     return reply(404, fail(7003, 'Could not route to this path'));
   }
 
-  page(items, url) {
-    const perPage = Math.min(Number(url.searchParams.get('per_page') || 20), this.maxPerPage);
+  page(items, url, minPerPage, maxPerPage) {
+    const asked = Number(url.searchParams.get('per_page') || 20);
+    // The documented limits are enforced, as the real API validates them.
+    if (!Number.isInteger(asked) || asked < minPerPage || asked > maxPerPage) {
+      return reply(400, fail(1001, `per_page must be ${minPerPage} to ${maxPerPage}`));
+    }
+    // Small pages so every test also exercises pagination.
+    const perPage = Math.min(asked, this.maxPerPage);
     const page = Number(url.searchParams.get('page') || 1);
     const totalPages = Math.max(1, Math.ceil(items.length / perPage));
     return reply(200, {
