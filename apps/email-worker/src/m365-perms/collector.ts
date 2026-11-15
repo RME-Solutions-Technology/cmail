@@ -219,7 +219,9 @@ export class M365PermsCollector implements DurableObject {
       if (!runId) return Response.json({ status: 'bad_request' }, { status: 400 });
       const busy = await this.running();
       if (busy) return Response.json({ status: busy.runId === runId ? 'started' : 'busy' }, { status: busy.runId === runId ? 202 : 409 });
-      if (await this.run(runId)) return Response.json({ status: 'bad_request' }, { status: 409 });
+      // A retried /begin for a batch that already ran is answered as started:
+      // the Worker then reads its stored result (idempotent).
+      if (await this.run(runId)) return Response.json({ status: 'started' }, { status: 202 });
       // Prune old or surplus batches.
       const now = Date.now();
       for (const id of await this.index()) {

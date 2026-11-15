@@ -29,6 +29,17 @@ export interface M365PermsOverview {
   status: M365PermsStatusView | null;
   /** Assignments the sync made and still owns. */
   syncOwned: number;
+  /** A "Sync access now" request waiting for the hourly limit: when it can start (ISO), or null. */
+  queuedUntil: string | null;
+}
+
+/** "Sync access now" starts a pass at most once an hour (the Worker enforces it). */
+export const M365_PERMS_MANUAL_GAP_MS = 60 * 60 * 1000;
+
+function queuedUntil(toggle: M365PermsSwitch, state: { handledRequestAt?: string; lastStartedAt?: string | null; round?: unknown }): string | null {
+  if (!toggle.enabled || !toggle.requestedAt || toggle.requestedAt === state.handledRequestAt || !state.lastStartedAt) return null;
+  const at = Date.parse(state.lastStartedAt) + M365_PERMS_MANUAL_GAP_MS;
+  return Number.isNaN(at) ? null : new Date(at).toISOString();
 }
 
 const CONFIG_URL = 'https://cmail-email-worker.internal/internal/m365-perms/config';
@@ -63,9 +74,9 @@ export async function loadM365PermsOverview(env: { DB: D1Database; EMAIL_SERVICE
       loadM365PermsState(env.DB),
       env.DB.prepare('SELECT COUNT(*) AS n FROM m365_perm_ledger').first<{ n: number }>(),
     ]);
-    return { toggle, config, installed: true, status: m365PermsStatusView(state), syncOwned: Number(owned?.n ?? 0) };
+    return { toggle, config, installed: true, status: m365PermsStatusView(state), syncOwned: Number(owned?.n ?? 0), queuedUntil: queuedUntil(toggle, state) };
   } catch {
-    return { toggle, config, installed: false, status: null, syncOwned: 0 };
+    return { toggle, config, installed: false, status: null, syncOwned: 0, queuedUntil: null };
   }
 }
 
@@ -155,5 +166,11 @@ export async function applyM365PermsAdminAction(
   if (!toggle.enabled) return { ok: false, status: 409, error: 'Turn shared mailbox access on first' };
   await putSetting(db, M365_PERMS_SETTING_REQUESTED_AT, now.toISOString(), manager.id);
   await audit(db, { event_type: 'org.m365_perms_requested', actor_id: manager.id, actor_role: 'manager', detail: 'Requested a shared mailbox access collection now' });
+  const state = await loadM365PermsState(db).catch(() => null);
+  const last = state?.lastStartedAt ? Date.parse(state.lastStartedAt) : Number.NaN;
+  if (!Number.isNaN(last) && now.getTime() - last < M365_PERMS_MANUAL_GAP_MS) {
+    const runsAt = new Date(last + M365_PERMS_MANUAL_GAP_MS).toISOString().replace('T', ' ').slice(0, 16);
+    return { ok: true, message: `Queued: a collection already started in the last hour, so this one runs at about ${runsAt} UTC (on the first run after that).` };
+  }
   return { ok: true, message: 'A collection starts on the next run, within 15 minutes.' };
 }

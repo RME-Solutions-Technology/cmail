@@ -28,6 +28,18 @@
     empty_snapshot: 'Exchange listed no shared mailboxes at all. This usually means a wrong tenant, a lost role or an outage, not that nobody has access.',
   };
 
+  // What to do for each failure code shown in the alert.
+  const ADVICE: Record<string, string> = {
+    pass_too_long: 'The tenant has more shared mailboxes than one pass can read (24 batches of about 10 minutes). Nothing was changed. Ask the maintainers to raise the batch limit, or scope the reader app to fewer mailboxes.',
+    credentials_rejected: 'The reader app rejected the certificate or its consent. Check the certificate expiry and the Exchange.ManageAsApp consent.',
+    certificate_unreadable: 'The certificate secret could not be read. Check M365_EXO_CERT_PFX_B64 and M365_EXO_CERT_PASSWORD.',
+    exchange_role_missing: 'The reader app is missing a cmdlet in its Exchange role group. Rerun setup step 3 and the step 4 go/no-go.',
+    unauthorized: 'Exchange refused the reader app. Check its role group membership (setup step 3).',
+    collector_timeout: 'The collector did not finish in time. It is tried again automatically.',
+    bad_snapshot: 'The collector returned data that failed the checks. Nothing was changed; it is tried again automatically.',
+  };
+  const advice = $derived(status?.lastError ? ADVICE[status.lastError.code] ?? 'Check the guide for this code.' : '');
+
   function actionLabel(action: string, dryRun: boolean): string {
     const pair = ACTIONS[action];
     return pair ? pair[dryRun ? 1 : 0] : action;
@@ -70,8 +82,13 @@
 
     {#if status?.alert}
       <div class="notice notice-error" role="alert">
-        <strong>Collection failing.</strong> The last {status.consecutiveFailures} runs failed{status.lastError ? ` (${status.lastError.code})` : ''}. Every assignment was kept as it was. Check the reader app's certificate, its Exchange role and the container. The guide lists each code.
+        <strong>Collection failing.</strong> The last {status.consecutiveFailures} runs failed{status.lastError ? ` (${status.lastError.code})` : ''}. Every assignment was kept as it was. {advice}
       </div>
+    {:else if status?.lastError?.code === 'pass_too_long'}
+      <div class="notice notice-warning" role="status">{advice}</div>
+    {/if}
+    {#if overview.queuedUntil}
+      <p class="muted" role="status">Sync access now is queued: it runs at about {when(overview.queuedUntil)} (one manual collection an hour).</p>
     {/if}
 
     <section class="card" aria-labelledby="switch-heading">

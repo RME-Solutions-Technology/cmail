@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SNAPSHOT_MAX_BYTES, parseSnapshot } from './snapshot';
+import { SNAPSHOT_MAX_BYTES, SNAPSHOT_MAX_MAILBOXES, mergeBatches, parseSnapshot } from './snapshot';
 import { ORGANIZATION, TENANT_ID, snapshotOf } from './testing/fake-collector';
 
 const NOW = Date.parse('2026-11-15T01:00:00Z');
@@ -65,5 +65,30 @@ describe('snapshot schema', () => {
   it('rejects a snapshot over the size cap before parsing it', () => {
     const big = `{"pad":"${'x'.repeat(SNAPSHOT_MAX_BYTES)}"}`;
     expect(parseSnapshot(big, expected)).toEqual({ ok: false, reason: 'too_large' });
+  });
+});
+
+describe('joining the batches of a pass', () => {
+  const id = (n: number) => `00000000-0000-0000-aaaa-${String(n).padStart(12, '0')}`;
+  const box = (n: number) => ({ id: id(n), address: `shared${n}@example.test`, complete: true, grants: [] });
+  const batch = (ns: number[], complete: boolean) => snapshotOf(ns.map(box), { complete, mailboxCount: 99, nextCursor: complete ? '' : id(ns[ns.length - 1]) });
+
+  it('joins batches that follow each other', () => {
+    const merged = mergeBatches([{ startAfter: '', snapshot: batch([1, 2], false) }, { startAfter: id(2), snapshot: batch([3], true) }]);
+    expect(merged?.mailboxes.map((m) => m.id)).toEqual([id(1), id(2), id(3)]);
+  });
+
+  it('refuses ids that are not ascending across batches', () => {
+    const second = batch([3], true);
+    second.mailboxes.unshift(box(2));
+    expect(mergeBatches([{ startAfter: '', snapshot: batch([1, 2], false) }, { startAfter: id(1), snapshot: second }])).toBeNull();
+  });
+
+  it('refuses a pass over the total mailbox cap', () => {
+    const big = Array.from({ length: SNAPSHOT_MAX_MAILBOXES }, (_, n) => n + 1);
+    expect(mergeBatches([
+      { startAfter: '', snapshot: batch(big, false) },
+      { startAfter: id(big.length), snapshot: batch([big.length + 1], true) },
+    ])).toBeNull();
   });
 });

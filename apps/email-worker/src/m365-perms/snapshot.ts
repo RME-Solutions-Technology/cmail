@@ -199,6 +199,7 @@ export function mergeBatches(batches: Array<{ startAfter: string; snapshot: Perm
   const skipped = Object.fromEntries(SKIP_KEYS.map((k) => [k, 0])) as Record<SkipKey, number>;
   const errors = new Map<string, number>();
   let previous = '';
+  let grants = 0;
   let collectedAt = batches[0].snapshot.collectedAt;
   for (const [index, { startAfter, snapshot }] of batches.entries()) {
     const last = index === batches.length - 1;
@@ -206,7 +207,11 @@ export function mergeBatches(batches: Array<{ startAfter: string; snapshot: Perm
     if (snapshot.complete !== last) return null;
     for (const mailbox of snapshot.mailboxes) {
       if (startAfter && mailbox.id <= startAfter) return null;
+      // Globally ascending across batches: no overlap, no reordering.
+      if (mailboxes.length && mailbox.id <= mailboxes[mailboxes.length - 1].id) return null;
       mailboxes.push(mailbox);
+      grants += mailbox.grants.length;
+      if (mailboxes.length > SNAPSHOT_MAX_MAILBOXES || grants > SNAPSHOT_MAX_GRANTS) return null;
     }
     for (const k of SKIP_KEYS) skipped[k] += snapshot.skipped[k];
     for (const error of snapshot.errors) errors.set(error.code, (errors.get(error.code) ?? 0) + error.count);

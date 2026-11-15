@@ -55,6 +55,15 @@ describe('Shared mailbox access admin', () => {
     expect(t.setting('m365_perms_requested_at')).toBe('2026-11-16T00:00:00.000Z');
   });
 
+  it('says when a Sync access now inside the hourly limit will run', async () => {
+    const t = setup();
+    await applyM365PermsAdminAction(t.env, manager, 'enable');
+    t.sqlite.prepare(`INSERT INTO m365_perm_state (id, state) VALUES (1, ?)`).run(JSON.stringify({ lastStartedAt: '2026-11-16T00:00:00.000Z', handledRequestAt: '' }));
+    const result = await applyM365PermsAdminAction(t.env, manager, 'sync_now', new Date('2026-11-16T00:20:00Z'));
+    expect(result).toMatchObject({ ok: true, message: expect.stringContaining('2026-11-16 01:00 UTC') });
+    expect((await loadM365PermsOverview(t.env)).queuedUntil).toBe('2026-11-16T01:00:00.000Z');
+  });
+
   it('approves only the held round named exactly, and never an empty-snapshot hold', async () => {
     const t = setup();
     const held = (reason: string) => JSON.stringify({ round: { id: 'round-7', mode: 'live', phase: 'held', startedAt: '2026-11-16T00:00:00Z', brake: { reason, removals: 6, ledger: 10, percent: 60 }, counts: {}, report: [], groupsPending: [], groupsFailed: [], removalsAllowed: false, removalBudget: 6, snapshot: null } });

@@ -128,5 +128,9 @@ describe('collector Durable Object', () => {
     expect(fake.starts).toHaveLength(1);
     expect(await result(object)).toEqual({ status: 'done', text: '{"snapshot":true}' });
     expect(await result(object, 'round-9')).toEqual({ status: 'unknown' });
+    // A retried /begin for the finished batch is idempotent: no second run.
+    expect((await begin(object)).status).toBe(202);
+    expect(fake.starts).toHaveLength(1);
+    expect(await result(object)).toEqual({ status: 'done', text: '{"snapshot":true}' });
   });
 });
