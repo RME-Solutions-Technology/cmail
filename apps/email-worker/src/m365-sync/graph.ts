@@ -197,8 +197,13 @@ export class GraphClient {
     return value;
   }
 
-  /** One Graph call with in-place retry for short throttling waits. */
-  protected async graphJson(url: string, init: { method: 'GET' | 'POST' | 'PATCH'; body?: string }): Promise<unknown> {
+  /**
+   * One Graph call with in-place retry for short throttling waits. Pass
+   * `retryInPlace: false` for a call that is not safe to repeat blindly (a
+   * create): a 503/504 can arrive after the server already stored the
+   * result, so the caller must look before trying again.
+   */
+  protected async graphJson(url: string, init: { method: 'GET' | 'POST' | 'PATCH'; body?: string; retryInPlace?: boolean }): Promise<unknown> {
     if (!isGraphUrl(url)) throw new GraphError('bad_response', 0);
     for (let attempt = 0; ; attempt += 1) {
       const token = await this.accessToken();
@@ -214,7 +219,7 @@ export class GraphClient {
       if (RETRYABLE.has(response.status)) {
         await response.body?.cancel().catch(() => undefined);
         const wait = parseRetryAfter(response.headers.get('retry-after'), this.now());
-        if (wait !== null && wait <= MAX_INLINE_WAIT_SECONDS && attempt < MAX_INLINE_RETRIES) {
+        if (init.retryInPlace !== false && wait !== null && wait <= MAX_INLINE_WAIT_SECONDS && attempt < MAX_INLINE_RETRIES) {
           await this.sleep(wait * 1000);
           continue;
         }

@@ -42,8 +42,11 @@ describe('copy-back Graph client', () => {
   });
 
   it('returns the created id and rejects a malformed answer', async () => {
-    const { graph } = client(() => Response.json({ id: 'ex-1' }, { status: 201 }));
+    const { graph } = client(() => Response.json({ id: 'ex-1', isDraft: false }, { status: 201 }));
     expect(await graph.createMessage(USER, 'inbox', '{}')).toEqual({ id: 'ex-1', isDraft: false });
+    // No isDraft in the answer: unknown, which the caller treats as a draft.
+    const silent = client(() => Response.json({ id: 'ex-2' }, { status: 201 }));
+    expect(await silent.graph.createMessage(USER, 'inbox', '{}')).toEqual({ id: 'ex-2', isDraft: null });
     const bad = client(() => Response.json({ value: [{ id: 42 }] }));
     await expect(bad.graph.findCopy(USER, 'abc')).rejects.toMatchObject({ code: 'bad_response' });
   });
