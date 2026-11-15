@@ -39,11 +39,12 @@ export const actions: Actions = {
     if (!env || !await passkeyRouteContext(env, url)) return fail(404, { error: 'Passkey sign-in is off.' });
     const form = await request.formData();
     const result = await removeOwnPasskey(
-      env.DB,
+      env,
       locals.user,
       locals.sessionId,
       form.get('credential_id'),
       (request.headers.get('cf-connecting-ip') || '').slice(0, 64),
+      platform?.context?.waitUntil ? (promise) => platform.context.waitUntil(promise) : undefined,
     );
     if (!result.ok) return fail(result.status, { error: result.error });
     return { success: result.message };

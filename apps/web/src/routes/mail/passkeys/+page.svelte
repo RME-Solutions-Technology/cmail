@@ -69,7 +69,7 @@
           <Icon name="key" size={15} /> Add passkey
         </button>
       </form>
-      <p class="muted">For your safety, adding a passkey works for {data.freshMinutes} minutes after you sign in. You'll get an email when one is added.</p>
+      <p class="muted">For your safety, adding a passkey works for {data.freshMinutes} minutes after you sign in. You and your managers are emailed when one is added or removed.</p>
     {/if}
     {#if message}<p class:error-text={messageIsError} class="status-text" role="status" aria-live="polite">{message}</p>{/if}
   </section>

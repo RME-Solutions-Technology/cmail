@@ -13,7 +13,7 @@
   <header class="page-heading">
     <p class="eyebrow">Identity &amp; organisation</p>
     <h1 id="passkey-heading">Passkey sign-in</h1>
-    <p>Break-glass sign-in for when Microsoft or Cloudflare Access is unavailable. People add passkeys while signed in the normal way, then sign in at <code>/auth/passkey</code> with a passkey alone. Every passkey sign-in is audited, and managers are emailed when a manager uses one.</p>
+    <p>Break-glass sign-in for when Microsoft or Cloudflare Access is unavailable. People add passkeys while signed in the normal way, then sign in at <code>/auth/passkey</code> with a passkey alone. Every passkey sign-in is audited. Managers are emailed when a passkey is added or removed, when a manager signs in with one, and when this switch changes.</p>
   </header>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
@@ -24,6 +24,9 @@
   {:else}
     {#if !overview.installed}
       <div class="notice notice-error" role="alert">Database migration 0025 has not been applied. Run <code>pnpm db:migrate</code> first.</div>
+    {/if}
+    {#if !overview.mailConfigured}
+      <div class="notice notice-warning" role="status"><strong>Passkey notices can't be emailed.</strong> No outbound mail provider or system From address is set, so nobody is emailed when a passkey is added or removed (each missed notice is in the audit log as <code>email.failed</code>). Review "Newest passkeys" below regularly, or set up outbound mail in Admin &gt; Settings.</div>
     {/if}
     {#if !overview.rp}
       <div class="notice notice-warning" role="status"><strong>Not configured.</strong> Set <code>APP_URL</code> to this site's https address (for example <code>https://mail.example.com</code>). Passkeys are bound to that hostname.</div>
@@ -83,6 +86,23 @@
         <p class="muted">Nobody has added a passkey yet.</p>
       {/if}
     </section>
+
+    {#if overview.recent.length}
+      <section class="card" aria-labelledby="recent-heading">
+        <h2 id="recent-heading">Newest passkeys</h2>
+        <p class="muted">The 50 most recently added, newest first. Check that each one was expected.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Added</th><th>Person</th><th>Passkey name</th><th>Last used</th></tr></thead>
+            <tbody>
+              {#each overview.recent as item}
+                <tr><td>{when(item.createdAt)}</td><td>{item.email}</td><td>{item.deviceName}</td><td>{when(item.lastUsedAt)}</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {/if}
   {/if}
 </section>
 

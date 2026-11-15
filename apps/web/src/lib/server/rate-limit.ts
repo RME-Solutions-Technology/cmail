@@ -1,3 +1,19 @@
+/**
+ * Reads the current window's count without adding to it, for limits that
+ * count only failures: check with this first, consume only on failure.
+ */
+export async function rateLimitCount(
+  db: D1Database,
+  scope: string,
+  subject: string,
+  windowSeconds: number,
+): Promise<number> {
+  const bucket = Math.floor(Math.floor(Date.now() / 1000) / windowSeconds);
+  const row = await db.prepare('SELECT count FROM rate_limits WHERE key = ?')
+    .bind(`${scope}:${subject}:${bucket}`).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 export async function consumeRateLimit(
   db: D1Database,
   scope: string,

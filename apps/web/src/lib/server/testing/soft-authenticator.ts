@@ -77,15 +77,25 @@ export interface SoftAuthenticatorOptions {
   origin: string;
 }
 
+export type SoftAlgorithm = 'ES256' | 'Ed25519' | 'RS256';
+
 export class SoftAuthenticator {
   readonly credentialId = crypto.getRandomValues(new Uint8Array(32));
   counter = 0;
   userHandle: Uint8Array | null = null;
-  private keys!: CryptoKeyPair;
+  algorithm: SoftAlgorithm = 'ES256';
+  keys!: CryptoKeyPair;
 
-  static async create(): Promise<SoftAuthenticator> {
+  static async create(algorithm: SoftAlgorithm = 'ES256'): Promise<SoftAuthenticator> {
     const authenticator = new SoftAuthenticator();
-    authenticator.keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']) as CryptoKeyPair;
+    authenticator.algorithm = algorithm;
+    authenticator.keys = await crypto.subtle.generateKey(
+      algorithm === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' }
+        : algorithm === 'Ed25519' ? { name: 'Ed25519' }
+          : { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+      true,
+      ['sign', 'verify'],
+    ) as CryptoKeyPair;
     return authenticator;
   }
 
@@ -95,9 +105,22 @@ export class SoftAuthenticator {
 
   private async coseKey(): Promise<Uint8Array> {
     const jwk = await crypto.subtle.exportKey('jwk', this.keys.publicKey);
+    if (this.algorithm === 'Ed25519') {
+      return cbor(new Map<number, CborValue>([[1, 1], [3, -8], [-1, 6], [-2, fromBase64Url(jwk.x!)]]));
+    }
+    if (this.algorithm === 'RS256') {
+      return cbor(new Map<number, CborValue>([[1, 3], [3, -257], [-1, fromBase64Url(jwk.n!)], [-2, fromBase64Url(jwk.e!)]]));
+    }
     return cbor(new Map<number, CborValue>([
       [1, 2], [3, -7], [-1, 1], [-2, fromBase64Url(jwk.x!)], [-3, fromBase64Url(jwk.y!)],
     ]));
+  }
+
+  private async sign(privateKey: CryptoKey, algorithm: SoftAlgorithm, data: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+    if (algorithm === 'ES256') {
+      return rawToDer(new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, data)));
+    }
+    return new Uint8Array(await crypto.subtle.sign(algorithm === 'Ed25519' ? { name: 'Ed25519' } : { name: 'RSASSA-PKCS1-v1_5' }, privateKey, data));
   }
 
   /**
@@ -146,7 +169,13 @@ export class SoftAuthenticator {
   async authenticate(
     challenge: string,
     rp: SoftAuthenticatorOptions,
-    overrides: { origin?: string; rpId?: string; flags?: number; counter?: number; userHandle?: string | null; type?: string } = {},
+    overrides: {
+      origin?: string; rpId?: string; flags?: number; counter?: number; userHandle?: string | null; type?: string;
+      /** Flip one signature byte. */
+      tamper?: boolean;
+      /** Sign with another authenticator's private key (same algorithm). */
+      signWith?: SoftAuthenticator;
+    } = {},
   ): Promise<Record<string, unknown>> {
     const counter = overrides.counter ?? (this.counter += 1);
     const clientDataJSON = encoder.encode(JSON.stringify({
@@ -161,7 +190,9 @@ export class SoftAuthenticator {
       Uint8Array.of((counter >>> 24) & 0xff, (counter >> 16) & 0xff, (counter >> 8) & 0xff, counter & 0xff),
     );
     const signed = concat(authData, await sha256(clientDataJSON));
-    const raw = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, this.keys.privateKey, signed));
+    const signer = overrides.signWith ?? this;
+    const signature = await this.sign(signer.keys.privateKey, signer.algorithm, signed);
+    if (overrides.tamper) signature[signature.length - 1] ^= 0x01;
     const userHandle = overrides.userHandle === undefined
       ? (this.userHandle ? base64Url(this.userHandle) : undefined)
       : overrides.userHandle ?? undefined;
@@ -173,7 +204,7 @@ export class SoftAuthenticator {
       response: {
         clientDataJSON: base64Url(clientDataJSON),
         authenticatorData: base64Url(authData),
-        signature: base64Url(rawToDer(raw)),
+        signature: base64Url(signature),
         userHandle,
       },
     };

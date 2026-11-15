@@ -12,7 +12,9 @@ import {
   finishAuthentication,
   finishRegistration,
   listPasskeys,
+  bodyTooLarge,
   passkeyRouteContext,
+  rateLimitAddressKey,
   relyingParty,
   removeOwnPasskey,
   startAuthentication,
@@ -25,6 +27,9 @@ import { handle } from '../../hooks.server';
 import { GET as signInPage } from '../../routes/auth/passkey/+server';
 import { POST as optionsRoute } from '../../routes/auth/passkey/options/+server';
 import { POST as verifyRoute } from '../../routes/auth/passkey/verify/+server';
+import { POST as registerOptionsRoute } from '../../routes/api/passkeys/register/options/+server';
+import { POST as registerVerifyRoute } from '../../routes/api/passkeys/register/verify/+server';
+import { load as settingsPageLoad } from '../../routes/mail/passkeys/+page.server';
 
 const ORIGIN = 'https://mail.example.test';
 const SESSION_SECRET = 'test-only-session-secret-0123456789abcdef';
@@ -168,7 +173,7 @@ describe('registration', () => {
     expect(result.ok).toBe(true);
     const passkeySessionId = result.ok ? result.sessionId : '';
     expect(await startRegistration(env, rp, userRow('user-alice'), passkeySessionId)).toMatchObject({ ok: false, status: 403 });
-    expect(await removeOwnPasskey(env.DB, userRow('user-alice'), passkeySessionId, authenticator.id, '')).toMatchObject({ ok: false, status: 403 });
+    expect(await removeOwnPasskey(env, userRow('user-alice'), passkeySessionId, authenticator.id, '')).toMatchObject({ ok: false, status: 403 });
   });
 
   it('refuses a response from another origin or for another RP ID', async () => {
@@ -208,6 +213,27 @@ describe('registration', () => {
     expect(await finishRegistration(env, rp, user, otherSession, body, { clientIp: '' })).toMatchObject({ ok: false, status: 400 });
     // The wrong-session attempt consumed it: the right session cannot use it now either.
     expect(await finishRegistration(env, rp, user, sessionId, body, { clientIp: '' })).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it('registers and signs in with Ed25519 and RS256 passkeys too', async () => {
+    for (const algorithm of ['Ed25519', 'RS256'] as const) {
+      const authenticator = await SoftAuthenticator.create(algorithm);
+      expect(await register('user-alice', authenticator, undefined, algorithm)).toMatchObject({ ok: true });
+      expect((await signIn(authenticator)).result.ok).toBe(true);
+      expect((await signIn(authenticator, { tamper: true })).result.ok).toBe(false);
+    }
+  });
+
+  it('tells the person and the managers, and audits when mail is not set up', async () => {
+    await register('user-alice', await SoftAuthenticator.create());
+    // The fixture has no outbound provider: both notices are audited as undeliverable, never skipped silently.
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'email.failed' AND detail LIKE 'Passkey notice not sent%'`)).toBe(1);
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'email.failed' AND detail LIKE 'Manager notification undeliverable%'`)).toBe(1);
+  });
+
+  it('measures request bodies in bytes', () => {
+    expect(bodyTooLarge('a'.repeat(10), 10)).toBe(false);
+    expect(bodyTooLarge('é'.repeat(6), 10)).toBe(true);
   });
 
   it('refuses a credential id that is already registered to anyone', async () => {
@@ -269,7 +295,20 @@ describe('sign-in', () => {
     expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE passkey_credential_id IS NOT NULL`)).toBe(0);
   });
 
-  it('refuses a counter that goes backwards, and audits it as a possible copied passkey', async () => {
+  it('refuses a tampered signature and a signature from another key, without a counter alarm', async () => {
+    const other = await SoftAuthenticator.create();
+    fixture.db.sqlite.prepare('UPDATE passkey_credentials SET counter = 10 WHERE id = ?').run(authenticator.id);
+    for (const forged of [{ tamper: true, counter: 5 }, { signWith: other, counter: 5 }, { tamper: true }]) {
+      const { result } = await signIn(authenticator, forged);
+      expect(result).toEqual({ ok: false, status: 400, message: NEUTRAL_SIGNIN_FAILURE });
+    }
+    // A forged response with a lower counter must never look like a copied passkey.
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_counter_rollback'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_failed' AND detail LIKE '%verification_failed%'`)).toBe(3);
+    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE passkey_credential_id IS NOT NULL`)).toBe(0);
+  });
+
+  it('refuses a counter that goes backwards on a valid signature, and audits it as a possible copied passkey', async () => {
     fixture.db.sqlite.prepare('UPDATE passkey_credentials SET counter = 10 WHERE id = ?').run(authenticator.id);
     const { result } = await signIn(authenticator, { counter: 5 });
     expect(result).toEqual({ ok: false, status: 400, message: NEUTRAL_SIGNIN_FAILURE });
@@ -304,6 +343,15 @@ describe('sign-in', () => {
     expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE passkey_credential_id IS NOT NULL`)).toBe(0);
   });
 
+  it('audits unknown passkey ids as an aggregate count, not once per request', async () => {
+    for (let index = 0; index < 5; index += 1) {
+      const stranger = await SoftAuthenticator.create();
+      stranger.userHandle = new Uint8Array(32);
+      await signIn(stranger, {}, `192.0.2.${120 + index}`);
+    }
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_failed' AND detail LIKE '%unknown passkey%'`)).toBe(1);
+  });
+
   it('lets a manager in (break-glass) and audits it separately', async () => {
     const managerKey = await SoftAuthenticator.create();
     expect((await register('user-manager', managerKey)).ok).toBe(true);
@@ -321,38 +369,77 @@ describe('sign-in', () => {
     const result = await finishAuthentication(env, rp, request, { challengeId: start.challengeId, response }, { secureCookie: true });
     expect(result).toMatchObject({ ok: false, status: 403 });
     expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE passkey_credential_id IS NOT NULL`)).toBe(0);
+    // Not "used" until it actually opened a session.
+    expect(count('SELECT COUNT(*) AS n FROM passkey_credentials WHERE id = ? AND last_used_at IS NULL', authenticator.id)).toBe(1);
   });
 
-  it('rate-limits sign-in attempts per address, then answers the same for everyone', async () => {
-    for (let attempt = 0; attempt < RATE_LIMITS.verifyPerIp.limit; attempt += 1) {
+  it('counts only failures per address: then answers the same for everyone from it', async () => {
+    for (let attempt = 0; attempt < RATE_LIMITS.verifyFailuresPerIp.limit; attempt += 1) {
       await finishAuthentication(env, rp, verifyRequest('192.0.2.99'), {}, { secureCookie: true });
     }
     const limited = await finishAuthentication(env, rp, verifyRequest('192.0.2.99'), {}, { secureCookie: true });
     expect(limited).toEqual({ ok: false, status: 429, message: RATE_LIMITED_MESSAGE });
+    expect((await signIn(authenticator, {}, '192.0.2.99')).result).toEqual(limited);
+    // The limit was audited once, not per request.
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'security.rate_limit'`)).toBe(1);
     // Another address is unaffected.
     expect((await signIn(authenticator, {}, '192.0.2.100')).result.ok).toBe(true);
   });
 
-  it('rate-limits challenge requests per address', async () => {
+  it('successful sign-ins from one office address never use up its limit', async () => {
+    for (let attempt = 0; attempt < RATE_LIMITS.verifyFailuresPerIp.limit + 5; attempt += 1) {
+      expect((await signIn(authenticator, {}, '192.0.2.50')).result.ok).toBe(true);
+    }
+  });
+
+  it('keys IPv6 addresses on their /64', async () => {
+    expect(rateLimitAddressKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::/64');
+    expect(rateLimitAddressKey('2001:db8:1:2::1')).toBe('2001:db8:1:2::/64');
+    expect(rateLimitAddressKey('2001:DB8:0001:0002:0:0:0:ffff')).toBe('2001:db8:1:2::/64');
+    expect(rateLimitAddressKey('::ffff:192.0.2.1')).toBe('192.0.2.1');
+    expect(rateLimitAddressKey('192.0.2.1')).toBe('192.0.2.1');
+    for (let attempt = 0; attempt < RATE_LIMITS.verifyFailuresPerIp.limit; attempt += 1) {
+      await finishAuthentication(env, rp, verifyRequest(`2001:db8:1:2::${attempt + 1}`), {}, { secureCookie: true });
+    }
+    expect(await finishAuthentication(env, rp, verifyRequest('2001:db8:1:2:ffff::9'), {}, { secureCookie: true }))
+      .toMatchObject({ status: 429 });
+    expect((await signIn(authenticator, {}, '2001:db8:1:3::1')).result.ok).toBe(true);
+  });
+
+  it('rate-limits challenge requests per address without draining anyone else', async () => {
     const request = new Request(`${ORIGIN}/auth/passkey/options`, { method: 'POST', headers: { 'cf-connecting-ip': '192.0.2.77' } });
-    for (let attempt = 0; attempt < RATE_LIMITS.optionsPerIp.limit; attempt += 1) {
-      expect((await startAuthentication(env, rp, request)).ok).toBe(true);
+    for (let attempt = 0; attempt < RATE_LIMITS.optionsPerIp.limit + 50; attempt += 1) {
+      await startAuthentication(env, rp, request);
     }
     expect(await startAuthentication(env, rp, request)).toEqual({ ok: false, status: 429, message: RATE_LIMITED_MESSAGE });
+    // No global cap: refused requests from one host leave everyone else able to start.
+    for (let index = 0; index < 20; index += 1) {
+      const other = new Request(`${ORIGIN}/auth/passkey/options`, { method: 'POST', headers: { 'cf-connecting-ip': `198.51.100.${index}` } });
+      expect((await startAuthentication(env, rp, other)).ok).toBe(true);
+    }
+  });
+
+  it('limits valid sign-ins per passkey, counted only after the signature checks out', async () => {
+    // Forged attempts against this passkey do not use up its allowance.
+    for (let attempt = 0; attempt < 8; attempt += 1) await signIn(authenticator, { tamper: true }, `198.51.100.${attempt}`);
+    for (let attempt = 0; attempt < RATE_LIMITS.verifyPerCredential.limit; attempt += 1) {
+      expect((await signIn(authenticator, {}, '192.0.2.60')).result.ok).toBe(true);
+    }
+    expect((await signIn(authenticator, {}, '192.0.2.61')).result).toEqual({ ok: false, status: 429, message: RATE_LIMITED_MESSAGE });
   });
 
   it('removing a passkey ends the sessions it opened', async () => {
     const { result } = await signIn(authenticator);
     if (!result.ok) throw new Error('sign-in failed');
     const { sessionId } = await ordinarySession('user-alice');
-    expect(await removeOwnPasskey(env.DB, userRow('user-alice'), sessionId, authenticator.id, '')).toMatchObject({ ok: true });
+    expect(await removeOwnPasskey(env, userRow('user-alice'), sessionId, authenticator.id, '')).toMatchObject({ ok: true });
     expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE id = ? AND revoked = 0`, result.sessionId)).toBe(0);
     expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_removed'`)).toBe(1);
   });
 
   it('a person cannot remove someone else\'s passkey', async () => {
     const { sessionId } = await ordinarySession('user-bob');
-    expect(await removeOwnPasskey(env.DB, userRow('user-bob'), sessionId, authenticator.id, '')).toMatchObject({ ok: false, status: 404 });
+    expect(await removeOwnPasskey(env, userRow('user-bob'), sessionId, authenticator.id, '')).toMatchObject({ ok: false, status: 404 });
     expect(count('SELECT COUNT(*) AS n FROM passkey_credentials WHERE id = ?', authenticator.id)).toBe(1);
   });
 });
@@ -383,13 +470,14 @@ describe('admin switch', () => {
 describe('routes when switched off', () => {
   beforeEach(() => enable(false));
 
-  function routeEvent(path: string, method = 'GET', body?: string) {
+  function routeEvent(path: string, method = 'GET', body?: string, user: User | null = null, sessionId: string | null = null) {
     const url = new URL(path, ORIGIN);
     return {
       url,
       request: new Request(url, body === undefined ? { method } : { method, body, headers: { 'content-type': 'application/json' } }),
       platform: fixture.platform,
-      locals: { user: null, sessionId: null },
+      locals: { user, sessionId },
+      setHeaders: () => undefined,
     } as never;
   }
 
@@ -401,6 +489,14 @@ describe('routes when switched off', () => {
     ]) {
       await expect(call()).rejects.toMatchObject({ status: 404 });
     }
+  });
+
+  it('answers 404 on registration and hides Mail > Settings > Passkeys, even for a signed-in person', async () => {
+    const { sessionId } = await ordinarySession('user-alice');
+    const alice = userRow('user-alice');
+    await expect(registerOptionsRoute(routeEvent('/api/passkeys/register/options', 'POST', '{}', alice, sessionId))).rejects.toMatchObject({ status: 404 });
+    await expect(registerVerifyRoute(routeEvent('/api/passkeys/register/verify', 'POST', '{}', alice, sessionId))).rejects.toMatchObject({ status: 404 });
+    await expect(settingsPageLoad(routeEvent('/mail/passkeys', 'GET', undefined, alice, sessionId))).rejects.toMatchObject({ status: 404 });
   });
 
   it('serves the page with a strict CSP when on', async () => {
@@ -523,17 +619,67 @@ describe('hooks: passkey sessions and the Access bridge', () => {
     expect(response.headers.get('set-cookie')).toBeNull();
   });
 
-  it('Access on, token for someone else: the passkey session is set aside, never revoked', async () => {
-    const { locals } = await invokeHooks(ACCESS_ENV, {
+  it('Access on, token for someone else, no new session: the passkey session is set aside, not revoked', async () => {
+    // /auth/* never opens an Access session, so the passkey cookie stays in place.
+    const { locals, response } = await invokeHooks(ACCESS_ENV, {
+      cookie: passkeyCookie,
+      'cf-access-jwt-assertion': await accessToken('sub-bob', 'bob@example.test'),
+    }, '/auth/email');
+    expect(locals.user).toBeNull();
+    expect(response.headers.get('set-cookie')).toBeNull();
+    expect(count('SELECT COUNT(*) AS n FROM sessions WHERE id = ? AND revoked = 0', passkeySessionId)).toBe(1);
+  });
+
+  it('Access on, token for someone else: Access signs them in and the overwritten passkey session is revoked', async () => {
+    const { locals, response } = await invokeHooks(ACCESS_ENV, {
       cookie: passkeyCookie,
       'cf-access-jwt-assertion': await accessToken('sub-bob', 'bob@example.test'),
     });
     expect(locals.user?.id).toBe('user-bob');
-    expect(count('SELECT COUNT(*) AS n FROM sessions WHERE id = ? AND revoked = 0', passkeySessionId)).toBe(1);
+    expect(response.headers.get('set-cookie')).toMatch(/^cmail_session=/);
+    expect(count('SELECT COUNT(*) AS n FROM sessions WHERE id = ? AND revoked = 1', passkeySessionId)).toBe(1);
     // And an ordinary session in the same position is still revoked.
     const { cookie, sessionId } = await ordinarySession('user-alice');
     await invokeHooks(ACCESS_ENV, { cookie, 'cf-access-jwt-assertion': await accessToken('sub-bob', 'bob@example.test') });
     expect(count('SELECT COUNT(*) AS n FROM sessions WHERE id = ? AND revoked = 1', sessionId)).toBe(1);
+  });
+
+  it('a passkey session is refused on any origin but APP_URL (for example *.pages.dev), and left alone', async () => {
+    const url = new URL('/mail', 'https://cmail-example.pages.dev');
+    const event = {
+      url,
+      request: new Request(url, { headers: { cookie: passkeyCookie } }),
+      locals: { user: null as User | null, sessionId: null as string | null, passkeySession: false as boolean | undefined },
+      platform: { env, context: { waitUntil: vi.fn() }, caches: {} },
+    };
+    await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => new Response('ok') });
+    expect(event.locals.user).toBeNull();
+    expect(count('SELECT COUNT(*) AS n FROM sessions WHERE id = ? AND revoked = 0', passkeySessionId)).toBe(1);
+    // An ordinary session on that origin is unaffected by this rule (Access off).
+    const { cookie } = await ordinarySession('user-alice');
+    event.request = new Request(url, { headers: { cookie } });
+    await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => new Response('ok') });
+    expect(event.locals.user?.id).toBe('user-alice');
+  });
+
+  it('a passkey session has a short fixed lifetime that use never extends', async () => {
+    const row = fixture.db.sqlite.prepare(`SELECT (julianday(expires_at) - julianday('now')) * 24 AS hours FROM sessions WHERE id = ?`).get(passkeySessionId) as { hours: number };
+    expect(row.hours).toBeGreaterThan(7.9);
+    expect(row.hours).toBeLessThanOrEqual(8);
+    fixture.db.sqlite.prepare(`UPDATE sessions SET expires_at = datetime('now', '+1 hour') WHERE id = ?`).run(passkeySessionId);
+    const waitUntil = vi.fn();
+    const url = new URL('/mail', ORIGIN);
+    const event = {
+      url,
+      request: new Request(url, { headers: { cookie: passkeyCookie } }),
+      locals: { user: null as User | null, sessionId: null as string | null, passkeySession: false as boolean | undefined },
+      platform: { env: { ...env, SESSION_TTL_HOURS: '720' }, context: { waitUntil }, caches: {} },
+    };
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5); // no maintenance sweep
+    await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => new Response('ok') });
+    random.mockRestore();
+    expect(event.locals.user?.id).toBe('user-alice');
+    expect(waitUntil).not.toHaveBeenCalled();
   });
 
   it('/auth/passkey never opens a session from an Access token', () => {

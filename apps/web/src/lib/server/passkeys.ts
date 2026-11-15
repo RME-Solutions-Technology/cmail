@@ -17,10 +17,19 @@
 //   verifies.
 // - Challenges live in D1, are deleted when read (single use, even when the
 //   response then fails) and expire after CHALLENGE_TTL_SECONDS.
-// - A sign-in response must carry the userHandle stored with the credential,
-//   and its signature counter must go up unless it is always 0. The stored
-//   counter is moved with a compare-and-set, so two racing responses cannot
-//   both win.
+// - A sign-in response must carry the userHandle stored with the credential.
+//   The signature is verified first; only then is the signature counter
+//   compared (it must go up unless it is always 0), so a forged response can
+//   never raise the copied-passkey alarm. The stored counter is moved with a
+//   compare-and-set, so two racing responses cannot both win.
+// - Rate limits count failures only (per address, IPv6 per /64), so a busy
+//   office NAT is not locked out by its own successful sign-ins. There is no
+//   global cap: one host must not be able to lock everyone out.
+// - Passkey sessions last PASSKEY_SESSION_TTL_HOURS (default 8) and are
+//   never renewed by use. They are accepted only on the APP_URL origin.
+// - Adding or removing a passkey, and turning the feature on or off, emails
+//   the person and the managers. With no mail set up, that is audited and
+//   shown in Admin.
 // - Every refusal on the unauthenticated endpoints returns the same message,
 //   so they never reveal whether a credential or account exists or why it
 //   was refused (the audit log has the reason). The country gate is the one
@@ -46,11 +55,11 @@ import {
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type { Env, User } from '@cmail/shared/types';
 import { audit } from './db';
-import { maxSessionsPerUser, sessionTtlMs } from './config';
+import { maxSessionsPerUser, passkeySessionTtlMs } from './config';
 import { loadOrgSettings } from './org-settings';
 import { notifyManagers } from './notify-managers';
 import { detectProvider, sendEmail } from './outbound';
-import { consumeRateLimit } from './rate-limit';
+import { consumeRateLimit, rateLimitCount } from './rate-limit';
 import { buildSessionCookie, createSessionToken, hashToken } from './session';
 import { COUNTRY_PENDING_MESSAGE, recordTravelRequest, requestCountry, signInCountryGate } from './travel';
 import { escapeHtml } from './validation';
@@ -65,17 +74,23 @@ const CEREMONY_TIMEOUT_MS = 2 * 60 * 1000;
 const MAX_CREDENTIAL_ID_LENGTH = 1366;
 
 /**
- * Rate limits; all refusals look the same. The global challenge cap is a
- * flood backstop only, set high on purpose: a low global cap would let one
- * attacker lock everyone out of break-glass sign-in during an outage.
+ * Rate limits; every refusal looks the same. Addresses are keyed per IPv4
+ * address or per IPv6 /64. There is deliberately no global cap: it would let
+ * one host lock everyone out of break-glass sign-in during an outage.
+ * - optionsPerIp: challenge requests per address.
+ * - verifyFailuresPerIp: FAILED sign-ins per address (successes are free).
+ * - verifyPerCredential: sign-ins with a valid signature per passkey, counted
+ *   only after the signature checks out, so nobody can exhaust it for a
+ *   passkey they do not hold.
  */
 export const RATE_LIMITS = {
   optionsPerIp: { limit: 30, windowSeconds: 10 * 60 },
-  optionsGlobal: { limit: 5000, windowSeconds: 10 * 60 },
-  verifyPerIp: { limit: 10, windowSeconds: 10 * 60 },
-  verifyPerCredential: { limit: 10, windowSeconds: 60 * 60 },
+  verifyFailuresPerIp: { limit: 10, windowSeconds: 10 * 60 },
+  verifyPerCredential: { limit: 20, windowSeconds: 60 * 60 },
   registerPerUser: { limit: 10, windowSeconds: 60 * 60 },
 } as const;
+/** Unknown passkey ids are counted, and audited only at these counts per hour. */
+const UNKNOWN_CREDENTIAL_AUDIT_AT = new Set([1, 10, 100, 1000, 10000]);
 
 /** The single answer for every refused passkey sign-in. */
 export const NEUTRAL_SIGNIN_FAILURE = "That passkey couldn't be used to sign in here. Try again, or use another sign-in method.";
@@ -110,6 +125,82 @@ interface CredentialRow {
 
 function clientIpOf(request: Request): string {
   return (request.headers.get('cf-connecting-ip') || '').slice(0, 64);
+}
+
+/**
+ * Rate-limit key for an address: IPv4 as is, IPv6 cut to its /64 (one
+ * customer network), IPv4-mapped IPv6 as the IPv4 address.
+ */
+export function rateLimitAddressKey(ip: string): string {
+  const value = ip.trim().toLowerCase().replace(/%.*$/, '');
+  if (!value) return 'unknown';
+  if (!value.includes(':')) return value.slice(0, 64);
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(value);
+  if (mapped) return mapped[1];
+  const halves = value.split('::');
+  if (halves.length > 2) return value.slice(0, 64);
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return value.slice(0, 64);
+  const groups = [...head, ...Array<string>(Math.max(0, missing)).fill('0'), ...tail];
+  if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return value.slice(0, 64);
+  return `${groups.slice(0, 4).map((group) => Number.parseInt(group, 16).toString(16)).join(':')}::/64`;
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+async function sendUserNotice(
+  env: EnvLike,
+  user: { id: string; email: string },
+  message: { subject: string; text: string; html: string },
+): Promise<void> {
+  const envRecord = env as Record<string, unknown>;
+  const settings = await loadOrgSettings(envRecord);
+  if (detectProvider(envRecord) === 'none' || !settings.systemEmail) {
+    await audit(env.DB, {
+      event_type: 'email.failed',
+      actor_id: user.id,
+      target: user.id,
+      detail: `Passkey notice not sent (no outbound provider or system From address): ${message.subject.slice(0, 120)}`,
+    });
+    return;
+  }
+  const result = await sendEmail({ from: settings.systemEmail, fromName: settings.systemFromName, to: user.email, ...message }, envRecord);
+  if (!result.success) {
+    await audit(env.DB, { event_type: 'email.failed', actor_id: user.id, target: user.id, detail: `Passkey notice not delivered: ${message.subject.slice(0, 120)}` });
+  }
+}
+
+/**
+ * Emails the person (when given) and every active manager about a passkey
+ * change. Best effort; failures and missing mail settings are audited
+ * (notifyManagers audits its own), never silent.
+ */
+async function passkeyNotice(
+  env: EnvLike,
+  waitUntil: ((promise: Promise<unknown>) => void) | undefined,
+  notice: { user?: { id: string; email: string }; subject: string; text: string },
+): Promise<void> {
+  const html = notice.text.split('\n\n').map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join('');
+  const tasks: Promise<unknown>[] = [
+    notifyManagers(env as unknown as Env, { subject: notice.subject, text: notice.text, html }),
+  ];
+  if (notice.user) tasks.push(sendUserNotice(env, notice.user, { subject: notice.subject, text: notice.text, html }));
+  const all = Promise.all(tasks.map((task) => task.catch((error: unknown) => {
+    console.error('Passkey notice failed', { errorType: error instanceof Error ? error.name : 'UnknownError' });
+  })));
+  if (waitUntil) waitUntil(all);
+  else await all;
+}
+
+/** True when outbound mail is set up, so passkey notices can be delivered. */
+export async function passkeyMailConfigured(env: EnvLike): Promise<boolean> {
+  const envRecord = env as Record<string, unknown>;
+  if (detectProvider(envRecord) === 'none') return false;
+  return !!(await loadOrgSettings(envRecord)).systemEmail;
 }
 
 function cleanDeviceName(value: unknown): string | null {
@@ -433,9 +524,15 @@ export async function finishRegistration(
     if (!result.meta.changes) {
       return { ok: false, status: 409, error: `You already have ${MAX_PASSKEYS_PER_USER} passkeys. Remove one first.` };
     }
-  } catch {
-    // Primary-key clash: this credential id is already registered (to anyone).
-    return { ok: false, status: 409, error: 'This passkey is already registered.' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    // A primary-key clash means this credential id is already registered
+    // (to anyone). Anything else is a real database error and says so.
+    if (/UNIQUE constraint failed|PRIMARY KEY/i.test(message)) {
+      return { ok: false, status: 409, error: 'This passkey is already registered.' };
+    }
+    console.error('Passkey registration insert failed', { errorType: error instanceof Error ? error.name : 'UnknownError' });
+    return { ok: false, status: 503, error: "The passkey couldn't be saved. Try again shortly." };
   }
 
   await audit(db, {
@@ -447,9 +544,12 @@ export async function finishRegistration(
     ip_address: options.clientIp,
     session_id: sessionId,
   });
-  const notice = notifyPasskeyAdded(env, user, deviceName).catch(() => undefined);
-  if (options.waitUntil) options.waitUntil(notice);
-  else await notice;
+  const appName = await appNameOf(env);
+  await passkeyNotice(env, options.waitUntil, {
+    user,
+    subject: `Passkey added to ${user.email} on ${appName}`,
+    text: `A passkey named "${deviceName}" was added to the ${appName} account ${user.email}. It can sign in to that account when the normal sign-in is unavailable.\n\nIf this wasn't expected, a manager can remove it in Admin > Passkey sign-in.`,
+  });
 
   return {
     ok: true,
@@ -463,27 +563,19 @@ export async function finishRegistration(
   };
 }
 
-async function notifyPasskeyAdded(env: EnvLike, user: User, deviceName: string): Promise<void> {
-  const envRecord = env as Record<string, unknown>;
-  const settings = await loadOrgSettings(envRecord);
-  if (detectProvider(envRecord) === 'none' || !settings.systemEmail) return;
-  const appName = settings.appName || 'cmail';
-  const subject = `A passkey was added to your ${appName} account`;
-  const text = `A passkey named "${deviceName}" was added to your ${appName} account. It can sign you in when the normal sign-in is unavailable.\n\nIf this wasn't you, tell a manager now so they can remove it.`;
-  const html = `<p>A passkey named <strong>${escapeHtml(deviceName)}</strong> was added to your ${escapeHtml(appName)} account. It can sign you in when the normal sign-in is unavailable.</p><p>If this wasn't you, tell a manager now so they can remove it.</p>`;
-  const result = await sendEmail({ from: settings.systemEmail, fromName: settings.systemFromName, to: user.email, subject, html, text }, envRecord);
-  if (!result.success) {
-    await audit(env.DB, { event_type: 'email.failed', actor_id: user.id, target: user.id, detail: 'Passkey-added notice not delivered' });
-  }
+async function appNameOf(env: EnvLike): Promise<string> {
+  return (await loadOrgSettings(env as Record<string, unknown>)).appName || 'cmail';
 }
 
 export async function removeOwnPasskey(
-  db: D1Database,
+  env: EnvLike,
   user: User,
   sessionId: string | null,
   credentialId: unknown,
   clientIp: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<{ ok: true; message: string } | { ok: false; status: number; error: string }> {
+  const db = env.DB;
   const refusal = await manageRefusal(db, user.id, sessionId, { requireFresh: false });
   if (refusal) return { ok: false, status: 403, error: MANAGE_REFUSAL_MESSAGES[refusal] };
   if (typeof credentialId !== 'string' || credentialId.length > MAX_CREDENTIAL_ID_LENGTH) {
@@ -505,6 +597,12 @@ export async function removeOwnPasskey(
     ip_address: clientIp,
     session_id: sessionId,
   });
+  const appName = await appNameOf(env);
+  await passkeyNotice(env, waitUntil, {
+    user,
+    subject: `Passkey removed from ${user.email} on ${appName}`,
+    text: `The passkey "${removed.device_name}" was removed from the ${appName} account ${user.email} by its owner. Any sessions it opened were signed out.`,
+  });
   return { ok: true, message: `Removed "${removed.device_name}".` };
 }
 
@@ -516,12 +614,9 @@ export type AuthenticationStart =
 
 export async function startAuthentication(env: EnvLike, rp: RelyingParty, request: Request): Promise<AuthenticationStart> {
   const db = env.DB;
-  const clientIp = clientIpOf(request) || 'unknown';
-  const [perIp, global] = await Promise.all([
-    consumeRateLimit(db, 'passkey_options_ip', clientIp, RATE_LIMITS.optionsPerIp.limit, RATE_LIMITS.optionsPerIp.windowSeconds),
-    consumeRateLimit(db, 'passkey_options', 'global', RATE_LIMITS.optionsGlobal.limit, RATE_LIMITS.optionsGlobal.windowSeconds),
-  ]);
-  if (!perIp.allowed || !global.allowed) return { ok: false, status: 429, message: RATE_LIMITED_MESSAGE };
+  const addressKey = rateLimitAddressKey(clientIpOf(request));
+  const perAddress = await consumeRateLimit(db, 'passkey_options_ip', addressKey, RATE_LIMITS.optionsPerIp.limit, RATE_LIMITS.optionsPerIp.windowSeconds);
+  if (!perAddress.allowed) return { ok: false, status: 429, message: RATE_LIMITED_MESSAGE };
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
     userVerification: 'required',
@@ -536,28 +631,13 @@ export type AuthenticationFinish =
   | { ok: true; user: User; sessionId: string; cookie: string; location: string }
   | { ok: false; status: number; message: string };
 
-async function refuse(
-  db: D1Database,
-  reason: string,
-  clientIp: string,
-  userId?: string | null,
-  status = 400,
-): Promise<AuthenticationFinish> {
-  await audit(db, {
-    event_type: 'auth.passkey_failed',
-    actor_id: userId ?? null,
-    actor_role: 'system',
-    target: userId ?? null,
-    detail: `Passkey sign-in refused: ${reason}`,
-    ip_address: clientIp,
-  });
-  return { ok: false, status, message: NEUTRAL_SIGNIN_FAILURE };
-}
+const NEUTRAL: AuthenticationFinish = { ok: false, status: 400, message: NEUTRAL_SIGNIN_FAILURE };
+const LIMITED: AuthenticationFinish = { ok: false, status: 429, message: RATE_LIMITED_MESSAGE };
 
 /**
- * Verifies a sign-in response and mints a session with the same lifetime,
- * cap, eviction, country gate and audit trail as every other sign-in, marked
- * as a passkey session.
+ * Verifies a sign-in response and mints a passkey session with the session
+ * cap, eviction, country gate and audit trail of every other sign-in, but a
+ * short lifetime that use never extends (PASSKEY_SESSION_TTL_HOURS).
  */
 export async function finishAuthentication(
   env: SessionEnv,
@@ -568,98 +648,132 @@ export async function finishAuthentication(
 ): Promise<AuthenticationFinish> {
   const db = env.DB;
   const clientIp = clientIpOf(request);
-  const ipKey = clientIp || 'unknown';
+  const addressKey = rateLimitAddressKey(clientIp);
   const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const failures = RATE_LIMITS.verifyFailuresPerIp;
 
-  const perIp = await consumeRateLimit(db, 'passkey_verify_ip', ipKey, RATE_LIMITS.verifyPerIp.limit, RATE_LIMITS.verifyPerIp.windowSeconds);
-  if (!perIp.allowed) {
-    await audit(db, { event_type: 'security.rate_limit', detail: 'Passkey sign-in rate limit (address)', ip_address: clientIp });
-    return { ok: false, status: 429, message: RATE_LIMITED_MESSAGE };
-  }
+  // Only failures count against an address, so many people signing in from
+  // one office address during an outage are never locked out by success.
+  if (await rateLimitCount(db, 'passkey_fail_ip', addressKey, failures.windowSeconds) >= failures.limit) return LIMITED;
+
+  /** Records one failure for this address; audits only the one that hits the limit. */
+  const fail = async (audited?: { reason: string; userId: string }): Promise<AuthenticationFinish> => {
+    const counted = await consumeRateLimit(db, 'passkey_fail_ip', addressKey, failures.limit, failures.windowSeconds);
+    if (counted.remaining === 0 && counted.allowed) {
+      await audit(db, { event_type: 'security.rate_limit', detail: 'Passkey sign-in failure limit reached for an address', ip_address: clientIp });
+    }
+    if (audited) {
+      await audit(db, {
+        event_type: 'auth.passkey_failed',
+        actor_id: audited.userId,
+        actor_role: 'system',
+        target: audited.userId,
+        detail: `Passkey sign-in refused: ${audited.reason}`,
+        ip_address: clientIp,
+      });
+    }
+    return NEUTRAL;
+  };
 
   // Single use: the challenge is gone from here on, whatever the outcome.
-  // These two refusals involve no credential or account, so they are not
-  // audited: anyone can send them, and the per-address limit bounds them.
-  const neutral: AuthenticationFinish = { ok: false, status: 400, message: NEUTRAL_SIGNIN_FAILURE };
+  // Refusals that involve no known passkey are never audited one by one:
+  // anyone can send them.
   const pending = await consumeChallenge(db, input.challengeId, null);
-  if (!pending) return neutral;
-  const expectedChallenge = pending.challenge;
+  if (!pending) return fail();
   const response = input.response;
-  if (!isCredentialShape(response)) return neutral;
-
-  const credentialKey = (await hashToken(response.id)).slice(0, 32);
-  const perCredential = await consumeRateLimit(db, 'passkey_verify_cred', credentialKey, RATE_LIMITS.verifyPerCredential.limit, RATE_LIMITS.verifyPerCredential.windowSeconds);
-  if (!perCredential.allowed) {
-    await audit(db, { event_type: 'security.rate_limit', detail: 'Passkey sign-in rate limit (credential)', ip_address: clientIp });
-    return { ok: false, status: 429, message: RATE_LIMITED_MESSAGE };
-  }
+  if (!isCredentialShape(response)) return fail();
 
   const credential = await db.prepare(
     `SELECT id, user_id, user_handle, public_key, counter, transports, device_name
      FROM passkey_credentials WHERE id = ?`,
   ).bind(response.id).first<CredentialRow>();
-  if (!credential) return refuse(db, 'unknown_credential', clientIp);
+  if (!credential) {
+    // One counter for all unknown ids; audited at 1, 10, 100... per hour.
+    const seen = await consumeRateLimit(db, 'passkey_unknown_cred', 'all', Number.MAX_SAFE_INTEGER, 60 * 60);
+    const total = Number.MAX_SAFE_INTEGER - seen.remaining;
+    if (UNKNOWN_CREDENTIAL_AUDIT_AT.has(total)) {
+      await audit(db, { event_type: 'auth.passkey_failed', detail: `Passkey sign-in refused: unknown passkey (${total} this hour)`, ip_address: clientIp });
+    }
+    return fail();
+  }
 
   // Discoverable credentials always return the user handle we issued.
   const userHandle = (response.response as { userHandle?: unknown }).userHandle;
   if (typeof userHandle !== 'string' || userHandle !== credential.user_handle) {
-    return refuse(db, 'user_handle_mismatch', clientIp, credential.user_id);
+    return fail({ reason: 'user_handle_mismatch', userId: credential.user_id });
   }
 
+  // The signature is verified with the library's counter check switched off
+  // (stored counter passed as 0: it then never rejects on the counter). The
+  // counter is compared below, only once the signature is known to be valid,
+  // so a forged response can never raise the copied-passkey alarm.
   let verification;
   try {
     verification = await verifyAuthenticationResponse({
       response: response as unknown as AuthenticationResponseJSON,
-      expectedChallenge,
+      expectedChallenge: pending.challenge,
       expectedOrigin: rp.origin,
       expectedRPID: rp.rpID,
       requireUserVerification: true,
       credential: {
         id: credential.id,
         publicKey: isoBase64URL.toBuffer(credential.public_key),
-        counter: credential.counter,
+        counter: 0,
         transports: parseTransports(credential.transports),
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (/counter value/i.test(message)) {
-      // A counter that went backwards on a valid signature points to a
-      // cloned authenticator. Refuse, audit loudly, and tell the managers.
-      await audit(db, {
-        event_type: 'auth.passkey_counter_rollback',
-        actor_id: credential.user_id,
-        actor_role: 'system',
-        target: credential.user_id,
-        detail: `Passkey "${credential.device_name}" sent a signature counter that did not increase; sign-in refused. Remove this passkey if it may be copied.`,
-        ip_address: clientIp,
-      });
-      const notice = notifyManagers(env as unknown as Env, {
-        subject: 'Passkey sign-in refused: possible copied passkey',
-        text: 'A passkey sign-in was refused because the passkey\'s signature counter went backwards, which can mean the passkey was copied. Check Admin > Audit log (auth.passkey_counter_rollback) and remove the passkey in Admin > Passkey sign-in if needed.',
-        html: '<p>A passkey sign-in was refused because the passkey\'s signature counter went backwards, which can mean the passkey was copied.</p><p>Check <strong>Admin &gt; Audit log</strong> (<code>auth.passkey_counter_rollback</code>) and remove the passkey in <strong>Admin &gt; Passkey sign-in</strong> if needed.</p>',
-      }).catch(() => undefined);
-      if (options.waitUntil) options.waitUntil(notice);
-      else await notice;
-      return { ok: false, status: 400, message: NEUTRAL_SIGNIN_FAILURE };
-    }
-    return refuse(db, `verification_failed (${message.slice(0, 120) || 'error'})`, clientIp, credential.user_id);
+    const message = error instanceof Error ? error.message.slice(0, 120) : 'error';
+    return fail({ reason: `verification_failed (${message})`, userId: credential.user_id });
   }
   if (!verification.verified || !verification.authenticationInfo.userVerified) {
-    return refuse(db, 'not_verified', clientIp, credential.user_id);
+    return fail({ reason: 'not_verified', userId: credential.user_id });
+  }
+
+  const newCounter = verification.authenticationInfo.newCounter;
+  if ((credential.counter > 0 || newCounter > 0) && newCounter <= credential.counter) {
+    // A valid signature with a counter that did not go up: the passkey may
+    // have been copied. Refuse, audit loudly and tell the managers.
+    await audit(db, {
+      event_type: 'auth.passkey_counter_rollback',
+      actor_id: credential.user_id,
+      actor_role: 'system',
+      target: credential.user_id,
+      detail: `Passkey "${credential.device_name}" sent counter ${newCounter} after ${credential.counter} with a valid signature; sign-in refused. Remove this passkey if it may be copied.`,
+      ip_address: clientIp,
+    });
+    await passkeyNotice(env, options.waitUntil, {
+      subject: 'Passkey sign-in refused: possible copied passkey',
+      text: 'A passkey sign-in was refused because the passkey\'s signature counter went backwards, which can mean the passkey was copied.\n\nCheck Admin > Audit log (auth.passkey_counter_rollback) and remove the passkey in Admin > Passkey sign-in if needed.',
+    });
+    return fail();
+  }
+
+  // Valid signatures per passkey, counted only now, so nobody without the
+  // passkey can use up its allowance.
+  const perCredential = await consumeRateLimit(
+    db, 'passkey_verify_cred', (await hashToken(credential.id)).slice(0, 32),
+    RATE_LIMITS.verifyPerCredential.limit, RATE_LIMITS.verifyPerCredential.windowSeconds,
+  );
+  if (!perCredential.allowed) {
+    // Audited once per passkey and window, not per request.
+    const first = await consumeRateLimit(db, 'passkey_cred_limit_audit', credential.id.slice(0, 64), 1, RATE_LIMITS.verifyPerCredential.windowSeconds);
+    if (first.allowed) {
+      await audit(db, { event_type: 'security.rate_limit', actor_id: credential.user_id, target: credential.user_id, detail: 'Passkey sign-in limit reached for one passkey', ip_address: clientIp });
+    }
+    return LIMITED;
   }
 
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(credential.user_id).first<User>();
-  if (!user || user.status !== 'active') return refuse(db, 'account_unavailable', clientIp, credential.user_id);
+  if (!user || user.status !== 'active') return fail({ reason: 'account_unavailable', userId: credential.user_id });
 
   // Compare-and-set the counter: of two responses verified against the same
   // stored value, only the first moves it.
-  const newCounter = verification.authenticationInfo.newCounter;
   const moved = await db.prepare(
-    `UPDATE passkey_credentials SET counter = ?, last_used_at = datetime('now')
+    `UPDATE passkey_credentials SET counter = ?
      WHERE id = ? AND counter = ? AND (? > counter OR (? = 0 AND counter = 0))`,
   ).bind(newCounter, credential.id, credential.counter, newCounter, newCounter).run();
-  if (!moved.meta.changes) return refuse(db, 'counter_race', clientIp, user.id);
+  if (!moved.meta.changes) return fail({ reason: 'counter_race', userId: user.id });
 
   // Post-authentication country gate, as for every sign-in method. The
   // person has proven who they are, so the refusal says why.
@@ -679,18 +793,21 @@ export async function finishAuthentication(
     return { ok: false, status: 403, message: COUNTRY_PENDING_MESSAGE };
   }
 
-  await db.prepare(
-    `UPDATE users SET last_sign_in = datetime('now'), last_auth_country = ?, updated_at = datetime('now')
-     WHERE id = ? AND status = 'active'`,
-  ).bind(country, user.id).run();
+  await db.batch([
+    db.prepare(`UPDATE passkey_credentials SET last_used_at = datetime('now') WHERE id = ?`).bind(credential.id),
+    db.prepare(
+      `UPDATE users SET last_sign_in = datetime('now'), last_auth_country = ?, updated_at = datetime('now')
+       WHERE id = ? AND status = 'active'`,
+    ).bind(country, user.id),
+  ]);
 
-  const ttlMs = sessionTtlMs(env);
+  const ttlMs = passkeySessionTtlMs(env);
   const { token, hash, expiresAt, sessionId } = await createSessionToken(user.id, env.SESSION_SECRET, ttlMs);
   await db.prepare(
     `INSERT INTO sessions (id, user_id, token_hash, issued_at, expires_at, ip_address, revoked, passkey_credential_id)
      VALUES (?, ?, ?, datetime('now'), ?, ?, 0, ?)`,
   ).bind(sessionId, user.id, hash, expiresAt.toISOString(), clientIp, credential.id).run();
-  // Same eviction rule as every other sign-in: keep the most recently renewed.
+  // Same eviction rule as every other sign-in: keep the latest-expiring.
   await db.prepare(
     `UPDATE sessions SET revoked = 1
      WHERE user_id = ? AND revoked = 0 AND id NOT IN (
@@ -718,14 +835,10 @@ export async function finishAuthentication(
       session_id: sessionId,
     });
     const appName = settings.appName || 'cmail';
-    const who = escapeHtml(user.email);
-    const notice = notifyManagers(env as unknown as Env, {
+    await passkeyNotice(env, options.waitUntil, {
       subject: `Manager signed in to ${appName} with a passkey`,
-      text: `${user.email} signed in to ${appName} with a passkey (break-glass sign-in). If this wasn't expected, check Admin > Audit log and Admin > Passkey sign-in.`,
-      html: `<p><strong>${who}</strong> signed in to ${escapeHtml(appName)} with a passkey (break-glass sign-in).</p><p>If this wasn't expected, check <strong>Admin &gt; Audit log</strong> and <strong>Admin &gt; Passkey sign-in</strong>.</p>`,
-    }).catch(() => undefined);
-    if (options.waitUntil) options.waitUntil(notice);
-    else await notice;
+      text: `${user.email} signed in to ${appName} with a passkey (break-glass sign-in).\n\nIf this wasn't expected, check Admin > Audit log and Admin > Passkey sign-in.`,
+    });
   }
 
   const latestPolicy = await db.prepare(
@@ -739,6 +852,11 @@ export async function finishAuthentication(
     if (!signature) location = '/policy';
   }
   return { ok: true, user, sessionId, cookie: buildSessionCookie(token, options.secureCookie), location };
+}
+
+/** Request bodies are measured in bytes, not characters. */
+export function bodyTooLarge(raw: string, maxBytes: number): boolean {
+  return raw.length > maxBytes || byteLength(raw) > maxBytes;
 }
 
 // ─── Sessions (hooks.server.ts) ─────────────────────────────────────────
@@ -771,15 +889,27 @@ export interface PasskeyAdminOverview {
   enabled: boolean;
   installed: boolean;
   rp: RelyingParty | null;
+  /** False when passkey notices cannot be emailed (no provider or From address). */
+  mailConfigured: boolean;
   totalPasskeys: number;
   people: Array<{ userId: string; email: string; displayName: string; role: string; status: string; count: number; lastUsedAt: string | null }>;
+  /** The newest passkeys first, so managers can review what was added. */
+  recent: Array<{ email: string; deviceName: string; createdAt: string; lastUsedAt: string | null }>;
 }
 
 export async function loadPasskeyAdminOverview(env: EnvLike): Promise<PasskeyAdminOverview> {
   const db = env.DB;
-  const [enabled, installed] = await Promise.all([passkeySigninEnabled(db), passkeysInstalled(db)]);
+  const [enabled, installed, mailConfigured] = await Promise.all([passkeySigninEnabled(db), passkeysInstalled(db), passkeyMailConfigured(env)]);
   const rp = relyingParty(env);
-  if (!installed) return { enabled, installed, rp, totalPasskeys: 0, people: [] };
+  if (!installed) return { enabled, installed, rp, mailConfigured, totalPasskeys: 0, people: [], recent: [] };
+  const recentRows = await db.prepare(
+    `SELECT u.email, c.device_name, c.created_at, c.last_used_at
+     FROM passkey_credentials c INNER JOIN users u ON u.id = c.user_id
+     ORDER BY c.created_at DESC, c.rowid DESC LIMIT 50`,
+  ).all<{ email: string; device_name: string; created_at: string; last_used_at: string | null }>();
+  const recent = (recentRows.results || []).map((row) => ({
+    email: row.email, deviceName: row.device_name, createdAt: row.created_at, lastUsedAt: row.last_used_at,
+  }));
   const rows = await db.prepare(
     `SELECT u.id AS user_id, u.email, u.display_name, u.role, u.status,
             COUNT(c.id) AS count, MAX(c.last_used_at) AS last_used_at
@@ -795,7 +925,7 @@ export async function loadPasskeyAdminOverview(env: EnvLike): Promise<PasskeyAdm
     count: Number(row.count),
     lastUsedAt: row.last_used_at,
   }));
-  return { enabled, installed, rp, totalPasskeys: people.reduce((sum, person) => sum + person.count, 0), people };
+  return { enabled, installed, rp, mailConfigured, totalPasskeys: people.reduce((sum, person) => sum + person.count, 0), people, recent };
 }
 
 export type PasskeyAdminAction = 'enable' | 'disable' | 'remove_user';
@@ -811,14 +941,22 @@ export async function applyPasskeyAdminAction(
   action: PasskeyAdminAction,
   targetUserId: unknown,
   clientIp: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<{ ok: true; message: string } | { ok: false; status: number; error: string }> {
   const db = env.DB;
+  const appName = await appNameOf(env);
+  const managerEmail = (await db.prepare('SELECT email FROM users WHERE id = ?').bind(manager.id).first<{ email: string }>())?.email || 'A manager';
   if (action === 'enable') {
     if (!await passkeysInstalled(db)) return { ok: false, status: 409, error: 'Apply database migration 0025 before turning on passkey sign-in.' };
     if (!relyingParty(env)) return { ok: false, status: 409, error: 'APP_URL must be set to this site\'s https address before passkeys can work.' };
     await putSetting(db, 'true', manager.id);
     await audit(db, { event_type: 'org.passkey_signin_toggled', actor_id: manager.id, actor_role: 'manager', detail: 'Passkey sign-in turned on', ip_address: clientIp });
-    return { ok: true, message: 'Passkey sign-in is on. People can now add passkeys under Mail > Settings > Passkeys.' };
+    await passkeyNotice(env, waitUntil, {
+      subject: `Passkey sign-in turned on for ${appName}`,
+      text: `${managerEmail} turned on passkey break-glass sign-in for ${appName}. People can now add passkeys, and each one added is emailed to the managers.`,
+    });
+    const warning = await passkeyMailConfigured(env) ? '' : ' Warning: outbound mail is not set up, so passkey notices cannot be emailed; review new passkeys on this page.';
+    return { ok: true, message: `Passkey sign-in is on. People can now add passkeys under Mail > Settings > Passkeys.${warning}` };
   }
   if (action === 'disable') {
     await putSetting(db, 'false', manager.id);
@@ -832,6 +970,10 @@ export async function applyPasskeyAdminAction(
       // Before migration 0025 there are no passkey sessions to end.
     }
     await audit(db, { event_type: 'org.passkey_signin_toggled', actor_id: manager.id, actor_role: 'manager', detail: `Passkey sign-in turned off; ${ended} passkey sessions ended`, ip_address: clientIp });
+    await passkeyNotice(env, waitUntil, {
+      subject: `Passkey sign-in turned off for ${appName}`,
+      text: `${managerEmail} turned off passkey break-glass sign-in for ${appName}. ${ended} passkey sessions were signed out.`,
+    });
     return { ok: true, message: 'Passkey sign-in is off. Passkey sessions were signed out; registered passkeys are kept for when it is turned on again.' };
   }
   if (typeof targetUserId !== 'string' || !targetUserId || targetUserId.length > 64) {
@@ -850,6 +992,11 @@ export async function applyPasskeyAdminAction(
     target: target.id,
     detail: `Manager removed all ${removed.meta.changes ?? 0} passkeys of this account and ended its passkey sessions`,
     ip_address: clientIp,
+  });
+  await passkeyNotice(env, waitUntil, {
+    user: target,
+    subject: `Passkeys removed from ${target.email} on ${appName}`,
+    text: `${managerEmail} removed all ${removed.meta.changes ?? 0} passkeys from the ${appName} account ${target.email} and signed out its passkey sessions. The account holder can add new passkeys the next time they sign in the normal way.`,
   });
   return { ok: true, message: `Removed ${removed.meta.changes ?? 0} passkeys for ${target.email}.` };
 }

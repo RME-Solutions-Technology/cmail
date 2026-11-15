@@ -1,7 +1,7 @@
 // Verifies and stores a new passkey for the signed-in person.
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { finishRegistration, passkeyRouteContext } from '#lib/server/passkeys.js';
+import { bodyTooLarge, finishRegistration, passkeyRouteContext } from '#lib/server/passkeys.js';
 
 const MAX_BODY_BYTES = 32 * 1024;
 
@@ -11,7 +11,7 @@ export const POST: RequestHandler = async ({ platform, url, locals, request }) =
   const rp = await passkeyRouteContext(typedEnv, url);
   if (!typedEnv || !rp) throw error(404, 'Not found');
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) return json({ error: 'Request too large' }, { status: 413 });
+  if (bodyTooLarge(raw, MAX_BODY_BYTES)) return json({ error: 'Request too large' }, { status: 413 });
   let body: unknown;
   try {
     body = JSON.parse(raw);

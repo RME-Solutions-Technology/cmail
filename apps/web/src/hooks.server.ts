@@ -6,7 +6,7 @@ import { mcpMaintenanceStatements } from '#lib/server/mcp/maintenance.js';
 import { runtimePlatform } from '#lib/server/cloudflare-runtime.js';
 import { ACCESS_JWT_HEADER, accessMode, verifyAccessJwt, type AccessIdentity } from '#lib/server/access-jwt.js';
 import { accessSignInPathAllowed, confirmSessionAccessBinding, establishAccessSession } from '#lib/server/access-bridge.js';
-import { passkeySessionState } from '#lib/server/passkeys.js';
+import { passkeySessionState, relyingParty } from '#lib/server/passkeys.js';
 
 let loggedAccessMisconfiguration = false;
 
@@ -129,6 +129,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Every other cookie session still needs a valid Access token whenever the
   // bridge is on or misconfigured, exactly as before.
   let keepCookie = !accessGatePassed;
+  let setAsidePasskeySessionId: string | null = null;
   const token = getSessionTokenFromCookie(event.request.headers.get('cookie'));
   if (env && token) {
     try {
@@ -153,7 +154,12 @@ export const handle: Handle = async ({ event, resolve }) => {
           let user = await env.DB.prepare(
             `SELECT * FROM users WHERE id = ? AND status IN ('active', 'pending')`,
           ).bind(verified.userId).first<User>();
-          if (user && passkeyCredentialId) {
+          if (user && passkeyCredentialId && event.url.origin !== relyingParty(env as unknown as Record<string, unknown>)?.origin) {
+            // Passkey sessions are bound to the relying party's origin
+            // (APP_URL): a replayed cookie on *.pages.dev or another
+            // hostname gets nothing. The session itself is left alone.
+            user = null;
+          } else if (user && passkeyCredentialId) {
             // Live only while the feature is on and the passkey still exists.
             const state = await passkeySessionState(env.DB, passkeyCredentialId, user.id);
             if (state === 'dead') {
@@ -181,6 +187,7 @@ export const handle: Handle = async ({ event, resolve }) => {
           if (user && !sessionMatchesAccess) {
             if (passkeyCredentialId) {
               keepCookie = true;
+              setAsidePasskeySessionId = session.id;
             } else {
               await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(session.id).run();
             }
@@ -196,9 +203,11 @@ export const handle: Handle = async ({ event, resolve }) => {
             // session alive; sign-out, pause, and offboarding still revoke it
             // immediately elsewhere. Best-effort and isolated from the outer
             // catch below — a renewal failure must never clear a valid cookie.
+            // Passkey sessions are never renewed: their short lifetime
+            // (PASSKEY_SESSION_TTL_HOURS) is fixed at sign-in.
             try {
               const ttlMs = sessionTtlMs(env as unknown as Record<string, unknown>);
-              if (shouldRenewSession(Date.parse(session.expires_at), Date.now(), ttlMs)) {
+              if (!passkeyCredentialId && shouldRenewSession(Date.parse(session.expires_at), Date.now(), ttlMs)) {
                 const ttlHours = Math.max(1, Math.round(ttlMs / (60 * 60 * 1000)));
                 event.platform?.context.waitUntil(
                   env.DB.prepare(
@@ -235,6 +244,12 @@ export const handle: Handle = async ({ event, resolve }) => {
         event.locals.sessionId = established.sessionId;
         accessSessionCookie = established.cookie;
         clearInvalidCookie = false;
+        if (setAsidePasskeySessionId) {
+          // The browser's passkey cookie is being replaced by this Access
+          // session, so the set-aside passkey session can never be used
+          // again: revoke it rather than leave it live in the database.
+          await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(setAsidePasskeySessionId).run();
+        }
       }
     } catch (error) {
       console.error('Access sign-in failed', {

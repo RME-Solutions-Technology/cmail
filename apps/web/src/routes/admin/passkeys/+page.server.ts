@@ -29,6 +29,7 @@ export const actions: Actions = {
       action,
       form.get('user_id'),
       (request.headers.get('cf-connecting-ip') || '').slice(0, 64),
+      platform?.context?.waitUntil ? (promise) => platform.context.waitUntil(promise) : undefined,
     );
     if (!result.ok) return fail(result.status, { error: result.error });
     return { success: result.message };

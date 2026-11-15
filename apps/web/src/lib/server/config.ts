@@ -103,6 +103,15 @@ export function sessionTtlMs(env: Record<string, unknown>): number {
   return boundedInteger(env.SESSION_TTL_HOURS, 8, 1, 9600) * 60 * 60 * 1000;
 }
 
+/**
+ * Passkey (break-glass) sessions have a fixed lifetime of
+ * PASSKEY_SESSION_TTL_HOURS (default 8, at most 72) that is never renewed by
+ * use, unlike the sliding SESSION_TTL_HOURS. See docs/passkeys.md.
+ */
+export function passkeySessionTtlMs(env: Record<string, unknown>): number {
+  return boundedInteger(env.PASSKEY_SESSION_TTL_HOURS, 8, 1, 72) * 60 * 60 * 1000;
+}
+
 export function maxSessionsPerUser(env: Record<string, unknown>): number {
   return boundedInteger(env.MAX_SESSIONS_PER_USER, 5, 1, 20);
 }
