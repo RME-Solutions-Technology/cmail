@@ -1,6 +1,6 @@
 # Support
 
-cmail is a community-maintained, self-hosted project. The MIT license includes
+cmail is a community-maintained, self-hosted project. The Apache 2.0 license includes
 no hosted-service or guaranteed-response support.
 
 For an organisation's operational support model — internal first-line triage

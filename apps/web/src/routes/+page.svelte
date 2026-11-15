@@ -133,7 +133,7 @@
         {#if data.supportEmail}<a href={`mailto:${data.supportEmail}`}>Contact support</a>{/if}
       </nav>
 
-      <p class="product-credit">Powered by cmail · independent, MIT-licensed open-source email</p>
+      <p class="product-credit">Powered by cmail · independent, Apache-2.0-licensed open-source email</p>
     </div>
 </main>
 
