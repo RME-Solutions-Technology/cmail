@@ -42,7 +42,7 @@
 
   <footer class="help-footer">
     <span>Email management for small and distributed organisations.</span>
-    <span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/help/standards">Standards &amp; assurance</a> · open source under the MIT License</span>
+    <span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/help/standards">Standards &amp; assurance</a> · open source under the Apache License 2.0</span>
   </footer>
 </div>
 
