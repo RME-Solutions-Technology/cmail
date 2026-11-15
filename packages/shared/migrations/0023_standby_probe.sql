@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS standby_probe_runs (
   detail TEXT NOT NULL DEFAULT '' CHECK (length(detail) <= 200),
   warnings TEXT NOT NULL DEFAULT '' CHECK (length(warnings) <= 200),
   started_at INTEGER NOT NULL,
+  -- How many times the same pre-send failure happened in a row (collapsed).
+  repeats INTEGER NOT NULL DEFAULT 1 CHECK (repeats >= 1),
   sent_at INTEGER,
   received_at INTEGER,
   round_trip_ms INTEGER,

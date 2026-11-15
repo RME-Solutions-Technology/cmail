@@ -363,11 +363,67 @@ describe('standby probe', () => {
   it('fails closed when the probe state cannot be read: the delivery throws (and is retried), nothing is stored', async () => {
     const t = setup();
     await t.tick();
-    t.sqlite.exec('DROP TABLE standby_probe_state');
+    // A D1 outage on the state read only.
+    const real = t.d1;
+    t.env.DB = {
+      ...real,
+      prepare: (sql: string) => {
+        if (sql.includes('FROM standby_probe_state')) throw new Error('D1_ERROR: network connection lost');
+        return real.prepare(sql);
+      },
+      batch: real.batch.bind(real),
+    } as unknown as D1Database;
     const result = await t.deliverSent();
     expect(result.error).toBeTruthy();
     expect(result.rejected).toBeUndefined();
     expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: 0 });
+    t.restore();
+  });
+
+  it('delivers normally on a database without migration 0023 (no probe mailbox can exist)', async () => {
+    const t = setup();
+    t.sqlite.exec('DROP TABLE standby_probe_state; DROP TABLE standby_probe_runs;');
+    expect((await t.deliver({ to: `alice@${DOMAIN}` })).rejected).toBeUndefined();
+    expect(t.messagesIn('mbx-alice')).toBe(1);
+    t.restore();
+  });
+
+  it('keeps the recorded probe mailbox gated while switched off or not configured', async () => {
+    const t = setup();
+    await t.tick();
+    t.setSwitch(false);
+    expect((await t.deliver({ to: `${PROBE}@${DOMAIN}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    t.env.MAIL_DOMAIN = '';
+    expect((await t.deliver({ to: `${PROBE}@${DOMAIN}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    expect(t.messagesIn(t.probeMailbox()!.id)).toBe(0);
+    t.restore();
+  });
+
+  it('after the probe local part changes, the old mailbox stays gated, and the next tick disables it even with EMAIL unbound', async () => {
+    const t = setup();
+    await t.tick();
+    await t.deliverSent();
+    const oldId = t.probeMailbox()!.id;
+    t.env.STANDBY_PROBE_LOCAL_PART = 'probe-two';
+    t.env.EMAIL = undefined;
+    // Before any tick: still gated by the recorded id.
+    expect((await t.deliver({ to: `${PROBE}@${DOMAIN}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    t.advance(DAY);
+    expect(await t.tick()).toMatchObject({ status: 'failed', reason: 'no_send_binding' });
+    expect(t.sqlite.prepare('SELECT status FROM mailboxes WHERE id = ?').get(oldId)).toEqual({ status: 'disabled' });
+    expect(t.sqlite.prepare('SELECT mailbox_id FROM standby_probe_state').get()).toEqual({ mailbox_id: null });
+    expect((await t.deliver({ to: `${PROBE}@${DOMAIN}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    t.restore();
+  });
+
+  it('collapses a repeated pre-send failure into one result with a count', async () => {
+    const t = setup({ env: { EMAIL: undefined } });
+    for (let i = 0; i < 3; i += 1) {
+      expect(await t.tick()).toMatchObject({ status: 'failed', reason: 'no_send_binding' });
+      t.advance(31 * MINUTE);
+    }
+    expect(t.runs()).toHaveLength(1);
+    expect(t.runs()[0]).toMatchObject({ reason: 'no_send_binding', repeats: 3, started_at: T0 + 62 * MINUTE });
     t.restore();
   });
 

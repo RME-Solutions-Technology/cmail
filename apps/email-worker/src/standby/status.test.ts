@@ -8,7 +8,7 @@ const HOUR = 60 * 60 * 1000;
 function run(overrides: Partial<StandbyRun>): StandbyRun {
   return {
     id: 'r', kind: 'schedule', status: 'pass', reason: '', detail: '', warnings: [],
-    startedAt: NOW - HOUR, sentAt: null, receivedAt: NOW - HOUR + 3000, roundTripMs: 3000, lateMs: null,
+    startedAt: NOW - HOUR, sentAt: null, receivedAt: NOW - HOUR + 3000, roundTripMs: 3000, lateMs: null, repeats: 1,
     folder: 'inbox', spf: 'pass', dkim: 'pass', dmarc: 'pass',
     ...overrides,
   };

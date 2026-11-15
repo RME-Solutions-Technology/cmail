@@ -144,17 +144,10 @@ export async function applyStandbyAdminAction(
   }
   if (!await loadStandbySwitch(db).catch(() => false)) return RUN_MESSAGES.off as StandbyAdminResult;
   if (!isFetcher(env.EMAIL_SERVICE)) return { ok: false, status: 503, error: 'The email Worker cannot be reached from this site (no EMAIL_SERVICE binding).' };
-  let status: string;
+  let body: { status?: unknown; reason?: unknown };
   try {
     const response = await env.EMAIL_SERVICE.fetch(`${WORKER}/internal/standby/run`, { method: 'POST', signal: AbortSignal.timeout(15_000) });
-    const body = await response.json() as { status?: unknown; reason?: unknown };
-    status = typeof body.status === 'string' ? body.status : '';
-    await audit(db, {
-      event_type: 'org.standby_test_requested',
-      actor_id: manager.id,
-      actor_role: 'manager',
-      detail: `Ran the standby test now: ${status || 'no answer'}${typeof body.reason === 'string' ? ` (${body.reason.slice(0, 64)})` : ''}`,
-    });
+    body = await response.json() as { status?: unknown; reason?: unknown };
   } catch {
     await audit(db, {
       event_type: 'org.standby_test_requested',
@@ -164,6 +157,15 @@ export async function applyStandbyAdminAction(
     });
     return { ok: false, status: 503, error: 'The email Worker did not answer. Try again in a minute.' };
   }
+  // Only the Worker call is inside the try: an audit problem after a started
+  // test is never reported as "no answer".
+  const status = typeof body.status === 'string' ? body.status : '';
+  await audit(db, {
+    event_type: 'org.standby_test_requested',
+    actor_id: manager.id,
+    actor_role: 'manager',
+    detail: `Ran the standby test now: ${status || 'unexpected answer'}${typeof body.reason === 'string' ? ` (${body.reason.slice(0, 64)})` : ''}`,
+  });
   if (status === 'failed') return { ok: false, status: 502, error: 'The test failed before it left. The reason is shown below.' };
   return RUN_MESSAGES[status] ?? { ok: false, status: 502, error: 'The email Worker gave an unexpected answer.' };
 }

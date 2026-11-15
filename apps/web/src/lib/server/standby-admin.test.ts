@@ -66,6 +66,14 @@ describe('standby admin', () => {
     expect(failed.audits().at(-1)?.detail).toContain('send_rejected');
   });
 
+  it('audits Run test now when the email Worker does not answer', async () => {
+    const t = setup();
+    t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('standby_enabled', 'true')`).run();
+    t.fetch.mockImplementation(async () => { throw new Error('timeout'); });
+    expect(await applyStandbyAdminAction(t.env, { id: 'manager-1' }, 'run_now')).toMatchObject({ ok: false, status: 503 });
+    expect(t.audits().at(-1)).toMatchObject({ event_type: 'org.standby_test_requested', detail: expect.stringContaining('no answer') });
+  });
+
   it('shows the latest result as the traffic light', async () => {
     const { env, sqlite } = setup();
     sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('standby_enabled', 'true')`).run();

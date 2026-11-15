@@ -97,12 +97,21 @@ domain looks up exact addresses only.
 
 ### The probe
 
-- **Changing `STANDBY_PROBE_LOCAL_PART`.** The next probe creates a new
-  system mailbox at the new address and disables the old one in the same
-  batch (audited as `org.standby_probe_mailbox_disabled`), so the old one
-  refuses mail rather than keeping a mailbox nobody reads. Its stored probes
-  are not pruned any more; delete the old mailbox in Admin > Mailboxes if you
-  want them gone.
+- **Which mailbox is gated.** The gate follows the probe mailbox id recorded
+  in `standby_probe_state`, not the configured address, so it holds while the
+  switch is off, while the Worker is not configured or has no `EMAIL`
+  binding, and after the local part changes. The check costs one
+  primary-key read, only for mail to shared mailboxes.
+- **Changing `STANDBY_PROBE_LOCAL_PART`.** Until the next cron run the old
+  mailbox stays gated by its recorded id. That run (switch on, settings
+  valid, with or without `EMAIL`) disables the old mailbox, forgets it and
+  audits `org.standby_probe_mailbox_disabled`; the next probe creates a new
+  system mailbox at the new address. The old mailbox's stored probes are not
+  pruned any more; delete it in Admin > Mailboxes if you want them gone.
+- **Changing it back** to an earlier local part reports
+  `probe_address_in_use`: the old, disabled mailbox still holds that address
+  and the Worker never adopts a mailbox it has not recorded. Delete the old
+  mailbox in Admin > Mailboxes first, then the next probe recreates it.
 - **Dedicated system mailbox.** On the first probe the Worker creates a shared
   mailbox `cmail-standby-probe@<MAIL_DOMAIN>` ("Standby probe (system)") with
   nobody assigned, records its id in `standby_probe_state`, and writes an
@@ -149,9 +158,14 @@ domain looks up exact addresses only.
   for a lasting fault). The first probe runs on the first cron run after the
   switch is turned on. Each run also times out overdue probes and prunes.
 - **Failing closed.** If the probe state cannot be read when mail arrives for
-  the probe mailbox, the delivery throws so Email Routing retries it; it is
-  never let into the system mailbox. Other database errors are reported as
-  errors, never as "busy".
+  a shared mailbox, the delivery throws so Email Routing retries it; nothing
+  is let into the system mailbox. The one exception is a database without
+  migration `0023` (no such table), where no probe mailbox can exist. Other
+  database errors are reported as errors, never as "busy".
+- **Repeated failures.** The same failure before sending (for example
+  `no_send_binding`) updates the newest result and counts it ("×3") instead
+  of adding a row each time, so a lasting fault cannot push real results out
+  of the 7-day list.
 - **Pruning.** Probe messages are deleted from the probe mailbox (D1 row and
   R2 body and attachments) after 7 days; results after 30 days. Only messages
   that a probe run recorded, in the probe mailbox, are ever selected, so no
@@ -248,7 +262,7 @@ and no more tests run. The routing rules and DNS can stay.
 | `send_failed` | A network error or an ambiguous answer from Email Sending | Run test now; if it repeats, check the Cloudflare status page |
 | `timeout` | No arrival in time: missing literal routing rule for the probe address, subdomain MX not in place, routing rule pointing at another Worker, the Worker failing on delivery, or a slow delivery | Check the rule and MX in the dashboard, Email Routing activity and the Worker logs; Run test now |
 | `late` | Arrived after the timeout | One-off: ignore. Often: raise `STANDBY_PROBE_TIMEOUT_MINUTES` and investigate delays |
-| `probe_address_in_use` | Another mailbox already has the probe address | Set `STANDBY_PROBE_LOCAL_PART` to an unused local part |
+| `probe_address_in_use` | Another mailbox already has the probe address, including an old probe mailbox after you changed the local part back | Set `STANDBY_PROBE_LOCAL_PART` to an unused local part, or delete the old mailbox in Admin > Mailboxes |
 | `probe_mailbox_disabled` | A manager disabled the probe mailbox | Re-enable it in Admin > Mailboxes |
 | Amber: filed to Spam | The organisation sender list blocks `MAIL_DOMAIN`, or `SPAM_QUARANTINE_SCORE` caught it | Review the sender rules and threshold |
 | Amber: DMARC did not pass | Email Sending DKIM or the domain's DMARC record is wrong | Check the Email Sending DNS records |

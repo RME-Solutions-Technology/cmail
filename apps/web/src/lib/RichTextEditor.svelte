@@ -667,6 +667,7 @@
 
   @media (max-width: 768px) {
     .host :global(.rich-text-surface) { min-height: 200px; max-height: none; }
+    .editor-state { min-height: 200px; }
   }
   @media (pointer: coarse), (max-width: 860px) {
     .toolbar { gap: 2px; padding: 2px 4px; }

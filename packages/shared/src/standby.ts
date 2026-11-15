@@ -144,6 +144,8 @@ export interface StandbyRun {
   receivedAt: number | null;
   roundTripMs: number | null;
   lateMs: number | null;
+  /** Times the same pre-send failure repeated (1 = once). */
+  repeats: number;
   folder: string | null;
   spf: string | null;
   dkim: string | null;
@@ -162,6 +164,7 @@ interface StandbyRunRow {
   received_at: number | null;
   round_trip_ms: number | null;
   late_ms: number | null;
+  repeats: number | null;
   folder: string | null;
   spf_result: string | null;
   dkim_result: string | null;
@@ -181,6 +184,7 @@ function toRun(row: StandbyRunRow): StandbyRun {
     receivedAt: row.received_at == null ? null : Number(row.received_at),
     roundTripMs: row.round_trip_ms == null ? null : Number(row.round_trip_ms),
     lateMs: row.late_ms == null ? null : Number(row.late_ms),
+    repeats: Math.max(1, Number(row.repeats ?? 1)),
     folder: row.folder,
     spf: row.spf_result,
     dkim: row.dkim_result,
@@ -192,7 +196,7 @@ function toRun(row: StandbyRunRow): StandbyRun {
 export async function loadStandbyRuns(db: D1Database, sinceMs: number): Promise<StandbyRun[]> {
   const { results } = await db.prepare(
     `SELECT id, kind, status, reason, detail, warnings, started_at, sent_at, received_at, round_trip_ms,
-            late_ms, folder, spf_result, dkim_result, dmarc_result
+            late_ms, repeats, folder, spf_result, dkim_result, dmarc_result
      FROM standby_probe_runs WHERE started_at >= ? ORDER BY started_at DESC, id DESC LIMIT 200`,
   ).bind(sinceMs).all<StandbyRunRow>();
   return (results ?? []).map(toRun);

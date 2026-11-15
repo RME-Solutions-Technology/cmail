@@ -70,6 +70,8 @@ export interface ResolvedMailbox {
   id: string;
   status: string;
   address: string;
+  /** 'personal' or 'shared'. The probe mailbox is always shared. */
+  type?: string;
 }
 
 /**
@@ -90,7 +92,7 @@ export async function resolveStandbyMailbox(
   const primary = standbyPrimaryAddress(recipient, check.config);
   if (!primary) return null;
   return db.prepare(
-    `SELECT m.id, m.status, m.address FROM mailboxes m
+    `SELECT m.id, m.status, m.address, m.type FROM mailboxes m
      WHERE m.address = ? AND m.status = 'active'
        AND EXISTS (SELECT 1 FROM org_settings WHERE key = ? AND value = 'true')
      LIMIT 1`,
@@ -125,8 +127,13 @@ export type ProbeDecision =
  * Decides what the inbound handler does with mail for the probe mailbox.
  * Only mail that arrived on the standby address and carries the token of a
  * known probe is stored; anything else for that mailbox is refused, so the
- * system mailbox never collects spam or real mail. Costs one query, and only
- * for mail to the probe mailbox's own address.
+ * system mailbox never collects spam or real mail.
+ *
+ * The probe mailbox is the one recorded in standby_probe_state, whatever the
+ * current settings say: the gate holds while the switch is off, the Worker
+ * is not configured or has no EMAIL binding, and after
+ * STANDBY_PROBE_LOCAL_PART changes. Costs one primary-key read, and only
+ * for mail to a shared mailbox (the probe mailbox is always shared).
  */
 export async function decideProbeDelivery(
   db: D1Database,
@@ -134,13 +141,20 @@ export async function decideProbeDelivery(
   input: { mailbox: ResolvedMailbox; viaStandby: boolean; headers: { get(name: string): string | null } },
   deps: StandbyDeps = {},
 ): Promise<ProbeDecision> {
-  const check = standbyConfig(env);
-  if (!check.configured || input.mailbox.address !== check.config.probeAddress) return { action: 'normal' };
+  void env;
+  if (input.mailbox.type !== 'shared') return { action: 'normal' };
   // Fails closed: a read error is thrown so Email Routing retries the
-  // delivery, rather than letting a non-probe into the system mailbox.
-  const state = await db.prepare('SELECT mailbox_id FROM standby_probe_state WHERE id = 1')
-    .first<{ mailbox_id: string | null }>();
-  // A real mailbox that happens to have this address is left alone.
+  // delivery, rather than letting a non-probe into the system mailbox. The
+  // one exception is a database without migration 0023: no table means no
+  // probe mailbox can exist, so mail is delivered as before.
+  let state: { mailbox_id: string | null } | null;
+  try {
+    state = await db.prepare('SELECT mailbox_id FROM standby_probe_state WHERE id = 1')
+      .first<{ mailbox_id: string | null }>();
+  } catch (error) {
+    if (/no such table/i.test(error instanceof Error ? error.message : String(error))) return { action: 'normal' };
+    throw error;
+  }
   if (!state?.mailbox_id || state.mailbox_id !== input.mailbox.id) return { action: 'normal' };
   const token = probeTokenFrom(input.headers);
   if (!input.viaStandby || !token) return { action: 'reject' };
@@ -252,6 +266,28 @@ function utcDay(ms: number): number {
   return Math.floor(ms / DAY_MS);
 }
 
+/**
+ * If the recorded probe mailbox no longer has the configured probe address
+ * (STANDBY_PROBE_LOCAL_PART changed), disable it now and forget it, so it
+ * refuses mail at once instead of waiting for the next probe to start.
+ */
+export async function retireStaleProbeMailbox(db: D1Database, config: StandbyConfig, newId: () => string): Promise<boolean> {
+  const stale = await db.prepare(
+    `SELECT m.id FROM standby_probe_state s JOIN mailboxes m ON m.id = s.mailbox_id
+     WHERE s.id = 1 AND m.address <> ?`,
+  ).bind(config.probeAddress).first<{ id: string }>();
+  if (!stale) return false;
+  await db.batch([
+    db.prepare(`UPDATE mailboxes SET status = 'disabled' WHERE id = ?`).bind(stale.id),
+    db.prepare(`UPDATE standby_probe_state SET mailbox_id = NULL, updated_at = datetime('now') WHERE id = 1 AND mailbox_id = ?`).bind(stale.id),
+    db.prepare(
+      `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
+       VALUES (?, datetime('now'), NULL, 'system', 'org.standby_probe_mailbox_disabled', ?, ?)`,
+    ).bind(newId(), stale.id, 'Disabled the old standby probe mailbox after the probe address changed'),
+  ]);
+  return true;
+}
+
 /** Overdue probes become failures with reason 'timeout'. */
 export async function finalizeOverdue(db: D1Database, now: number, timeoutMinutes: number): Promise<number> {
   const result = await db.prepare(
@@ -274,6 +310,7 @@ async function ensureProbeMailbox(
   config: StandbyConfig,
   newId: () => string,
 ): Promise<{ ok: true; mailboxId: string } | { ok: false; reason: string }> {
+  await retireStaleProbeMailbox(db, config, newId);
   const state = await db.prepare('SELECT mailbox_id FROM standby_probe_state WHERE id = 1').first<{ mailbox_id: string | null }>();
   const existing = await db.prepare('SELECT id, status FROM mailboxes WHERE address = ?')
     .bind(config.probeAddress).first<{ id: string; status: string }>();
@@ -282,19 +319,9 @@ async function ensureProbeMailbox(
     if (existing.status !== 'active') return { ok: false, reason: 'probe_mailbox_disabled' };
     return { ok: true, mailboxId: existing.id };
   }
-  const previous = state?.mailbox_id
-    ? await db.prepare('SELECT id FROM mailboxes WHERE id = ?').bind(state.mailbox_id).first<{ id: string }>()
-    : null;
   const mailboxId = newId();
   try {
     await db.batch([
-      ...(previous ? [
-        db.prepare(`UPDATE mailboxes SET status = 'disabled' WHERE id = ?`).bind(previous.id),
-        db.prepare(
-          `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
-           VALUES (?, datetime('now'), NULL, 'system', 'org.standby_probe_mailbox_disabled', ?, ?)`,
-        ).bind(newId(), previous.id, 'Disabled the old standby probe mailbox after the probe address changed'),
-      ] : []),
       db.prepare(
         `INSERT INTO mailboxes (id, address, display_name, type, status, owner_user_id, created_at)
          VALUES (?, ?, 'Standby probe (system)', 'shared', 'active', NULL, datetime('now'))`,
@@ -365,8 +392,16 @@ async function startProbe(
   // (see runStandbyProbeTick), so a busy or failed start never skips a day.
   if (kind === 'manual') await db.prepare('UPDATE standby_probe_state SET last_manual_at = ? WHERE id = 1').bind(now).run();
 
+  // The same failure before sending, again and again (a missing binding, a
+  // taken address), updates the newest result instead of adding a row, so a
+  // lasting fault cannot push real results out of the 7-day list.
   const fail = async (reason: string, detail = ''): Promise<ProbeStart> => {
-    await insertRun(db, { id: runId, tokenHash, kind, status: 'fail', reason, detail, startedAt: now });
+    const repeated = await db.prepare(
+      `UPDATE standby_probe_runs SET started_at = ?, repeats = repeats + 1
+       WHERE id = (SELECT id FROM standby_probe_runs ORDER BY started_at DESC, id DESC LIMIT 1)
+         AND status = 'fail' AND sent_at IS NULL AND reason = ? AND detail = ? AND kind = ?`,
+    ).bind(now, reason, detail.slice(0, 200), kind).run();
+    if (!repeated.meta.changes) await insertRun(db, { id: runId, tokenHash, kind, status: 'fail', reason, detail, startedAt: now });
     return { status: 'failed', runId, reason };
   };
   if (!env.EMAIL) return fail('no_send_binding');
@@ -461,6 +496,7 @@ export async function runStandbyProbeTick(env: StandbyWorkerEnv, deps: StandbyDe
   return guarded(env, d, async (config) => {
     const now = d.now();
     const finalized = await finalizeOverdue(env.DB, now, config.timeoutMinutes);
+    await retireStaleProbeMailbox(env.DB, config, d.newId);
     const pruned = await pruneStandby(env, now);
     await env.DB.prepare(`UPDATE standby_probe_state SET last_tick_at = ?, last_problem = '' WHERE id = 1`).bind(now).run();
     const state = await env.DB.prepare('SELECT last_scheduled_at, last_attempt_at FROM standby_probe_state WHERE id = 1')

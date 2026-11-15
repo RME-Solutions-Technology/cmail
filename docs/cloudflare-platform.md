@@ -109,8 +109,11 @@ Check Cloudflare's current plan limits and prices before choosing a plan.
 
 ## Database migrations
 
-There are 23 forward-only migrations in `packages/shared/migrations/`, from
-`0001_initial.sql` to `0023_standby_probe.sql`. There are no down
+There are 24 forward-only migrations in `packages/shared/migrations/`, from
+`0001_initial.sql` to `0024_standby_copyback.sql`. `0023_standby_probe.sql`
+was merged after `0024`; `wrangler d1 migrations apply` still applies it on
+a database that already has `0024`, because it applies every file not yet
+listed in `d1_migrations`. There are no down
 migrations, so roll back with a backup or Time Travel.
 
 | Command | Does |

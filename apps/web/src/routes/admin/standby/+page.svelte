@@ -135,7 +135,7 @@
                   <td>{run.kind === 'manual' ? 'Run now' : 'Daily'}</td>
                   <td>{resultLabel(run.status)}</td>
                   <td>{seconds(run.roundTripMs)}</td>
-                  <td>{#if run.reason}<code>{run.reason}</code> {run.detail}{:else if run.warnings.length}{run.warnings.join(', ')}{:else}—{/if}</td>
+                  <td>{#if run.reason}<code>{run.reason}</code> {run.detail}{#if run.repeats > 1} (×{run.repeats}, latest shown){/if}{:else if run.warnings.length}{run.warnings.join(', ')}{:else}—{/if}</td>
                 </tr>
               {/each}
             </tbody>

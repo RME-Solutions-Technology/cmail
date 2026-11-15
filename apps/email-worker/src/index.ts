@@ -961,8 +961,8 @@ export default {
     // is tried only when the exact address has no active mailbox; it resolves
     // to an existing mailbox on MAIL_DOMAIN or to nothing.
     let mailbox = await env.DB.prepare(
-      'SELECT id, status, address FROM mailboxes WHERE address = ? AND status = ?',
-    ).bind(recipientAddress, 'active').first<{ id: string; status: string; address?: string }>();
+      'SELECT id, status, address, type FROM mailboxes WHERE address = ? AND status = ?',
+    ).bind(recipientAddress, 'active').first<{ id: string; status: string; address?: string; type?: string }>();
     let viaStandby = false;
     if (!mailbox) {
       mailbox = await resolveStandbyMailbox(env.DB, env, recipientAddress);
@@ -981,7 +981,7 @@ export default {
     // on the standby address; anything else for it is refused like an
     // unknown address, and a duplicate or late probe is not stored again.
     const probe: ProbeDecision = await decideProbeDelivery(env.DB, env, {
-      mailbox: { id: mailbox.id, status: mailbox.status, address: mailboxAddress },
+      mailbox: { id: mailbox.id, status: mailbox.status, address: mailboxAddress, type: mailbox.type },
       viaStandby,
       headers: message.headers,
     });
