@@ -11,6 +11,7 @@
 // is Cloudflare's own reject of a report that fails the checks in verify.ts.
 import PostalMime from 'postal-mime';
 import {
+  aliasesUsable,
   emptyMirrorCounts,
   exchangeMirrorConfig,
   loadExchangeMirrorSwitch,
@@ -26,13 +27,10 @@ import {
   serializeParticipants,
   type MessageParticipant,
 } from '@cmail/shared/message-participants';
-import {
-  releaseInboundReservation,
-  reserveInboundDelivery,
-  type InboundGuardEnv,
-} from '../inbound-guard';
+import { mailboxStorageQuotaBytes } from '@cmail/shared/mailbox-storage';
+import { releaseInboundReservation, type InboundGuardEnv } from '../inbound-guard';
 import { attachedOriginal, envelopeText, parseJournalEnvelope, type JournalEnvelope } from './report';
-import { verifyJournalReport } from './verify';
+import { headerValues, verifyJournalReport } from './verify';
 
 /** SMTP text for a refused report. Deliberately says nothing about why. */
 export const JOURNAL_REJECT_RESPONSE = 'cmail: journal report refused';
@@ -40,8 +38,14 @@ export const JOURNAL_REJECT_RESPONSE = 'cmail: journal report refused';
 const HARD_MAX_REPORT_BYTES = 25 * 1024 * 1024;
 const DEFAULT_SUBREQUEST_BUDGET = 8_000;
 const MAX_SUBREQUEST_BUDGET = 1_000_000;
+/** Room for the report envelope around the original (5,000 recipient lines fit well inside). */
+const ENVELOPE_ALLOWANCE_BYTES = 1024 * 1024;
 /** Audit rows per UTC day for rejected reports and for skipped copies (each). */
 const AUDIT_PER_DAY = 50;
+/** Mail trace rows per UTC day for refused reports. */
+const REJECT_TRACE_PER_DAY = 200;
+/** How long a pending storage reservation lives, as on the normal path. */
+const PENDING_STORAGE_SECONDS = 15 * 60;
 const KEEP_DAYS = 90;
 /** Copies stored at the same time. */
 const PARALLEL = 6;
@@ -157,8 +161,11 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
-/** Active mailbox per address: primary addresses first, then imported aliases. */
-async function resolveMailboxes(db: D1Database, addresses: readonly string[]): Promise<Map<string, string>> {
+/**
+ * Active mailbox per address: primary addresses first, then imported aliases,
+ * the latter only when `useAliases` (the import is on and fresh).
+ */
+async function resolveMailboxes(db: D1Database, addresses: readonly string[], useAliases: boolean): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   for (const slice of chunks(addresses, IN_CHUNK)) {
     const marks = slice.map(() => '?').join(', ');
@@ -167,7 +174,7 @@ async function resolveMailboxes(db: D1Database, addresses: readonly string[]): P
     ).bind(...slice).all<{ address: string; id: string }>();
     for (const row of results ?? []) found.set(row.address, row.id);
     const missing = slice.filter((address) => !found.has(address));
-    if (!missing.length) continue;
+    if (!missing.length || !useAliases) continue;
     const aliasMarks = missing.map(() => '?').join(', ');
     const aliases = await db.prepare(
       `SELECT a.address AS address, m.id AS id FROM mailbox_aliases a
@@ -177,6 +184,58 @@ async function resolveMailboxes(db: D1Database, addresses: readonly string[]): P
     for (const row of aliases.results ?? []) found.set(row.address, row.id);
   }
   return found;
+}
+
+type MirrorReservation =
+  | { status: 'accepted'; reservationId: string | null }
+  | { status: 'duplicate' | 'quota' | 'unavailable'; reservationId: null };
+
+/**
+ * Reserves storage for one mirrored copy as reservation_type 'storage'. The
+ * hourly inbound guard (migration 0001 trg_mailbox_reservations_guard) only
+ * counts 'inbound' rows, so mirrored copies never use up a mailbox's normal
+ * inbound allowance, while the storage quota check (which counts pending
+ * reservations of every type) still applies. The row is completed by the
+ * message insert (trg_message_reservation_complete, keyed on the message id)
+ * like any other. With no quota configured nothing is reserved.
+ */
+export async function reserveMirrorStorage(
+  db: D1Database,
+  input: { mailboxId: string; deliveryKey: string; messageBytes: number; quotaBytes: number },
+): Promise<MirrorReservation> {
+  if (input.quotaBytes <= 0) return { status: 'accepted', reservationId: null };
+  const reservationId = crypto.randomUUID();
+  try {
+    await db.prepare(
+      `INSERT INTO mailbox_reservations (
+         id, delivery_key, reservation_type, mailbox_id, sender_hash, message_bytes,
+         mailbox_message_limit, mailbox_byte_limit, sender_message_limit, storage_quota_bytes,
+         storage_pending, pending_expires_at, created_epoch
+       ) VALUES (?, ?, 'storage', ?, '', ?, 0, 0, 0, ?, 1, unixepoch() + ?, unixepoch())`,
+    ).bind(reservationId, input.deliveryKey, input.mailboxId, input.messageBytes, input.quotaBytes, PENDING_STORAGE_SECONDS).run();
+    return { status: 'accepted', reservationId };
+  } catch (caught) {
+    // The storage trigger aborts with 'mailbox reservation denied' when the
+    // mailbox is full; a unique delivery key means the copy is in flight or done.
+    const text = caught instanceof Error ? caught.message : '';
+    if (/mailbox reservation denied/.test(text)) return { status: 'quota', reservationId: null };
+    try {
+      const row = await db.prepare('SELECT id FROM mailbox_reservations WHERE delivery_key = ? OR id = ? LIMIT 1')
+        .bind(input.deliveryKey, reservationId).first<{ id: string }>();
+      if (row?.id === reservationId) return { status: 'accepted', reservationId };
+      if (row) return { status: 'duplicate', reservationId: null };
+      // The error text is not a contract: work out whether it was the quota.
+      const usage = await db.prepare(
+        `SELECT COALESCE((SELECT TOTAL(CASE WHEN size_bytes > 0 THEN size_bytes ELSE 0 END) FROM messages WHERE mailbox_id = ?), 0)
+              + COALESCE((SELECT TOTAL(message_bytes) FROM mailbox_reservations
+                          WHERE mailbox_id = ? AND storage_pending = 1 AND pending_expires_at > unixepoch()), 0) AS used`,
+      ).bind(input.mailboxId, input.mailboxId).first<{ used: number }>();
+      if (usage && Number(usage.used) + input.messageBytes > input.quotaBytes) return { status: 'quota', reservationId: null };
+    } catch {
+      // Fall through: unknown state.
+    }
+    return { status: 'unavailable', reservationId: null };
+  }
 }
 
 async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<string>> {
@@ -192,12 +251,16 @@ async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<
 
 /**
  * A Sent copy is filed only for mail a cmail user really sent through
- * Exchange: the envelope sender is a cmail mailbox, Exchange knew the
+ * Exchange, and only when M365_JOURNAL_MIRROR_SENT is "true" (off by
+ * default): the envelope sender is a cmail mailbox, Exchange knew the
  * addressing (To/Cc/Bcc lines, which it writes for authenticated
- * submissions; internet mail gets "Recipient:" lines), the original's own
- * tenant headers, where present, say it was sent inside this tenant, and the
- * sender is the original's From or Sender. A forged From from the internet
- * therefore never lands in anyone's Sent folder.
+ * submissions; internet mail gets "Recipient:" lines), the sender is the
+ * original's From or Sender, and the original carries
+ * X-MS-Exchange-CrossTenant-AuthAs "Internal" and
+ * X-MS-Exchange-CrossTenant-Id equal to M365_TENANT_ID, on every instance of
+ * each and at least one of each. A missing header refuses the Sent copy (fail
+ * closed). A forged From from the internet therefore never lands in anyone's
+ * Sent folder.
  */
 export function sentCopyAllowed(input: {
   config: Pick<ExchangeMirrorConfig, 'mirrorSent' | 'tenantId'>;
@@ -207,12 +270,12 @@ export function sentCopyAllowed(input: {
   innerSender: string | null;
 }): boolean {
   const { config, envelope } = input;
-  if (!config.mirrorSent || !envelope.sender || !envelope.addressingKnown) return false;
+  if (!config.mirrorSent || !config.tenantId || !envelope.sender || !envelope.addressingKnown) return false;
   if (envelope.sender !== input.innerFrom && envelope.sender !== input.innerSender) return false;
-  const authAs = firstHeader(input.innerHeaders, 'x-ms-exchange-crosstenant-authas');
-  if (authAs !== undefined && authAs.trim().toLowerCase() !== 'internal') return false;
-  const tenant = firstHeader(input.innerHeaders, 'x-ms-exchange-crosstenant-id');
-  if (config.tenantId && tenant !== undefined && tenant.trim().toLowerCase() !== config.tenantId) return false;
+  const authAs = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-authas').map((value) => value.trim().toLowerCase());
+  if (!authAs.length || authAs.some((value) => value !== 'internal')) return false;
+  const tenants = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-id').map((value) => value.trim().toLowerCase());
+  if (!tenants.length || tenants.some((value) => value !== config.tenantId)) return false;
   return true;
 }
 
@@ -224,7 +287,11 @@ async function processReport(
   const check = exchangeMirrorConfig(env);
   if (!check.configured) return { kind: 'rejected', reason: 'not_configured' };
   const config = check.config;
-  if (!Number.isSafeInteger(message.rawSize) || message.rawSize < 0 || message.rawSize > HARD_MAX_REPORT_BYTES) {
+  const inboundLimit = tools.getInboundLimit(env);
+  // Size first, before anything is read or parsed: the original must fit the
+  // inbound limit, and the report is the original plus a small envelope.
+  const reportLimit = Math.min(HARD_MAX_REPORT_BYTES, inboundLimit + ENVELOPE_ALLOWANCE_BYTES);
+  if (!Number.isSafeInteger(message.rawSize) || message.rawSize < 0 || message.rawSize > reportLimit) {
     return { kind: 'rejected', reason: 'too_large' };
   }
 
@@ -244,7 +311,6 @@ async function processReport(
   if (!original.ok) return { kind: 'rejected', reason: original.reason };
 
   const counts = emptyMirrorCounts();
-  const inboundLimit = tools.getInboundLimit(env);
   const skipAll = (reason: string, size: number): Processed => ({
     kind: 'processed', counts: { ...counts, skipped: 1 }, skipReason: reason, incomplete: false,
     messageIdHeader: null, headerFrom: '', subject: '', size,
@@ -266,14 +332,20 @@ async function processReport(
   const envelope = parsedEnvelope.envelope;
 
   const size = original.raw.byteLength;
-  const messageIdHeader = tools.normalizeMessageIdHeader(firstHeader(inner.headers as Header[], 'message-id') ?? '')
-    ?? tools.normalizeMessageIdHeader(envelope.messageId ?? '');
+  // The envelope must describe this original: its Message-Id must be the
+  // original's own Message-ID. A report whose original has none, or another
+  // one, is refused (it could not be filed exactly once anyway).
+  const innerMessageIds = headerValues(inner.headers as Header[], 'message-id');
+  const messageIdHeader = innerMessageIds.length === 1 ? tools.normalizeMessageIdHeader(innerMessageIds[0]) : null;
+  const envelopeMessageId = tools.normalizeMessageIdHeader(envelope.messageId ?? '');
+  if (!messageIdHeader || !envelopeMessageId || messageIdHeader.toLowerCase() !== envelopeMessageId.toLowerCase()) {
+    return { kind: 'rejected', reason: 'message_id_mismatch' };
+  }
   const rawFromHeader = firstHeader(inner.headers as Header[], 'from');
   const parsedFrom = tools.inboundFromParticipant(inner.from as ParsedMailbox | undefined, envelope.sender ?? '', rawFromHeader);
   const headerFrom = parsedFrom.address;
   const subject = tools.cleanHeaderValue(inner.subject, tools.maxSubjectChars) || '(no subject)';
   const describe = { messageIdHeader, headerFrom, subject, size };
-  if (!messageIdHeader) return { ...skipAll('no_message_id', size), ...describe, messageIdHeader: null };
 
   // The same content limits as the normal inbound path.
   const preparedBody = tools.prepareInboundBody(inner.html, inner.text, tools.getDecodedBodyLimit(env));
@@ -299,7 +371,8 @@ async function processReport(
   // Map recipients (and the sender, for a Sent copy) to active mailboxes by
   // primary address or imported alias. Unknown addresses are only counted.
   const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : [])])];
-  const mailboxes = await resolveMailboxes(env.DB, lookups);
+  const useAliases = await aliasesUsable(env.DB, Date.now()).catch(() => false);
+  const mailboxes = await resolveMailboxes(env.DB, lookups, useAliases);
   const targets: Target[] = [];
   const seenInbound = new Set<string>();
   for (const recipient of envelope.recipients) {
@@ -351,26 +424,14 @@ async function processReport(
     pending.length = allowed;
   }
 
-  const guardEnv: InboundGuardEnv = {
-    ...env,
-    // Exchange already applied its own limits and filtering. Only the
-    // mailbox storage quota is enforced on mirrored copies.
-    INBOUND_MAILBOX_MESSAGES_PER_HOUR: '0',
-    INBOUND_MAILBOX_BYTES_PER_HOUR: '0',
-    INBOUND_SENDER_MESSAGES_PER_HOUR: '0',
-  };
+  const quotaBytes = mailboxStorageQuotaBytes(env);
   let incomplete = false;
 
   async function fileOne(item: { target: Target; id: string }): Promise<'filed' | 'duplicate' | 'quota' | 'guard_unavailable' | 'store_failed'> {
     const { target, id } = item;
-    const reservation = await reserveInboundDelivery(guardEnv, {
-      mailboxId: target.mailboxId,
-      senderAddress: headerFrom,
-      deliveryKey: id,
-      messageBytes: size,
-    });
+    const reservation = await reserveMirrorStorage(env.DB, { mailboxId: target.mailboxId, deliveryKey: id, messageBytes: size, quotaBytes });
     if (reservation.status === 'duplicate') return 'duplicate';
-    if (reservation.status === 'rejected') return 'quota';
+    if (reservation.status === 'quota') return 'quota';
     if (reservation.status !== 'accepted') return 'guard_unavailable';
     const namespace = crypto.randomUUID();
     const bodyKey = tools.messageBodyR2Key(namespace, crypto.randomUUID());
@@ -547,8 +608,10 @@ export async function handleJournalDelivery(
   if (outcome.kind === 'rejected') {
     message.setReject(JOURNAL_REJECT_RESPONSE);
     const counts = { ...emptyMirrorCounts(), rejected: 1 };
+    let rejectedToday = 0;
     try {
       const day = await recordDay(env.DB, now, counts, outcome.reason);
+      rejectedToday = Number(day?.rejected ?? 0);
       if (day && Number(day.received) === 1) await env.DB.prepare('DELETE FROM exchange_mirror_days WHERE day < ?').bind(mirrorDay(now - KEEP_DAYS * 86_400_000)).run();
       if (!day || Number(day.rejected) <= AUDIT_PER_DAY) {
         // The envelope sender of a refused report is unverified: its domain only.
@@ -557,14 +620,18 @@ export async function handleJournalDelivery(
     } catch {
       console.error('Exchange mirror status could not be recorded');
     }
-    // Nothing from a refused report is trusted, so the trace keeps no subject or From.
-    await tools.logTrace(env.DB, {
-      direction: 'inbound',
-      envelope_from: envelopeFrom || null,
-      status: 'rejected',
-      status_detail: `Exchange mirror: journal report refused (${outcome.reason})`,
-      size_bytes: Number.isSafeInteger(message.rawSize) ? message.rawSize : null,
-    });
+    // Nothing from a refused report is trusted, so the trace keeps no subject
+    // or From, and at most REJECT_TRACE_PER_DAY rows a day (the day row keeps
+    // the full count), so refused mail cannot grow the trace without bound.
+    if (rejectedToday <= REJECT_TRACE_PER_DAY) {
+      await tools.logTrace(env.DB, {
+        direction: 'inbound',
+        envelope_from: envelopeFrom || null,
+        status: 'rejected',
+        status_detail: `Exchange mirror: journal report refused (${outcome.reason})`,
+        size_bytes: Number.isSafeInteger(message.rawSize) ? message.rawSize : null,
+      });
+    }
     console.warn('Exchange mirror refused a journal report', { reason: outcome.reason });
     return true;
   }

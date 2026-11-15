@@ -167,10 +167,13 @@ STANDBY_PROBE_TIMEOUT_MINUTES = "10"
 # comma separated: the tenant's default and onmicrosoft.com domains. Default
 # MAIL_DOMAIN. M365_TENANT_ID above, when set, must match the report's tenant.
 M365_JOURNAL_SENDER_DOMAINS = ""
-# "false" skips the SPF/DKIM/DMARC check (weaker; see the docs). Default "true".
+# "false" skips the SPF/DKIM/DMARC check (weaker; see the docs). Needs
+# M365_TENANT_ID, and every report must then carry that tenant id. Default "true".
 M365_JOURNAL_REQUIRE_AUTH = "true"
-# "false" files recipients' copies only, never a Sent copy. Default "true".
-M365_JOURNAL_MIRROR_SENT = "true"
+# "true" also files the sender's copy into Sent (needs M365_TENANT_ID). Keep
+# "false" until a live test shows originals carry the tenant headers.
+M365_JOURNAL_MIRROR_SENT = "false"
+# Reports larger than MAX_INBOUND_BYTES + 1 MiB are refused unread.
 # Subrequests one report may use for filing (about 4 + attachments per copy).
 # Raise [limits] subrequests first if you raise this above 10,000.
 M365_JOURNAL_SUBREQUEST_BUDGET = "8000"

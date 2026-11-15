@@ -78,6 +78,18 @@ describe('Exchange mirror admin', () => {
     ]);
   });
 
+  it('approves held alias removals once, audited, and says whether aliases are in use', async () => {
+    const { env, sqlite, audits } = setup();
+    expect(await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'alias_approve_removals')).toMatchObject({ ok: true });
+    expect(sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_alias_sync_approve_removals'`).get()).toEqual({ value: 'true' });
+    expect(audits().map((row) => row.event_type)).toEqual(['org.m365_alias_removals_approved']);
+    await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'alias_enable');
+    expect((await loadExchangeMirrorOverview(env, NOW)).aliasesFresh).toBe(false);
+    sqlite.prepare(`INSERT INTO m365_alias_sync_state (id, last_ok_at, last_run_at) VALUES (1, ?, ?)`).run(NOW - 60_000, NOW - 60_000);
+    expect((await loadExchangeMirrorOverview(env, NOW)).aliasesFresh).toBe(true);
+    expect((await loadExchangeMirrorOverview(env, NOW + 4 * 24 * 60 * 60 * 1000)).aliasesFresh).toBe(false);
+  });
+
   it('refuses to turn anything on before migration 0027', async () => {
     const { env, sqlite } = setup();
     sqlite.exec('DROP TABLE exchange_mirror_days');

@@ -15,12 +15,20 @@
 //   on that object and not on the old one (a full listing shows that).
 // - Nothing is removed unless the whole listing was read, and a listing that
 //   yields no aliases at all while some are held removes nothing (held).
+// - A run that would remove more than 20 percent of held aliases (and at
+//   least 5) applies its additions and moves but holds the removals until a
+//   manager approves them in Admin; the run counts as held, not successful.
+// - The mirror uses aliases only while the import is on and its last
+//   successful run is under 3 days old (aliasesUsable).
 // - Only the Exchange mirror reads aliases; normal inbound delivery does not.
 import {
   loadM365SyncSwitch,
   m365SyncConfig,
 } from '@cmail/shared/m365-sync';
 import {
+  ALIAS_BRAKE_MIN,
+  ALIAS_BRAKE_PERCENT,
+  M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS,
   emptyAliasCounts,
   loadAliasSyncSwitch,
   type AliasSyncCounts,
@@ -71,10 +79,13 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
-async function saveState(db: D1Database, now: number, state: Omit<AliasSyncState, 'lastRunAt'>): Promise<void> {
+async function saveState(db: D1Database, now: number, state: Omit<AliasSyncState, 'lastRunAt' | 'lastOkAt'>): Promise<void> {
+  // last_ok_at moves only for a run that read everything and applied it in full.
   await db.prepare(
-    `UPDATE m365_alias_sync_state SET state = ?, last_run_at = ?, lease_until = 0, updated_at = datetime('now') WHERE id = 1`,
-  ).bind(JSON.stringify(state), now).run();
+    `UPDATE m365_alias_sync_state
+     SET state = ?, last_run_at = ?, last_ok_at = CASE WHEN ? = 1 THEN ? ELSE last_ok_at END, lease_until = 0, updated_at = datetime('now')
+     WHERE id = 1`,
+  ).bind(JSON.stringify(state), now, state.lastResult === 'ok' ? 1 : 0, now).run();
 }
 
 /**
@@ -212,9 +223,28 @@ export async function runAliasSyncTick(env: M365SyncWorkerEnv, deps: AliasSyncDe
       return { status: 'dry_run', counts };
     }
 
+    // Mass-removal brake: a listing that drops many aliases at once is more
+    // likely partial than real. Additions and moves still apply; removals
+    // wait until a manager approves them in Admin (one run).
+    const brakeLimit = Math.max(ALIAS_BRAKE_MIN, Math.floor((held.size * ALIAS_BRAKE_PERCENT) / 100));
+    let applyRemoves = removes;
+    if (removes.length > brakeLimit) {
+      const approval = await db.prepare('SELECT value FROM org_settings WHERE key = ?')
+        .bind(M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS).first<{ value: string }>();
+      if (approval?.value === 'true') {
+        await db.prepare(`UPDATE org_settings SET value = 'false', updated_at = datetime('now') WHERE key = ?`)
+          .bind(M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS).run();
+      } else {
+        applyRemoves = [];
+        counts.heldRemovals = removes.length;
+        counts.removed = 0;
+        counts.total = desired.size + removes.length;
+      }
+    }
+
     // 6. Apply: removals first, so an address that moved is free again.
     const statements: D1PreparedStatement[] = [];
-    for (const address of removes) {
+    for (const address of applyRemoves) {
       statements.push(db.prepare(`DELETE FROM mailbox_aliases WHERE address = ? AND source = 'm365'`).bind(address));
     }
     for (const [address, target] of [...moves, ...inserts]) {
@@ -225,11 +255,15 @@ export async function runAliasSyncTick(env: M365SyncWorkerEnv, deps: AliasSyncDe
       ).bind(address, target.mailboxId, target.objectId, address));
     }
     for (const slice of chunks(statements, BATCH)) await db.batch(slice);
-    if (inserts.length || moves.length || removes.length) {
+    if (inserts.length || moves.length || applyRemoves.length || counts.heldRemovals) {
       await db.prepare(
         `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
          VALUES (?, datetime('now'), NULL, 'system', 'm365_sync.aliases_changed', 'mailbox_aliases', ?)`,
-      ).bind(crypto.randomUUID(), `Microsoft 365 alias import: ${inserts.length} added, ${moves.length} moved, ${removes.length} removed, ${counts.conflicts} refused (conflict)`).run();
+      ).bind(crypto.randomUUID(), `Microsoft 365 alias import: ${inserts.length} added, ${moves.length} moved, ${applyRemoves.length} removed, ${counts.conflicts} refused (conflict)${counts.heldRemovals ? `, ${counts.heldRemovals} removals held for approval` : ''}`).run();
+    }
+    if (counts.heldRemovals) {
+      await saveState(db, now, { lastResult: 'held', lastError: 'mass_removal', counts });
+      return { status: 'held', counts };
     }
     await saveState(db, now, { lastResult: 'ok', lastError: null, counts });
     return { status: 'worked', counts };

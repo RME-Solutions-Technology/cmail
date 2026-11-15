@@ -14,7 +14,7 @@
   const ALIAS_RESULT: Record<string, string> = {
     ok: 'Imported',
     dry_run: 'Dry run (nothing written)',
-    held: 'Held: Microsoft 365 returned no aliases, so none were removed',
+    held: 'Held: nothing removed (see below)',
     error: 'Failed',
     not_configured: 'Microsoft 365 sync settings are missing',
   };
@@ -69,7 +69,7 @@
           <div><dt>Trusted sender domains</dt><dd>{overview.config.senderDomains.join(', ')}</dd></div>
           <div><dt>SPF/DKIM/DMARC check</dt><dd>{overview.config.requireAuth ? 'Required' : 'Off (weaker: token and headers only)'}</dd></div>
           <div><dt>Tenant check</dt><dd>{overview.config.tenantCheck ? 'On (M365_TENANT_ID)' : 'Off: set M365_TENANT_ID'}</dd></div>
-          <div><dt>Sent copies</dt><dd>{overview.config.mirrorSent ? 'Filed for cmail users who sent through Exchange' : 'Off'}</dd></div>
+          <div><dt>Sent copies</dt><dd>{overview.config.mirrorSent ? 'Filed for cmail users who sent through Exchange' : 'Off (default until a live test confirms the report headers)'}</dd></div>
         </dl>
       {/if}
     </section>
@@ -118,6 +118,15 @@
           {overview.aliasEnabled ? 'Turn alias import off' : 'Turn alias import on'}
         </button>
       </form>
+      {#if overview.aliasEnabled && !overview.aliasesFresh}
+        <div class="notice notice-warning" role="status">Imported aliases are not being used: the last full, successful import is missing or more than 3 days old. Mirrored mail to an alias counts as unmatched until the import succeeds.</div>
+      {/if}
+      {#if overview.aliasState?.lastError === 'mass_removal'}
+        <div class="notice notice-warning" role="status">
+          The last import would remove {overview.aliasState.counts?.heldRemovals ?? 'many'} aliases at once, so it held them. Check Microsoft 365, then approve if it is right.
+          <form method="POST"><input type="hidden" name="action" value="alias_approve_removals" /><button type="submit" class="btn">Approve alias removals</button></form>
+        </div>
+      {/if}
       {#if overview.aliasEnabled && (!overview.sync.enabled || overview.sync.dryRun)}
         <div class="notice notice-warning" role="status">The Microsoft 365 sync is {overview.sync.enabled ? 'in dry run' : 'off'}, so aliases are {overview.sync.enabled ? 'only counted, not written' : 'not imported'}.</div>
       {/if}
@@ -125,7 +134,8 @@
         <div><dt>Aliases held</dt><dd>{overview.aliasCount}</dd></div>
         <div><dt>Last import</dt><dd>{when(overview.aliasState?.lastRunAt)}{overview.aliasState?.lastResult ? `: ${ALIAS_RESULT[overview.aliasState.lastResult] ?? overview.aliasState.lastResult}` : ''}{overview.aliasState?.lastError ? ` (${overview.aliasState.lastError})` : ''}</dd></div>
         {#if overview.aliasState?.counts}
-          <div><dt>Last import changes</dt><dd>{overview.aliasState.counts.added} added, {overview.aliasState.counts.moved} moved, {overview.aliasState.counts.removed} removed, {overview.aliasState.counts.conflicts} refused (address in use or claimed twice)</dd></div>
+          <div><dt>Last import changes</dt><dd>{overview.aliasState.counts.added} added, {overview.aliasState.counts.moved} moved, {overview.aliasState.counts.removed} removed, {overview.aliasState.counts.conflicts} refused (address in use or claimed twice){overview.aliasState.counts.heldRemovals ? `, ${overview.aliasState.counts.heldRemovals} removals held` : ''}</dd></div>
+          <div><dt>Last full successful import</dt><dd>{when(overview.aliasState.lastOkAt)}</dd></div>
         {/if}
       </dl>
     </section>

@@ -93,8 +93,9 @@ alias):
   distribution groups get their copy.
 - Mail to shared mailboxes that cmail has (for example from the Microsoft
   365 sync), as for people.
-- The sender's copy, into the sender's **Sent** folder, when the sender is a
-  cmail user who sent through Exchange (see [How mail is filed](#how-mail-is-filed)).
+- Optionally (off by default), the sender's copy into the sender's **Sent**
+  folder, when the sender is a cmail user who sent through Exchange (see
+  [How mail is filed](#how-mail-is-filed)).
 
 Not mirrored:
 
@@ -125,11 +126,24 @@ checks below.
 ## How a report is trusted
 
 A message is treated as a journal report only when **all** of these hold.
-Anything else is refused at SMTP (Exchange then sends it to the
-"undeliverable journal reports" address), counted, and written to the audit
-log (`exchange_mirror.report_rejected`, with a reason code and the envelope
-sender's domain only). It never reaches a mailbox.
+Anything else is refused at SMTP with a permanent error (Exchange then sends
+it to the "undeliverable journal reports" address), counted, written to the
+audit log (`exchange_mirror.report_rejected`, with a reason code and the
+envelope sender's domain only; at most 50 audit rows and 200 mail trace rows
+a day, the daily count is always exact). It never reaches a mailbox.
 
+> **Do not let the journal address fail temporarily for long.** If the
+> address does not accept mail at all (routing rule missing, Worker down or
+> answering with a temporary 4xx error), Exchange keeps the reports queued
+> and retries. Microsoft says it will contact you and, "If you haven't
+> resolved the issue after two days of being contacted, Microsoft will
+> disable the problematic journaling rule"
+> ([Configure journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/configure-journaling)).
+> Watch the "Last journal report" time in Admin.
+
+0. **Size first.** Before anything is read, the report must be no larger
+   than `MAX_INBOUND_BYTES` plus 1 MiB of envelope room (and at most
+   Cloudflare's 25 MiB). Larger reports are refused (`too_large`) unread.
 1. **The exact journal address.** It arrived at `M365_JOURNAL_ADDRESS`,
    whose local part is `journal-` followed by a random token of 32 to 64
    lower-case letters and digits. Only Exchange and the cmail settings know
@@ -140,8 +154,9 @@ sender's domain only). It never reaches a mailbox.
    that Exchange adds to every journal report.
 4. **Our tenant:** when `M365_TENANT_ID` is set, every
    `X-MS-Exchange-CrossTenant-Id` header on the report must equal it. (Not
-   documented as always present on a journal report, so a missing header is
-   allowed; another tenant's id is refused.)
+   documented as always present on a journal report, so with check 5 on a
+   missing header is allowed; another tenant's id is refused. With check 5
+   off, the header is required and `M365_TENANT_ID` must be set.)
 5. **Authenticated as the tenant** (unless `M365_JOURNAL_REQUIRE_AUTH =
    "false"`): Cloudflare Email Routing's own `Authentication-Results` record
    (the first one, whose identifier is `INBOUND_AUTHSERV_ID`, normally
@@ -149,25 +164,37 @@ sender's domain only). It never reaches a mailbox.
    [Cloudflare](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results))
    shows either **DMARC pass** with the report's From domain in
    `M365_JOURNAL_SENDER_DOMAINS`, or a **DKIM pass** signed by one of those
-   domains. Records added further out are never read.
-6. **A safe envelope:** exactly one attached original (`message/rfc822`),
-   recipient lines only after the envelope's single Message-Id line (the
-   Subject line above it carries the sender's own text), at most 5,000
-   recipients.
+   domains. Domains match only whole: the From must be one plain address
+   whose domain is a valid domain name from end to end (so
+   `x@example.com_.evil.example` is not `example.com`), and if the record
+   names the domain DMARC evaluated (`header.from`) it must be the same one.
+   Records added further out are never read.
+6. **A safe envelope:** a plain-text envelope (an HTML-only report is
+   refused), exactly one attached original (`message/rfc822`), recipient
+   lines only after the envelope's single Message-Id line (the Subject line
+   above it carries the sender's own text), at most 5,000 recipients.
+7. **The envelope describes this original:** the envelope's Message-Id
+   equals the attached original's one Message-ID header
+   (`message_id_mismatch` otherwise, also when the original has none).
 
 ## How mail is filed
 
 - The **original** message is filed, never the report. It goes through the
   same content handling as normal inbound mail: the HTML sanitizer, decoded
   body limit, attachment count and size limits, blocked attachment types,
-  link checks when it is read, and the mailbox storage quota. Copies that
+  link checks when it is read, and the mailbox storage quota. Mirrored
+  copies reserve storage as their own kind of reservation, which the hourly
+  inbound limits (`INBOUND_MAILBOX_MESSAGES_PER_HOUR` and the others) never
+  count: mirroring cannot use up a mailbox's normal inbound allowance, and
+  those limits do not apply to mirrored copies. Copies that
   fail one of these are not filed ("skipped", audited as
   `exchange_mirror.copies_skipped`); the report is still accepted, because
   Exchange has already delivered the message.
 - Each recipient line (`To`, `Cc`, `Bcc`, `Recipient`, any case, quoted
   display names allowed; `Expanded:` and `Forwarded:` annotations are read
   and the line's own address is the mailbox that got the message) is mapped
-  to an active cmail mailbox by primary address, then by imported alias.
+  to an active cmail mailbox by primary address, then by imported alias
+  (only while the alias import is on and fresh, see [Aliases](#aliases)).
   Each mailbox gets the message once, even if it appears on several lines or
   through several addresses.
 - **Exactly once:** a recipient's copy has the same id as the normal inbound
@@ -176,18 +203,20 @@ sender's domain only). It never reaches a mailbox.
   switch are all filed once ("duplicates"). Microsoft documents that
   duplicate journal reports happen "by design" when a message is split
   ([Journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/journaling)).
-- **Sent copies.** A copy goes into the sender's Sent folder (as read, with
-  the Bcc list from the envelope, which only the sender's copy shows) only
-  when the envelope sender is a cmail mailbox, Exchange knew the addressing
-  (`To`/`Cc`/`Bcc` lines, which Exchange writes for authenticated
-  submissions; internet mail gets `Recipient` lines), the sender is the
-  original's From or Sender, and the original's own
-  `X-MS-Exchange-CrossTenant-AuthAs` / `-Id` headers, where present, say
-  `Internal` and this tenant. So a forged From from the internet never lands
-  in anyone's Sent folder. Why mirror Sent at all: after a switch, people
-  need their recent sent mail to follow up and to keep reply threads
-  together. Set `M365_JOURNAL_MIRROR_SENT = "false"` to file recipients'
-  copies only.
+- **Sent copies (off by default).** With `M365_JOURNAL_MIRROR_SENT =
+  "true"` (which needs `M365_TENANT_ID`), a copy goes into the sender's Sent
+  folder (as read, with the Bcc list from the envelope, which only the
+  sender's copy shows) only when **all** hold: the envelope sender is a cmail
+  mailbox; Exchange knew the addressing (`To`/`Cc`/`Bcc` lines, which
+  Exchange writes for authenticated submissions; internet mail gets
+  `Recipient` lines); the sender is the original's From or Sender; and the
+  original carries `X-MS-Exchange-CrossTenant-AuthAs: Internal` and
+  `X-MS-Exchange-CrossTenant-Id` equal to `M365_TENANT_ID`, at least once
+  each and on every instance. A missing header means no Sent copy (fail
+  closed). So a forged From from the internet never lands in anyone's Sent
+  folder. Why mirror Sent at all: after a switch, people need their recent
+  sent mail to follow up and to keep reply threads together. It stays off
+  until the first live test shows real originals carry those headers.
 - Mail between two cmail users gives both copies: Inbox for the recipient,
   Sent for the sender.
 - Each copy is stored separately (its own body and attachment objects), so
@@ -229,14 +258,24 @@ off by default) adds them:
   real mailbox always wins).
 - An alias moves to another mailbox only when Microsoft 365 lists it there
   and no longer on the old one. A listing that suddenly holds no aliases
-  removes nothing (held). Changes are audited
-  (`m365_sync.aliases_changed`, counts only).
+  removes nothing (held).
+- **Mass-removal brake.** A run that would remove more than 20 percent of
+  the aliases held (and at least 5) is more likely a partial listing than a
+  real change: it applies its additions and moves, holds the removals, and
+  counts as held. Admin shows **Approve alias removals**; after a manager
+  approves (audited, `org.m365_alias_removals_approved`), the next run
+  applies them, once. Changes are audited (`m365_sync.aliases_changed`,
+  counts only).
+- **Freshness.** The mirror uses imported aliases only while the import is
+  switched on and its last full, successful run (not held, not failed) is
+  under 3 days old. Otherwise mail to an alias counts as unmatched, and
+  Admin says so.
 - Only the Exchange mirror reads aliases. Normal inbound mail to an alias is
   still refused as an unknown address, so turning this on changes nothing for
   cmail's own mail. (Accepting aliases on the normal path, for after a switch
   to cmail, is a separate change.)
-- Turning the import off keeps the aliases already imported, and the mirror
-  keeps using them, until it is turned on again.
+- Turning the import off stops the mirror using aliases at once; the rows
+  stay until the import runs again.
 
 ## Setup
 
@@ -245,8 +284,13 @@ changes a live system needs the owner's yes.
 
 ### 1. cmail
 
-1. Apply migration `0027` (`pnpm db:migrate`). It adds three tables and two
-   triggers and changes no existing row.
+1. Apply migration `0027` (`pnpm db:migrate`). It adds three tables and
+   four triggers and changes no existing row. Two triggers guard
+   `mailbox_aliases` itself and only run when aliases are written (alias
+   import on). Two run on every mailbox insert or address change, but their
+   `WHEN` clause is one indexed lookup in `mailbox_aliases` that is false
+   while that table is empty, so with the alias import never turned on their
+   body never runs.
 2. Choose the journal domain. It must be a domain whose MX already points at
    Cloudflare Email Routing. Cloudflare Email Routing needs exclusive control
    of a domain's root MX (error 2008 while another provider's MX is there;
@@ -264,8 +308,8 @@ changes a live system needs the owner's yes.
    | `INBOUND_AUTHSERV_ID` | `mx.cloudflare.net` |
    | `MAIL_DOMAIN` | As for the web app. |
    | `MAX_INBOUND_BYTES` | Optional: raise toward 26214400 (25 MiB) to mirror large messages; see [Size limits](#size-limits). |
-   | `M365_JOURNAL_MIRROR_SENT` | Optional, default `"true"`. |
-   | `M365_JOURNAL_REQUIRE_AUTH` | Leave at `"true"`. Set `"false"` only if the first live test proves Exchange's reports carry no DKIM or DMARC pass; then only the token, the journal header and the tenant header protect the address. |
+   | `M365_JOURNAL_MIRROR_SENT` | Optional, default `"false"`. Set `"true"` (needs `M365_TENANT_ID`) only after the first live test shows real originals carry `X-MS-Exchange-CrossTenant-AuthAs: Internal` and the tenant id. |
+   | `M365_JOURNAL_REQUIRE_AUTH` | Leave at `"true"`. Set `"false"` only if the first live test proves Exchange's reports carry no DKIM or DMARC pass. It needs `M365_TENANT_ID`, and every report must then carry that tenant id; only the token, the journal header and the tenant header protect the address. |
 
 4. Deploy the email Worker and web app. In Admin > Exchange mirror the
    settings show as configured (the address masked). Leave the switch **off**.
@@ -346,9 +390,11 @@ Needs the Exchange Online "Journaling" permission
 1. Admin > Exchange mirror > **Turn Exchange mirror on**.
 2. `Enable-JournalRule -Identity "cmail mirror"`.
 3. Send a test message from one licensed user to another and to an external
-   address. Within a minute Admin shows a last report time, "filed" for the
-   recipient and "Sent" for the sender, and the trace shows one
-   "Exchange mirror" line.
+   address. Within a minute Admin shows a last report time and "filed" for
+   the recipient, and the trace shows one "Exchange mirror" line. Check in a
+   copy of the stored original that it carries
+   `X-MS-Exchange-CrossTenant-AuthAs: Internal` and your tenant id before
+   turning on `M365_JOURNAL_MIRROR_SENT`.
 4. If the counts show refused reports, the reason is in Admin and the audit
    log. `auth_failed` or `auth_missing` on real reports: check
    `M365_JOURNAL_SENDER_DOMAINS` against the report's From domain and DKIM
@@ -444,8 +490,12 @@ real tenant:
   `unsafe_envelope`, `no_recipients`), never misfiled.
 - **Tenant headers.** Whether `X-MS-Exchange-CrossTenant-Id` and
   `X-MS-Exchange-CrossTenant-AuthAs` are present on the report and on the
-  attached original. If `AuthAs` is missing, Sent copies rely on the To/Cc/Bcc
-  versus Recipient distinction alone.
+  attached original. If they are missing on real originals, Sent copies are
+  never filed (they are off by default and fail closed).
+- **Envelope Message-Id.** Assumed to equal the original's Message-ID header
+  (Microsoft calls it "the internal Exchange Message-ID"). If it differs on
+  real reports, every report is refused `message_id_mismatch`.
+- **HTML envelopes.** Assumed plain text; an HTML-only envelope is refused.
 - **Shared mailbox recipients** in the envelope (not documented; assumed to
   appear as normal recipient lines).
 - **Retries.** Whether a Worker error becomes a temporary SMTP failure that
@@ -466,7 +516,10 @@ with every migration, with reports shaped like Exchange's
 Bcc and group expansion, aliases, duplicates and split reports, Sent copies
 and when they are refused, forged reports (no journal header, another tenant,
 no or foreign authentication, a record from another boundary, injected
-envelope lines, TNEF, two originals), size, quota and budget limits, no
-inbox rules, no notification, nothing ever sent, and that with the feature
-off (or configured but switched off) the normal inbound path runs exactly the
-same SQL as before.
+envelope lines, TNEF, two originals, a From or DKIM domain that only starts
+with the tenant domain, a mismatched Message-Id), size (refused before the
+report is read), quota and budget limits, the hourly inbound guard turned on
+(mirrored copies never use it up), alias freshness and the mass-removal
+brake, no inbox rules, no notification, nothing ever sent, and that with the
+mirror configured and on, normal delivery to a mailbox runs exactly the same
+SQL with the same bound values and R2 writes as with it unconfigured.

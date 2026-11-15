@@ -37,9 +37,16 @@ export interface ExchangeMirrorEnv {
    * signed by, comma separated. Default: MAIL_DOMAIN.
    */
   M365_JOURNAL_SENDER_DOMAINS?: string;
-  /** "false" skips the SPF/DKIM/DMARC check (weaker; see docs). Default "true". */
+  /**
+   * "false" skips the SPF/DKIM/DMARC check (weaker; see docs). Allowed only
+   * with M365_TENANT_ID set, and every report must then carry that tenant id.
+   * Default "true".
+   */
   M365_JOURNAL_REQUIRE_AUTH?: string | boolean;
-  /** "false" files recipients' copies only, never a Sent copy. Default "true". */
+  /**
+   * "true" also files the sender's copy into Sent (needs M365_TENANT_ID).
+   * Default "false" until a live test has confirmed the report's headers.
+   */
   M365_JOURNAL_MIRROR_SENT?: string | boolean;
   /** Shared with the Microsoft 365 sync. When set, tenant headers must match it. */
   M365_TENANT_ID?: string;
@@ -119,6 +126,11 @@ export function exchangeMirrorConfig(env: ExchangeMirrorEnv): ExchangeMirrorConf
   if (requireAuthRaw && requireAuthRaw !== 'true' && requireAuthRaw !== 'false') problems.push('M365_JOURNAL_REQUIRE_AUTH must be "true" or "false"');
   if (mirrorSentRaw && mirrorSentRaw !== 'true' && mirrorSentRaw !== 'false') problems.push('M365_JOURNAL_MIRROR_SENT must be "true" or "false"');
   const requireAuth = requireAuthRaw !== 'false';
+  if (!requireAuth && !tenantId) {
+    problems.push('M365_JOURNAL_REQUIRE_AUTH "false" needs M365_TENANT_ID (every report must then carry that tenant id)');
+  }
+  const mirrorSent = mirrorSentRaw === 'true';
+  if (mirrorSent && !tenantId) problems.push('M365_JOURNAL_MIRROR_SENT "true" needs M365_TENANT_ID');
   if (requireAuth && !authservId) {
     problems.push('INBOUND_AUTHSERV_ID is not set, so journal reports cannot be authenticated (set it to mx.cloudflare.net)');
   }
@@ -133,7 +145,7 @@ export function exchangeMirrorConfig(env: ExchangeMirrorEnv): ExchangeMirrorConf
       maskedAddress: maskJournalAddress(address),
       senderDomains: [...new Set(listed.length ? listed : [mailDomain])],
       requireAuth,
-      mirrorSent: mirrorSentRaw !== 'false',
+      mirrorSent,
       tenantId: tenantId || null,
       mailDomain,
       authservId,
@@ -215,11 +227,12 @@ export const EXCHANGE_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
   tnef: 'The original is attached as TNEF (winmail.dat): turn TNEF off for the journal domain in Exchange.',
   ambiguous_original: 'The report has more than one attached message.',
   unsafe_subject: 'The original subject contains a line break, so the report envelope cannot be trusted.',
+  message_id_mismatch: 'The envelope Message-Id does not match the Message-ID of the attached original, or the original has none.',
+  aliases_stale: 'Imported aliases were not used: the alias import is off or has not succeeded in the last 3 days.',
   unsafe_envelope: 'The report envelope has lines in an order Exchange does not write (possible injected text).',
   no_recipients: 'The report envelope lists no recipients.',
   too_many_recipients: 'The report envelope lists more recipients than cmail files at once.',
   original_unparseable: 'The attached original message could not be read.',
-  no_message_id: 'The original message has no Message-ID, so it cannot be filed exactly once.',
   body_limit: 'The message body is over the processing limit.',
   attachment_count: 'The message has more attachments than the inbound limit.',
   attachment_bytes: 'The attachments are larger than the inbound limit.',
@@ -232,6 +245,14 @@ export const EXCHANGE_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
 
 // ─── Alias import state (m365_alias_sync_state, migration 0027) ──────────
 
+/** org_settings key a manager sets to let the next import remove many aliases at once. */
+export const M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS = 'm365_alias_sync_approve_removals';
+/** Imported aliases are used only while the last successful import is this recent. */
+export const ALIAS_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+/** A run that would remove more than this share of held aliases (and at least ALIAS_BRAKE_MIN) waits for a manager. */
+export const ALIAS_BRAKE_PERCENT = 20;
+export const ALIAS_BRAKE_MIN = 5;
+
 export interface AliasSyncCounts {
   /** Aliases held after the run. */
   total: number;
@@ -242,27 +263,32 @@ export interface AliasSyncCounts {
   conflicts: number;
   /** Microsoft 365 objects with addresses that have no linked cmail mailbox. */
   unlinked: number;
+  /** Removals held back by the mass-removal brake. */
+  heldRemovals: number;
 }
 
 export interface AliasSyncState {
   lastRunAt: number | null;
+  /** Last run that read the whole listing and applied it in full. */
+  lastOkAt: number | null;
   lastResult: 'ok' | 'dry_run' | 'held' | 'error' | 'not_configured' | 'sync_off' | null;
   lastError: string | null;
   counts: AliasSyncCounts | null;
 }
 
 export function emptyAliasCounts(): AliasSyncCounts {
-  return { total: 0, added: 0, moved: 0, removed: 0, conflicts: 0, unlinked: 0 };
+  return { total: 0, added: 0, moved: 0, removed: 0, conflicts: 0, unlinked: 0, heldRemovals: 0 };
 }
 
-export function parseAliasSyncState(raw: string | null | undefined, lastRunAt: number | null): AliasSyncState {
-  const base: AliasSyncState = { lastRunAt, lastResult: null, lastError: null, counts: null };
+export function parseAliasSyncState(raw: string | null | undefined, lastRunAt: number | null, lastOkAt: number | null = null): AliasSyncState {
+  const base: AliasSyncState = { lastRunAt, lastOkAt, lastResult: null, lastError: null, counts: null };
   if (!raw) return base;
   try {
     const parsed = JSON.parse(raw) as Partial<AliasSyncState>;
     if (!parsed || typeof parsed !== 'object') return base;
     return {
       lastRunAt,
+      lastOkAt,
       lastResult: parsed.lastResult ?? null,
       lastError: typeof parsed.lastError === 'string' ? parsed.lastError.slice(0, 64) : null,
       counts: parsed.counts && typeof parsed.counts === 'object' ? { ...emptyAliasCounts(), ...parsed.counts } : null,
@@ -273,7 +299,22 @@ export function parseAliasSyncState(raw: string | null | undefined, lastRunAt: n
 }
 
 export async function loadAliasSyncState(db: D1Database): Promise<AliasSyncState> {
-  const row = await db.prepare('SELECT state, last_run_at FROM m365_alias_sync_state WHERE id = 1')
-    .first<{ state: string; last_run_at: number }>();
-  return parseAliasSyncState(row?.state, row && Number(row.last_run_at) > 0 ? Number(row.last_run_at) : null);
+  const row = await db.prepare('SELECT state, last_run_at, last_ok_at FROM m365_alias_sync_state WHERE id = 1')
+    .first<{ state: string; last_run_at: number; last_ok_at: number }>();
+  const positive = (value: unknown) => (Number(value) > 0 ? Number(value) : null);
+  return parseAliasSyncState(row?.state, positive(row?.last_run_at), positive(row?.last_ok_at));
+}
+
+/**
+ * Whether the Exchange mirror may use imported aliases now: the import is
+ * switched on and its last full, successful run is under ALIAS_MAX_AGE_MS
+ * old. Stale aliases are ignored rather than trusted.
+ */
+export async function aliasesUsable(db: D1Database, now: number): Promise<boolean> {
+  const row = await db.prepare(
+    `SELECT 1 AS ok FROM m365_alias_sync_state
+     WHERE id = 1 AND last_ok_at >= ?
+       AND EXISTS (SELECT 1 FROM org_settings WHERE key = ? AND value = 'true')`,
+  ).bind(now - ALIAS_MAX_AGE_MS, M365_ALIAS_SYNC_SETTING_ENABLED).first<{ ok: number }>();
+  return Boolean(row);
 }

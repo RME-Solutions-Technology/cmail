@@ -70,8 +70,9 @@ describe('journal envelope', () => {
     expect(envelopeAddress(`${'a'.repeat(65)}@example.test`)).toBeNull();
   });
 
-  it('falls back to the HTML body as text', () => {
-    expect(envelopeText({ html: '<p>Sender: a@example.test<br>To: b@example.test &lt;x&gt;</p>' })).toBe('Sender: a@example.test\nTo: b@example.test <x>\n');
+  it('reads the plain-text envelope only (an HTML-only report reads as empty and is refused)', () => {
+    expect(envelopeText({ text: 'Sender: a@example.test' })).toBe('Sender: a@example.test');
+    expect(envelopeText({})).toBe('');
   });
 
   it('finds exactly one attached original and names TNEF', () => {
@@ -89,11 +90,27 @@ describe('journal report trust', () => {
 
   it('reads DKIM pass domains only from the trusted, topmost record', () => {
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=Example.Test header.s=s1; dkim=fail header.d=bad.example; dkim=pass header.i=@other.example; dmarc=pass', 'mx.example.test'))
-      .toEqual({ dmarc: 'pass', dkimPassDomains: ['example.test', 'other.example'] });
+      .toEqual({ dmarc: 'pass', dkimPassDomains: ['example.test', 'other.example'], dmarcHeaderFrom: null });
     expect(parseAuthenticationIdentities('mx.attacker.example; dkim=pass header.d=example.test', 'mx.example.test'))
-      .toEqual({ dmarc: null, dkimPassDomains: [] });
+      .toEqual({ dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null });
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test', ''))
-      .toEqual({ dmarc: null, dkimPassDomains: [] });
+      .toEqual({ dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null });
+    // Only whole domains count: a prefix with junk after it is dropped.
+    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test_.evil.example; dmarc=pass header.from=Example.Test', 'mx.example.test'))
+      .toEqual({ dmarc: 'pass', dkimPassDomains: [], dmarcHeaderFrom: 'example.test' });
+  });
+
+  it('takes the From domain only as a whole, plain domain', () => {
+    expect(fromDomain('x@tenant.com_.evil.net')).toBeNull();
+    expect(fromDomain('x@example.test_.evil.example')).toBeNull();
+    expect(fromDomain('Name <x@example.test_.evil.example>')).toBeNull();
+    expect(fromDomain('x@example.test.evil.example')).toBe('example.test.evil.example');
+    expect(fromDomain('x@example.test (comment)')).toBeNull();
+    expect(fromDomain('a@example.test, b@example.test')).toBeNull();
+    expect(fromDomain('Evil <a@evil.example> <b@example.test>')).toBeNull();
+    expect(fromDomain('a@evil.example <b@example.test>')).toBeNull();
+    expect(fromDomain('"Name, With Comma" <x@Example.Test>')).toBe('example.test');
+    expect(fromDomain('Microsoft Outlook <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@example.test>')).toBe('example.test');
   });
 
   it('needs the journal header, the right tenant and an authenticated tenant domain', () => {
@@ -108,17 +125,37 @@ describe('journal report trust', () => {
       .toEqual({ ok: false, reason: 'auth_failed' });
     // Two From addresses: DMARC cannot vouch for either.
     expect(verifyJournalReport(headers([auth, ['from', 'a@example.test, b@example.test']]), config)).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(fromDomain('"Name, With Comma" <x@Example.Test>')).toBe('example.test');
+    // The exact inputs from review: a tenant-domain prefix is not the tenant domain.
+    expect(verifyJournalReport(headers([auth, ['from', 'x@example.test_.evil.example']]), config)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([auth, ['from', 'x@tenant.com_.evil.net']]), { ...config, senderDomains: ['tenant.com'] })).toEqual({ ok: false, reason: 'auth_failed' });
+    // DMARC pass that the boundary says was evaluated for another domain.
+    expect(verifyJournalReport(headers([['authentication-results', 'mx.example.test; dkim=none; dmarc=pass header.from=evil.example'], from]), config))
+      .toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([['authentication-results', 'mx.example.test; dkim=none; dmarc=pass header.from=example.test'], from]), config))
+      .toEqual({ ok: true });
   });
 
-  it('allows a Sent copy only for an authenticated internal submission by the From', () => {
+  it('without authentication, needs this tenant id on the report', () => {
+    const open = { ...config, requireAuth: false };
+    expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', TENANT]]), open)).toEqual({ ok: true });
+    expect(verifyJournalReport(headers([]), open)).toEqual({ ok: false, reason: 'wrong_tenant' });
+    expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', TENANT]]), { ...open, tenantId: null })).toEqual({ ok: false, reason: 'wrong_tenant' });
+  });
+
+  it('allows a Sent copy only with AuthAs Internal and this tenant on every instance (fail closed)', () => {
     const envelope = { sender: 'alice@example.test', onBehalfOf: null, messageId: null, recipients: [], addressingKnown: true };
-    const base = { config: { mirrorSent: true, tenantId: TENANT }, envelope, innerHeaders: [] as Array<{ key: string; value: string }>, innerFrom: 'alice@example.test', innerSender: null };
+    const internal = [{ key: 'x-ms-exchange-crosstenant-authas', value: 'Internal' }, { key: 'x-ms-exchange-crosstenant-id', value: TENANT }];
+    const base = { config: { mirrorSent: true, tenantId: TENANT }, envelope, innerHeaders: internal, innerFrom: 'alice@example.test', innerSender: null };
     expect(sentCopyAllowed(base)).toBe(true);
     expect(sentCopyAllowed({ ...base, innerFrom: 'boss@example.test', innerSender: 'alice@example.test' })).toBe(true);
     expect(sentCopyAllowed({ ...base, innerFrom: 'boss@example.test' })).toBe(false);
     expect(sentCopyAllowed({ ...base, envelope: { ...envelope, addressingKnown: false } })).toBe(false);
-    expect(sentCopyAllowed({ ...base, innerHeaders: [{ key: 'x-ms-exchange-crosstenant-authas', value: 'Anonymous' }] })).toBe(false);
+    expect(sentCopyAllowed({ ...base, innerHeaders: [] })).toBe(false);
+    expect(sentCopyAllowed({ ...base, innerHeaders: [internal[0]!] })).toBe(false);
+    expect(sentCopyAllowed({ ...base, innerHeaders: [internal[1]!] })).toBe(false);
+    expect(sentCopyAllowed({ ...base, innerHeaders: [...internal, { key: 'x-ms-exchange-crosstenant-authas', value: 'Anonymous' }] })).toBe(false);
+    expect(sentCopyAllowed({ ...base, innerHeaders: [...internal, { key: 'x-ms-exchange-crosstenant-id', value: '00000000-0000-0000-0000-000000000001' }] })).toBe(false);
+    expect(sentCopyAllowed({ ...base, config: { mirrorSent: true, tenantId: null } })).toBe(false);
     expect(sentCopyAllowed({ ...base, config: { mirrorSent: false, tenantId: TENANT } })).toBe(false);
   });
 });
@@ -145,13 +182,22 @@ describe('Exchange mirror configuration', () => {
         maskedAddress: 'journal-0123…@standby.example.test',
         senderDomains: ['example.test'],
         requireAuth: true,
-        mirrorSent: true,
+        // Sent copies are off until a live test proves the report shape.
+        mirrorSent: false,
         tenantId: null,
         mailDomain: 'example.test',
         authservId: 'mx.example.test',
       },
     });
     expect(maskJournalAddress('nope')).toBe('');
+  });
+
+  it('refuses the weaker modes without a tenant id', () => {
+    const base = { MAIL_DOMAIN: 'example.test', INBOUND_AUTHSERV_ID: 'mx.example.test', M365_JOURNAL_ADDRESS: JOURNAL };
+    expect(exchangeMirrorConfig({ ...base, M365_JOURNAL_REQUIRE_AUTH: 'false' })).toMatchObject({ configured: false });
+    expect(exchangeMirrorConfig({ ...base, M365_JOURNAL_MIRROR_SENT: 'true' })).toMatchObject({ configured: false });
+    expect(exchangeMirrorConfig({ ...base, M365_TENANT_ID: TENANT, M365_JOURNAL_REQUIRE_AUTH: 'false', M365_JOURNAL_MIRROR_SENT: 'true' }))
+      .toMatchObject({ configured: true, config: { requireAuth: false, mirrorSent: true, tenantId: TENANT } });
   });
 });
 
@@ -166,7 +212,7 @@ describe('Exchange mirror config endpoint', () => {
       maskedAddress: 'journal-0123…@standby.example.test',
       senderDomains: ['example.test'],
       requireAuth: true,
-      mirrorSent: true,
+      mirrorSent: false,
       tenantCheck: true,
     });
     expect(body).not.toContain('0123456789abcdef');

@@ -17,6 +17,11 @@ export interface InnerOptions {
   messageId?: string | null;
   body?: string;
   headers?: Record<string, string>;
+  /**
+   * Default true: the tenant headers Exchange Online puts on mail a user of
+   * this tenant submitted (AuthAs Internal, this tenant id). false: none.
+   */
+  internal?: boolean;
   attachment?: { filename: string; type: string; base64: string };
 }
 
@@ -30,6 +35,7 @@ export function innerMessage(options: InnerOptions = {}): string {
     `Subject: ${options.subject ?? 'Quarterly plan'}`,
     ...(options.messageId === null ? [] : [`Message-ID: ${options.messageId ?? '<plan-1@example.test>'}`]),
     'Date: Mon, 16 Nov 2026 09:00:00 +1100',
+    ...(options.internal === false ? [] : ['X-MS-Exchange-CrossTenant-AuthAs: Internal', `X-MS-Exchange-CrossTenant-Id: ${TENANT}`]),
     ...Object.entries(options.headers ?? {}).map(([key, value]) => `${key}: ${value}`),
     'MIME-Version: 1.0',
   ];

@@ -38,21 +38,27 @@ function setup(options: { enabled?: boolean; env?: Record<string, unknown> } = {
     INBOUND_AUTHSERV_ID: AUTHSERV,
     M365_JOURNAL_ADDRESS: JOURNAL,
     M365_TENANT_ID: TENANT,
+    // Off by default in the product; most tests here exercise it.
+    M365_JOURNAL_MIRROR_SENT: 'true',
     ...GUARDS_OFF,
     ...options.env,
   };
   const waitUntil = vi.fn();
   const outbound: unknown[] = [];
 
-  async function deliver(raw: string, envelope: { to?: string; from?: string } = {}) {
+  let rawReads = 0;
+  async function deliver(raw: string, envelope: { to?: string; from?: string; rawSize?: number } = {}) {
     // Email Routing exposes the top-level headers; the inbound path reads Message-ID from them.
     const messageId = /^Message-ID: (.*)$/im.exec(raw.split('\r\n\r\n')[0] ?? '')?.[1] ?? '';
     const message = {
       from: envelope.from ?? `bounce@${DOMAIN}`,
       to: envelope.to ?? JOURNAL,
-      rawSize: raw.length,
+      rawSize: envelope.rawSize ?? raw.length,
       headers: new Headers(messageId ? { 'message-id': messageId } : {}),
-      raw: new Blob([raw]).stream(),
+      get raw() {
+        rawReads += 1;
+        return new Blob([raw]).stream();
+      },
       setReject: vi.fn(),
       forward: vi.fn(async (...args: unknown[]) => { outbound.push(['forward', ...args]); }),
       reply: vi.fn(async (...args: unknown[]) => { outbound.push(['reply', ...args]); }),
@@ -75,7 +81,7 @@ function setup(options: { enabled?: boolean; env?: Record<string, unknown> } = {
     expect(send).not.toHaveBeenCalled();
     expect(outbound).toEqual([]);
   };
-  return { d1, sqlite, env, deliver, messages, days, audits, traces, r2, waitUntil, setSwitch, assertNothingSent };
+  return { d1, sqlite, env, deliver, messages, days, audits, traces, r2, waitUntil, setSwitch, assertNothingSent, rawReads: () => rawReads, storage };
 }
 
 describe('Exchange mirror: filing', () => {
@@ -119,14 +125,30 @@ describe('Exchange mirror: filing', () => {
     t.assertNothingSent();
   });
 
-  it('files to imported aliases, never to an alias of a disabled mailbox', async () => {
-    const t = setup();
-    t.sqlite.prepare(`INSERT INTO mailbox_aliases (address, mailbox_id, object_id) VALUES (?, 'mbx-bob', ?)`).run(`robert@${DOMAIN}`, TENANT);
-    t.sqlite.prepare(`INSERT INTO mailbox_aliases (address, mailbox_id, object_id) VALUES (?, 'mbx-olive', ?)`).run(`ollie@${DOMAIN}`, TENANT);
-    await t.deliver(journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'To: Robert@example.test', 'To: ollie@example.test', 'To: bob@example.test'] }));
-    expect(t.messages().filter((row) => row.direction === 'inbound').map((row) => row.mailbox_id)).toEqual(['mbx-bob']);
-    expect(t.days()[0]).toMatchObject({ filed: 1, unmatched: 1 });
-    t.assertNothingSent();
+  it('files to fresh imported aliases only, never to an alias of a disabled mailbox', async () => {
+    const report = () => journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'To: Robert@example.test', 'To: ollie@example.test', 'To: carol@example.test'] });
+    const withAliases = (options: { importOn: boolean; lastOkAgeMs: number | null }) => {
+      const t = setup();
+      t.sqlite.prepare(`INSERT INTO mailbox_aliases (address, mailbox_id, object_id) VALUES (?, 'mbx-bob', ?)`).run(`robert@${DOMAIN}`, TENANT);
+      t.sqlite.prepare(`INSERT INTO mailbox_aliases (address, mailbox_id, object_id) VALUES (?, 'mbx-olive', ?)`).run(`ollie@${DOMAIN}`, TENANT);
+      t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_alias_sync_enabled', ?)`).run(options.importOn ? 'true' : 'false');
+      if (options.lastOkAgeMs !== null) {
+        t.sqlite.prepare(`INSERT INTO m365_alias_sync_state (id, last_ok_at, last_run_at) VALUES (1, ?, ?)`).run(Date.now() - options.lastOkAgeMs, Date.now());
+      }
+      return t;
+    };
+    const fresh = withAliases({ importOn: true, lastOkAgeMs: 60 * 60 * 1000 });
+    await fresh.deliver(report());
+    expect(fresh.messages().filter((row) => row.direction === 'inbound').map((row) => row.mailbox_id)).toEqual(['mbx-bob', 'mbx-carol']);
+    expect(fresh.days()[0]).toMatchObject({ filed: 2, unmatched: 1 });
+    fresh.assertNothingSent();
+    // Import switched off, never succeeded, or last success over 3 days ago: aliases are not used.
+    for (const options of [{ importOn: false, lastOkAgeMs: 60_000 }, { importOn: true, lastOkAgeMs: null }, { importOn: true, lastOkAgeMs: 4 * 24 * 60 * 60 * 1000 }]) {
+      const stale = withAliases(options);
+      await stale.deliver(report());
+      expect(stale.messages().filter((row) => row.direction === 'inbound').map((row) => row.mailbox_id), JSON.stringify(options)).toEqual(['mbx-carol']);
+      expect(stale.days()[0]).toMatchObject({ filed: 1, unmatched: 2 });
+    }
   });
 
   it('is idempotent: a repeated report and an overlapping split report file nothing twice', async () => {
@@ -175,7 +197,7 @@ describe('Exchange mirror: Sent copies', () => {
   it('files a Sent copy, with Bcc, for a cmail user who sent through Exchange', async () => {
     const t = setup();
     await t.deliver(journalReport({
-      inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-AuthAs': 'Internal', 'X-MS-Exchange-CrossTenant-Id': TENANT } }),
+      inner: innerMessage(),
       envelope: [...defaultEnvelope().slice(0, 3), 'To: bob@example.test', 'Bcc: carol@example.test', 'To: partner@partner.example'],
     }));
     const sent = t.messages().filter((row) => row.direction === 'outbound');
@@ -186,13 +208,17 @@ describe('Exchange mirror: Sent copies', () => {
     t.assertNothingSent();
   });
 
-  it('files no Sent copy for internet mail, a forged From, another tenant, or with M365_JOURNAL_MIRROR_SENT off', async () => {
+  it('files no Sent copy unless every gate passes (fail closed), and none by default', async () => {
     const cases: Array<{ name: string; report: string; env?: Record<string, unknown> }> = [
       { name: 'Recipient lines only (internet mail)', report: journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test'] }) },
-      { name: 'anonymous submission', report: journalReport({ inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-AuthAs': 'Anonymous' } }) }) },
-      { name: 'other tenant', report: journalReport({ inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-Id': OTHER_TENANT } }) }) },
+      { name: 'no tenant headers on the original', report: journalReport({ inner: innerMessage({ internal: false }) }) },
+      { name: 'AuthAs missing', report: journalReport({ inner: innerMessage({ internal: false, headers: { 'X-MS-Exchange-CrossTenant-Id': TENANT } }) }) },
+      { name: 'tenant id missing', report: journalReport({ inner: innerMessage({ internal: false, headers: { 'X-MS-Exchange-CrossTenant-AuthAs': 'Internal' } }) }) },
+      { name: 'a second AuthAs instance says Anonymous', report: journalReport({ inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-AuthAs': 'Anonymous' } }) }) },
+      { name: 'a second tenant id instance is another tenant', report: journalReport({ inner: innerMessage({ headers: { 'X-MS-Exchange-CrossTenant-Id': OTHER_TENANT } }) }) },
       { name: 'sender is not the From', report: journalReport({ envelope: ['Sender: dave@example.test', ...defaultEnvelope().slice(1)] }) },
       { name: 'switched off', report: journalReport(), env: { M365_JOURNAL_MIRROR_SENT: 'false' } },
+      { name: 'not set (default off)', report: journalReport(), env: { M365_JOURNAL_MIRROR_SENT: undefined } },
     ];
     for (const item of cases) {
       const t = setup({ env: item.env });
@@ -216,6 +242,14 @@ describe('Exchange mirror: refused reports', () => {
     { name: 'two originals', reason: 'ambiguous_original', report: () => journalReport({ twoOriginals: true }) },
     { name: 'empty envelope', reason: 'no_recipients', report: () => journalReport({ envelope: defaultEnvelope().slice(0, 3) }) },
     { name: 'mirror misconfigured (no tenant-checkable auth)', reason: 'not_configured', report: () => journalReport(), env: { INBOUND_AUTHSERV_ID: '' } },
+    // A From domain that only starts with the tenant domain is not the tenant domain.
+    { name: 'a From domain with the tenant domain as a prefix', reason: 'auth_failed', report: () => journalReport({ from: `x@${DOMAIN}_.evil.example`, authenticationResults: `${AUTHSERV}; spf=pass; dkim=none; dmarc=pass` }) },
+    { name: 'a From on a subdomain of the tenant domain', reason: 'auth_failed', report: () => journalReport({ from: `x@${DOMAIN}.evil.example`, authenticationResults: `${AUTHSERV}; spf=pass; dkim=none; dmarc=pass` }) },
+    { name: 'DMARC pass the boundary says was for another domain', reason: 'auth_failed', report: () => journalReport({ authenticationResults: `${AUTHSERV}; spf=pass; dkim=none; dmarc=pass header.from=evil.example` }) },
+    { name: 'a DKIM domain with the tenant domain as a prefix', reason: 'auth_failed', report: () => journalReport({ from: 'x@evil.example', authenticationResults: `${AUTHSERV}; dkim=pass header.d=${DOMAIN}.evil.example; dmarc=pass` }) },
+    { name: 'an envelope Message-Id for another message', reason: 'message_id_mismatch', report: () => journalReport({ envelope: ['Sender: alice@example.test', 'Subject: Quarterly plan', 'Message-Id: <other@example.test>', 'To: bob@example.test'] }) },
+    { name: 'an original without a Message-ID', reason: 'message_id_mismatch', report: () => journalReport({ inner: innerMessage({ messageId: null }) }) },
+    { name: 'a report larger than the inbound limit', reason: 'too_large', report: () => journalReport({ inner: innerMessage({ body: 'x'.repeat(1_100_000) }) }), env: { MAX_INBOUND_BYTES: '1000' } },
   ];
 
   for (const item of forged) {
@@ -259,11 +293,55 @@ describe('Exchange mirror: refused reports', () => {
     expect(t.messages().filter((row) => row.direction === 'inbound')).toHaveLength(1);
   });
 
-  it('with M365_JOURNAL_REQUIRE_AUTH "false", still needs the journal header and the right tenant', async () => {
+  it('with M365_JOURNAL_REQUIRE_AUTH "false", still needs the journal header and this tenant id on the report', async () => {
     const t = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false', INBOUND_AUTHSERV_ID: '' } });
     expect((await t.deliver(journalReport({ authenticationResults: null }))).message.setReject).not.toHaveBeenCalled();
     expect((await t.deliver(journalReport({ authenticationResults: null, tenantHeader: OTHER_TENANT }))).message.setReject).toHaveBeenCalled();
+    expect((await t.deliver(journalReport({ authenticationResults: null, tenantHeader: null }))).message.setReject).toHaveBeenCalled();
     expect((await t.deliver(journalReport({ authenticationResults: null, journalHeader: false }))).message.setReject).toHaveBeenCalled();
+    // Not allowed at all without M365_TENANT_ID.
+    const untied = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false', INBOUND_AUTHSERV_ID: '', M365_TENANT_ID: '' } });
+    expect((await untied.deliver(journalReport({ authenticationResults: null }))).message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(untied.days()[0]).toMatchObject({ last_problem: 'not_configured' });
+  });
+});
+
+describe('Exchange mirror: size is checked before anything is read', () => {
+  it('refuses a report over the inbound limit (plus envelope room) without reading or parsing it, and audits it', async () => {
+    const t = setup({ env: { MAX_INBOUND_BYTES: '1000' } });
+    const { message } = await t.deliver(journalReport(), { rawSize: 1000 + 1024 * 1024 + 1 });
+    expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(t.rawReads()).toBe(0);
+    expect(t.audits()).toEqual([expect.objectContaining({ event_type: 'exchange_mirror.report_rejected', detail: expect.stringContaining('too_large') })]);
+  });
+
+  it('refuses rejected-report trace rows beyond the daily cap, keeping the count', async () => {
+    const t = setup();
+    t.sqlite.prepare(`INSERT INTO exchange_mirror_days (day, received, rejected) VALUES (?, 200, 200)`).run(new Date().toISOString().slice(0, 10));
+    await t.deliver(journalReport({ journalHeader: false }));
+    expect(t.traces()).toEqual([]);
+    expect(t.days()[0]).toMatchObject({ rejected: 201 });
+  });
+});
+
+describe('Exchange mirror: hourly inbound guard', () => {
+  it('mirrored copies never use up the normal inbound allowance (guards on)', async () => {
+    const t = setup({ env: { INBOUND_MAILBOX_MESSAGES_PER_HOUR: '1', MAILBOX_STORAGE_QUOTA_BYTES: String(1024 * 1024 * 1024) } });
+    for (const id of ['m1', 'm2', 'm3']) {
+      await t.deliver(journalReport({
+        inner: innerMessage({ messageId: `<${id}@example.test>` }),
+        envelope: ['Sender: alice@example.test', 'Subject: Quarterly plan', `Message-Id: <${id}@example.test>`, 'To: bob@example.test'],
+      }));
+    }
+    expect(t.messages().filter((row) => row.mailbox_id === 'mbx-bob')).toHaveLength(3);
+    const kinds = t.sqlite.prepare(`SELECT DISTINCT reservation_type FROM mailbox_reservations`).all();
+    expect(kinds).toEqual([{ reservation_type: 'storage' }]);
+    // The normal path still has its allowance of one, and enforces it.
+    const first = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n1@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
+    expect(first.message.setReject).not.toHaveBeenCalled();
+    const second = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n2@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
+    expect(second.message.setReject).toHaveBeenCalled();
+    expect(t.messages().filter((row) => row.mailbox_id === 'mbx-bob')).toHaveLength(4);
   });
 });
 
@@ -336,23 +414,36 @@ describe('Exchange mirror: off means unchanged', () => {
     expect(t.days()).toEqual([]);
   });
 
-  it('the normal delivery path runs exactly the same SQL with or without the mirror configured and on', async () => {
-    const statements = async (env: Record<string, unknown> | undefined, enabled: boolean) => {
+  it('the normal delivery path runs exactly the same SQL, binds and R2 writes with or without the mirror configured and on', async () => {
+    // Random ids (UUIDs) differ between any two runs; everything else must match.
+    const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    const stable = (value: unknown) => (typeof value === 'string' ? value.replace(UUID, '<uuid>') : value);
+    const run = async (env: Record<string, unknown> | undefined, enabled: boolean) => {
       const t = setup({ enabled, env });
-      const seen: string[] = [];
+      const seen: Array<{ sql: string; binds: unknown[] }> = [];
       const prepare = t.d1.prepare.bind(t.d1);
       (t.d1 as unknown as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
-        seen.push(sql.replace(/\s+/g, ' ').trim());
-        return prepare(sql);
+        const entry = { sql: sql.replace(/\s+/g, ' ').trim(), binds: [] as unknown[] };
+        seen.push(entry);
+        const statement = prepare(sql) as unknown as { bind: (...values: unknown[]) => unknown };
+        const bind = statement.bind.bind(statement);
+        statement.bind = (...values: unknown[]) => {
+          entry.binds = values.map(stable);
+          return bind(...values);
+        };
+        return statement;
       };
       const { error, message } = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
       expect(error).toBeNull();
       expect(message.setReject).not.toHaveBeenCalled();
-      return seen;
+      const writes = t.storage.put.mock.calls.map(([key, value]) => [stable(key), value]);
+      return { seen, writes };
     };
-    const plain = await statements({ M365_JOURNAL_ADDRESS: '', M365_TENANT_ID: '' }, false);
-    const configuredOn = await statements(undefined, true);
-    expect(configuredOn).toEqual(plain);
-    expect(plain.some((sql) => /org_settings|exchange_mirror|mailbox_aliases/.test(sql))).toBe(false);
+    const plain = await run({ M365_JOURNAL_ADDRESS: '', M365_TENANT_ID: '' }, false);
+    const configuredOn = await run(undefined, true);
+    expect(configuredOn.seen).toEqual(plain.seen);
+    expect(configuredOn.writes).toEqual(plain.writes);
+    expect(plain.writes.length).toBeGreaterThan(0);
+    expect(plain.seen.some((entry) => /org_settings|exchange_mirror|mailbox_aliases/.test(entry.sql))).toBe(false);
   });
 });

@@ -168,13 +168,12 @@ export function attachedOriginal(attachments: readonly ParsedAttachmentLike[] | 
   return { ok: true, raw };
 }
 
-/** The report's envelope text: the plain-text body, or the HTML body as text. */
-export function envelopeText(parsed: { text?: string; html?: string }): string {
-  if (parsed.text && parsed.text.trim()) return parsed.text;
-  const html = (parsed.html || '').slice(0, MAX_ENVELOPE_CHARS);
-  return html
-    .replace(/<(?:br|\/p|\/div|\/tr|\/li)\b[^>]*>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&');
+/**
+ * The report's envelope text: its plain-text body only. An HTML-only report
+ * is not converted (converting HTML to text safely is its own problem); its
+ * envelope then reads as empty and the report is refused (no_recipients),
+ * visibly, never misfiled.
+ */
+export function envelopeText(parsed: { text?: string }): string {
+  return parsed.text ?? '';
 }

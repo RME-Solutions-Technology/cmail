@@ -112,6 +112,31 @@ describe('Microsoft 365 alias import', () => {
     expect(t.aliases()).toEqual([{ address: `robert@${DOMAIN}`, mailbox_id: 'mbx-alice' }]);
   });
 
+  it('holds a mass removal until a manager approves it, and only a full successful run counts as fresh', async () => {
+    const t = setup();
+    const many = Array.from({ length: 10 }, (_, index) => `smtp:a${index}@${DOMAIN}`);
+    t.listing([{ id: oid(1), proxyAddresses: many }]);
+    await t.tick();
+    expect(t.aliases()).toHaveLength(10);
+    expect(await loadAliasSyncState(t.d1)).toMatchObject({ lastResult: 'ok', lastOkAt: T0 });
+
+    // A listing that drops 6 of 10 (over 20 percent and over 5): additions apply, removals wait.
+    t.advance(HOUR);
+    t.listing([{ id: oid(1), proxyAddresses: [...many.slice(0, 4), `smtp:new@${DOMAIN}`] }]);
+    expect(await t.tick()).toMatchObject({ status: 'held', counts: { added: 1, removed: 0, heldRemovals: 6 } });
+    expect(t.aliases()).toHaveLength(11);
+    expect(await loadAliasSyncState(t.d1)).toMatchObject({ lastResult: 'held', lastError: 'mass_removal', lastOkAt: T0 });
+
+    // A manager approves: the next run removes them and clears the approval.
+    t.setting('m365_alias_sync_approve_removals', true);
+    t.advance(HOUR);
+    t.listing([{ id: oid(1), proxyAddresses: [...many.slice(0, 4), `smtp:new@${DOMAIN}`] }]);
+    expect(await t.tick()).toMatchObject({ status: 'worked', counts: { removed: 6, heldRemovals: 0 } });
+    expect(t.aliases()).toHaveLength(5);
+    expect(t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_alias_sync_approve_removals'`).get()).toEqual({ value: 'false' });
+    expect(await loadAliasSyncState(t.d1)).toMatchObject({ lastResult: 'ok', lastOkAt: T0 + 2 * HOUR });
+  });
+
   it('holds instead of removing everything when the listing comes back empty, and records a Graph failure', async () => {
     const t = setup();
     t.listing([ALICE, BOB]);

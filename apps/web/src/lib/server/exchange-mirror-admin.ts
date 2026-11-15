@@ -4,7 +4,9 @@
 // (over the private EMAIL_SERVICE binding) which settings it has, and reads
 // the counts the Worker writes.
 import {
+  ALIAS_MAX_AGE_MS,
   EXCHANGE_MIRROR_SETTING_ENABLED,
+  M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS,
   M365_ALIAS_SYNC_SETTING_ENABLED,
   loadAliasSyncState,
   loadAliasSyncSwitch,
@@ -35,6 +37,8 @@ export interface ExchangeMirrorOverview {
   sync: { enabled: boolean; dryRun: boolean };
   aliasState: AliasSyncState | null;
   aliasCount: number;
+  /** The mirror uses aliases now: import on and last full success under 3 days old. */
+  aliasesFresh: boolean;
   now: number;
 }
 
@@ -116,14 +120,17 @@ export async function loadExchangeMirrorOverview(
     sync: { enabled: sync.enabled, dryRun: sync.dryRun },
     aliasState,
     aliasCount,
+    aliasesFresh: aliasEnabled && Boolean(aliasState?.lastOkAt && now - aliasState.lastOkAt <= ALIAS_MAX_AGE_MS),
     now,
   };
 }
 
-export type ExchangeMirrorAdminAction = 'enable' | 'disable' | 'alias_enable' | 'alias_disable';
+export type ExchangeMirrorAdminAction = 'enable' | 'disable' | 'alias_enable' | 'alias_disable' | 'alias_approve_removals';
+
+const ACTIONS: ReadonlySet<string> = new Set(['enable', 'disable', 'alias_enable', 'alias_disable', 'alias_approve_removals']);
 
 export function parseExchangeMirrorAdminAction(value: unknown): ExchangeMirrorAdminAction | null {
-  return value === 'enable' || value === 'disable' || value === 'alias_enable' || value === 'alias_disable' ? value : null;
+  return typeof value === 'string' && ACTIONS.has(value) ? value as ExchangeMirrorAdminAction : null;
 }
 
 export type ExchangeMirrorAdminResult = { ok: true; message: string } | { ok: false; status: number; error: string };
@@ -162,7 +169,12 @@ export async function applyExchangeMirrorAdminAction(
     }
     await putSetting(db, M365_ALIAS_SYNC_SETTING_ENABLED, true, manager.id);
     await audit(db, { event_type: 'org.m365_alias_sync_toggled', ...actor, detail: 'Microsoft 365 alias import turned on' });
-    return { ok: true, message: 'The alias import is on. It runs with the Microsoft 365 sync (live, not dry run).' };
+    return { ok: true, message: 'The alias import is on. It runs with the Microsoft 365 sync (live, not dry run); the mirror uses aliases after its first full import.' };
+  }
+  if (action === 'alias_approve_removals') {
+    await putSetting(db, M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS, true, manager.id);
+    await audit(db, { event_type: 'org.m365_alias_removals_approved', ...actor, detail: 'Approved the held Microsoft 365 alias removals (next import run only)' });
+    return { ok: true, message: 'Approved. The next alias import removes the held aliases, once.' };
   }
   if (action === 'disable') {
     await putSetting(db, EXCHANGE_MIRROR_SETTING_ENABLED, false, manager.id);
@@ -171,5 +183,5 @@ export async function applyExchangeMirrorAdminAction(
   }
   await putSetting(db, M365_ALIAS_SYNC_SETTING_ENABLED, false, manager.id);
   await audit(db, { event_type: 'org.m365_alias_sync_toggled', ...actor, detail: 'Microsoft 365 alias import turned off' });
-  return { ok: true, message: 'The alias import is off. Aliases already imported stay until you remove them or turn it on again.' };
+  return { ok: true, message: 'The alias import is off. The mirror stops using imported aliases at once; the rows stay until the import runs again.' };
 }

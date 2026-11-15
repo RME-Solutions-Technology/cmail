@@ -152,6 +152,8 @@ export interface AuthenticationIdentities {
   dmarc: string | null;
   /** Lower-case `header.d` (or the domain of `header.i`) of every `dkim=pass` in the trusted record. */
   dkimPassDomains: string[];
+  /** Lower-case `header.from` of the first `dmarc=` result in the trusted record, when the boundary wrote one and it is a whole domain. */
+  dmarcHeaderFrom: string | null;
 }
 
 /** Split on `;` outside quoted strings (comments are already stripped). */
@@ -188,7 +190,7 @@ export function parseAuthenticationIdentities(
   trustedAuthservId: string | null | undefined,
 ): AuthenticationIdentities {
   const facts = parseAuthenticationResults(headerValue, trustedAuthservId);
-  const none: AuthenticationIdentities = { dmarc: facts.dmarc, dkimPassDomains: [] };
+  const none: AuthenticationIdentities = { dmarc: facts.dmarc, dkimPassDomains: [], dmarcHeaderFrom: null };
   const trusted = (trustedAuthservId || '').trim().toLowerCase();
   const raw = (headerValue || '').trim();
   if (!trusted || !raw || raw.length > 4096) return none;
@@ -199,7 +201,17 @@ export function parseAuthenticationIdentities(
   if (identifier.toLowerCase() !== trusted) return none;
 
   const domains = new Set<string>();
+  let dmarcHeaderFrom: string | null = null;
+  let dmarcSeen = false;
   for (const segment of resultSegments(record.slice(separator + 1))) {
+    const dmarc = /^\s*dmarc\s*=\s*[A-Za-z]+\b([\s\S]*)$/i.exec(segment);
+    if (dmarc && !dmarcSeen) {
+      dmarcSeen = true;
+      const from = /(?:^|\s)header\.from\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;]+)/i.exec(dmarc[1] || '')?.[1];
+      const value = from ? unquote(from).toLowerCase().replace(/\.$/, '') : '';
+      dmarcHeaderFrom = DKIM_DOMAIN.test(value) ? value : null;
+      continue;
+    }
     const match = /^\s*dkim\s*=\s*([A-Za-z]+)\b([\s\S]*)$/i.exec(segment);
     if (!match || (match[1] || '').toLowerCase() !== 'pass') continue;
     const properties = match[2] || '';
@@ -209,5 +221,5 @@ export function parseAuthenticationIdentities(
     const domain = (d ? unquote(d) : fromI || '').toLowerCase().replace(/\.$/, '');
     if (DKIM_DOMAIN.test(domain)) domains.add(domain);
   }
-  return { dmarc: facts.dmarc, dkimPassDomains: [...domains] };
+  return { dmarc: facts.dmarc, dkimPassDomains: [...domains], dmarcHeaderFrom };
 }

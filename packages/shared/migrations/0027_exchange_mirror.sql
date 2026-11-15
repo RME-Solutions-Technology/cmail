@@ -16,9 +16,23 @@
 -- the email Worker. It holds no address, subject or mail content.
 --
 -- m365_alias_sync_state is a single row: a short lease so two cron runs never
--- import together, and the last run's result and counts (JSON, no addresses).
+-- import together, the time of the last full successful import (the mirror
+-- ignores aliases when it is over 3 days old) and the last run's result and
+-- counts (JSON, no addresses).
 --
--- Upgrade note: additive only (three new tables, two triggers). Apply with
+-- Triggers (four): two on mailbox_aliases (an alias may not be a mailbox's
+-- address) fire only when aliases are written, which happens only while the
+-- alias import is on. Two on mailboxes (a new or renamed mailbox drops an
+-- alias with its address) run on every mailbox insert or address change, but
+-- their WHEN clause is one indexed lookup in mailbox_aliases and is false
+-- whenever that table is empty, so with the alias import never turned on
+-- their body never runs and nothing changes.
+--
+-- Mirrored copies reserve storage with reservation_type 'storage', which the
+-- hourly inbound guard (0001 trg_mailbox_reservations_guard) never counts,
+-- so the mirror cannot use up a mailbox's normal inbound allowance.
+--
+-- Upgrade note: additive only (three new tables, four triggers). Apply with
 -- the normal `pnpm db:migrate`. No existing row changes.
 
 CREATE TABLE IF NOT EXISTS mailbox_aliases (
@@ -47,6 +61,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_mailboxes_insert_drops_alias
 AFTER INSERT ON mailboxes
+WHEN EXISTS (SELECT 1 FROM mailbox_aliases WHERE address = NEW.address)
 BEGIN
   DELETE FROM mailbox_aliases WHERE address = NEW.address;
 END;
@@ -54,6 +69,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_mailboxes_address_drops_alias
 AFTER UPDATE OF address ON mailboxes
 WHEN NEW.address IS NOT OLD.address
+  AND EXISTS (SELECT 1 FROM mailbox_aliases WHERE address = NEW.address)
 BEGIN
   DELETE FROM mailbox_aliases WHERE address = NEW.address;
 END;
@@ -78,6 +94,7 @@ CREATE TABLE IF NOT EXISTS m365_alias_sync_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   lease_until INTEGER NOT NULL DEFAULT 0,
   last_run_at INTEGER NOT NULL DEFAULT 0,
+  last_ok_at INTEGER NOT NULL DEFAULT 0,
   state TEXT NOT NULL DEFAULT '{}' CHECK (length(state) <= 65536),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
