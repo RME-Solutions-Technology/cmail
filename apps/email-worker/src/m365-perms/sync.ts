@@ -46,7 +46,7 @@ import {
 import { beginCollect, discardCollect, readCollect } from './collector';
 import { brakeCheck, computeDiff, type DiffOp } from './diff';
 import { PermsGraphClient } from './groups';
-import { groupTrustees, parseSnapshot, type PermissionSnapshot } from './snapshot';
+import { groupTrustees, mergeBatches, parseSnapshot, type PermissionSnapshot } from './snapshot';
 
 const LEASE_SECONDS = 10 * 60;
 const TICK_TIME_BUDGET_MS = 60_000;
@@ -59,8 +59,13 @@ const COLLECT_TIMEOUT_MS = 25 * 60 * 1000;
 const HELD_ROUND_MAX_AGE_MS = 30 * HOUR_MS;
 const ROUND_MAX_AGE_MS = 24 * HOUR_MS;
 const MAX_BACKOFF_MS = 24 * HOUR_MS;
-/** Smallest gap between runs that continue an unfinished pass. */
-const CONTINUE_GAP_MS = 10 * 60 * 1000;
+/**
+ * Batches one pass may take (each up to about 10 minutes of collection, one
+ * per cron run). A pass that needs more fails safely (nothing applied).
+ */
+export const MAX_BATCHES_PER_PASS = 24;
+/** "Sync access now" starts a pass at most this often. */
+const MANUAL_MIN_GAP_MS = HOUR_MS;
 
 export interface M365PermsWorkerEnv extends M365PermsEnv, M365SyncEnv {
   DB: D1Database;
@@ -111,11 +116,15 @@ function newRound(id: string, mode: M365PermsMode, now: number): M365PermsRound 
     report: [],
     heldItems: [],
     snapshot: null,
+    batches: [{ runId: `${id}-b1`, startAfter: '' }],
+    batchStartedAt: iso(now),
   };
 }
 
-async function loadSnapshot(env: M365PermsWorkerEnv, roundId: string, expected: { tenantId: string; organization: string; now: number }): Promise<PermissionSnapshot> {
-  const result = await readCollect(env.M365_PERMS_COLLECTOR!, roundId);
+type Expected = { tenantId: string; organization: string; now: number };
+
+async function loadBatch(env: M365PermsWorkerEnv, runId: string, expected: Expected): Promise<PermissionSnapshot> {
+  const result = await readCollect(env.M365_PERMS_COLLECTOR!, runId);
   if (result.status !== 'done') throw new RoundFailure(result.status === 'failed' ? result.code : 'snapshot_lost');
   const parsed = parseSnapshot(result.snapshot, expected);
   if (!parsed.ok) {
@@ -123,6 +132,22 @@ async function loadSnapshot(env: M365PermsWorkerEnv, roundId: string, expected: 
     throw new RoundFailure('bad_snapshot');
   }
   return parsed.snapshot;
+}
+
+/** The whole pass: every batch, read back, checked and joined. */
+async function loadPass(env: M365PermsWorkerEnv, round: M365PermsRound, expected: Expected): Promise<PermissionSnapshot> {
+  const batches = [];
+  for (const batch of round.batches) batches.push({ startAfter: batch.startAfter, snapshot: await loadBatch(env, batch.runId, expected) });
+  const merged = mergeBatches(batches);
+  if (!merged) {
+    console.warn('Mailbox access snapshot rejected', { reason: 'batches_do_not_fit' });
+    throw new RoundFailure('bad_snapshot');
+  }
+  return merged;
+}
+
+async function discardRound(namespace: DurableObjectNamespace, round: M365PermsRound): Promise<void> {
+  for (const batch of round.batches ?? []) await discardCollect(namespace, batch.runId).catch(() => undefined);
 }
 
 /** Group expansion uses the directory sync app (Graph). Null when it is not configured. */
@@ -139,7 +164,7 @@ function graphClient(env: M365PermsWorkerEnv, deps: M365PermsDeps): PermsGraphCl
   });
 }
 
-function finishRound(state: M365PermsState, round: M365PermsRound, now: number, nextCursor: string | null): void {
+function finishRound(state: M365PermsState, round: M365PermsRound, now: number): void {
   state.lastRound = {
     id: round.id,
     mode: round.mode,
@@ -151,7 +176,6 @@ function finishRound(state: M365PermsState, round: M365PermsRound, now: number, 
     snapshot: round.snapshot,
   };
   state.lastFinishedAt = iso(now);
-  if (nextCursor !== null) state.cursor = nextCursor;
   state.round = null;
   state.lastError = null;
   state.consecutiveFailures = 0;
@@ -202,7 +226,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       const tooOld = age(startedAt, state.round.startedAt) > (held ? HELD_ROUND_MAX_AGE_MS : ROUND_MAX_AGE_MS);
       // A mode change, an old round or "Sync access now" on a held round starts afresh.
       if (state.round.mode !== mode || tooOld || (held && requested)) {
-        await discardCollect(namespace, state.round.id).catch(() => undefined);
+        await discardRound(namespace, state.round);
         await clearGroupMembers(db, null);
         state.round = null;
       }
@@ -223,11 +247,11 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         await saveState(db, state);
         return { status: 'backoff' };
       }
-      // A pass a run could not finish (the collector left a cursor) continues
-      // on the next cron run, not after the full interval.
-      const continuing = Boolean(state.cursor) && age(startedAt, state.lastStartedAt) >= CONTINUE_GAP_MS;
-      const due = requested || continuing || age(startedAt, state.lastStartedAt) >= config.intervalHours * HOUR_MS;
-      if (requested) state.handledRequestAt = toggle.requestedAt;
+      // A new pass at most every interval (6 to 24 hours), plus "Sync access
+      // now" at most once an hour: at most 4 scheduled passes a day.
+      const manual = requested && age(startedAt, state.lastStartedAt) >= MANUAL_MIN_GAP_MS;
+      const due = manual || age(startedAt, state.lastStartedAt) >= config.intervalHours * HOUR_MS;
+      if (due && requested) state.handledRequestAt = toggle.requestedAt;
       if (!due) {
         state.lastResult = state.consecutiveFailures ? 'error' : 'ok';
         await saveState(db, state);
@@ -235,7 +259,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       }
       const round = newRound(newId(), mode, startedAt);
       state.lastStartedAt = iso(startedAt);
-      const started = await beginCollect(namespace, round.id, state.cursor).catch(() => null);
+      const started = await beginCollect(namespace, round.batches[0].runId, '').catch(() => null);
       if (started !== 'started') throw new RoundFailure(started === 'busy' ? 'collector_busy' : 'collector_failed');
       state.round = round;
       state.lastResult = 'collecting';
@@ -249,9 +273,13 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
     let finished = false;
 
     if (round.phase === 'collecting') {
-      const result = await readCollect(namespace, round.id);
+      // One batch per cron run. Nothing is applied until the batch that
+      // reaches the end of the mailbox list arrives; then the whole pass is
+      // read back, joined and applied once.
+      const batch = round.batches[round.batches.length - 1];
+      const result = await readCollect(namespace, batch.runId);
       if (result.status === 'running') {
-        if (age(startedAt, round.startedAt) > COLLECT_TIMEOUT_MS) throw new RoundFailure('collector_timeout');
+        if (age(startedAt, round.batchStartedAt) > COLLECT_TIMEOUT_MS) throw new RoundFailure('collector_timeout');
         state.lastResult = 'collecting';
         await saveState(db, state);
         return { status: 'collecting' };
@@ -262,13 +290,26 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         console.warn('Mailbox access snapshot rejected', { reason: parsed.reason });
         throw new RoundFailure('bad_snapshot');
       }
-      const snapshot = parsed.snapshot;
+      if (batch.startAfter && parsed.snapshot.mailboxes.some((mailbox) => mailbox.id <= batch.startAfter)) throw new RoundFailure('bad_snapshot');
+      if (!parsed.snapshot.complete) {
+        if (round.batches.length >= MAX_BATCHES_PER_PASS) throw new RoundFailure('pass_too_long');
+        const next = { runId: `${round.id}-b${round.batches.length + 1}`, startAfter: parsed.snapshot.nextCursor || batch.startAfter };
+        const started = await beginCollect(namespace, next.runId, next.startAfter).catch(() => null);
+        if (started !== 'started') throw new RoundFailure(started === 'busy' ? 'collector_busy' : 'collector_failed');
+        round.batches.push(next);
+        round.batchStartedAt = iso(startedAt);
+        state.lastResult = 'collecting';
+        await saveState(db, state);
+        return { status: 'collecting' };
+      }
+      const snapshot = await loadPass(env, round, expected);
       round.snapshot = {
         collectedAt: snapshot.collectedAt,
         mailboxes: snapshot.mailboxes.length,
         mailboxesInTenant: snapshot.mailboxCount,
         grants: snapshot.mailboxes.reduce((sum, mailbox) => sum + mailbox.grants.length, 0),
-        complete: snapshot.complete,
+        complete: true,
+        batches: round.batches.length,
         skipped: { ...snapshot.skipped },
       };
       round.groupsPending = groupTrustees(snapshot);
@@ -276,7 +317,6 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       await clearGroupMembers(db, round.id);
       await saveState(db, state);
     }
-
     if (round.phase === 'groups') {
       const graph = graphClient(env, deps);
       while (round.groupsPending.length && withinBudget()) {
@@ -310,7 +350,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
     }
 
     // diff and apply both work from the stored snapshot, read again each tick.
-    const snapshot = await loadSnapshot(env, round.id, expected);
+    const snapshot = await loadPass(env, round, expected);
     const diffNow = async () => {
       const [sharedLinks, personLinks, assignments, ledger, groupMembers, released] = await Promise.all([
         loadSharedLinks(ctx), loadPersonLinks(ctx), loadAssignments(ctx), loadLedger(ctx), loadGroupMembers(ctx, round.id), loadReleased(ctx),
@@ -348,9 +388,9 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
       if (round.mode === 'dry_run') {
         // Report only: nothing is written but the status row.
         for (const op of diff.ops) reportOp(ctx, op);
-        finishRound(state, round, now(), snapshot.nextCursor);
+        finishRound(state, round, now());
         await clearGroupMembers(db, null);
-        await discardCollect(namespace, round.id).catch(() => undefined);
+        await discardRound(namespace, round);
         state.lastResult = 'ok';
         await saveState(db, state);
         return { status: 'worked', mode: 'dry_run', finished: true };
@@ -402,7 +442,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         await saveState(db, state);
         return { status: 'held' };
       }
-      finishRound(state, round, now(), snapshot.nextCursor);
+      finishRound(state, round, now());
       finished = true;
       await clearGroupMembers(db, null);
       // Manager-removed marks for mailboxes or accounts that no longer exist.
@@ -411,7 +451,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
          WHERE NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.id = m365_perm_released.mailbox_id)
             OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id = m365_perm_released.user_id)`,
       ).run();
-      await discardCollect(namespace, round.id).catch(() => undefined);
+      await discardRound(namespace, round);
     }
 
     state.lastResult = 'ok';
@@ -424,7 +464,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         : 'internal';
     // Nothing is changed on failure: the round is dropped and current
     // assignments stay exactly as they are. Next attempt after a back-off.
-    if (state.round) await discardCollect(env.M365_PERMS_COLLECTOR!, state.round.id).catch(() => undefined);
+    if (state.round) await discardRound(env.M365_PERMS_COLLECTOR!, state.round);
     await clearGroupMembers(db, null).catch(() => undefined);
     state.round = null;
     state.consecutiveFailures += 1;

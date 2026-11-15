@@ -80,15 +80,21 @@ any point resumes on the next one. Work per run is bounded (60 s, 600 D1
 statements, 60 Graph requests). Logs carry codes and counts only, never
 addresses or names.
 
-**Large tenants.** The collector reads each shared mailbox with two cmdlet
-calls (about 1 to 2 seconds each, unverified). It stops taking new mailboxes
-after 10 minutes, writes what it has with `complete: false` and a cursor, and
-the next cron run (15 minutes later, not the next day) continues from there
-until the pass is complete; then the normal interval applies again. Removals only ever apply to mailboxes a
-run fully read, so a partial run never removes anything elsewhere. For more
-than about 300 shared mailboxes, lower `M365_PERMS_INTERVAL_HOURS` (minimum 6)
-so a full pass finishes sooner.
-
+**Large tenants: a pass in batches.** The collector reads each shared mailbox
+with two cmdlet calls (about 1 to 2 seconds each, unverified) in object id
+order. One run (a batch) stops after 10 minutes, writes the mailboxes it read
+and a cursor (the last id), and the Worker starts the next batch from that
+cursor on the next cron run, 15 minutes later. Nothing is applied while a
+pass is in progress: the Worker keeps every batch (in the collector's Durable
+Object storage) until the batch that reaches the end of the list arrives,
+then reads all of them back, checks that each one starts after the previous
+cursor with no overlap, joins them and applies the pass **once**. The next
+pass starts only after the normal interval. A pass may take at most 24
+batches (about 6 hours, roughly 7,000 shared mailboxes at the estimate
+above); one that needs more fails safely (`pass_too_long`, nothing changed).
+Passes start at most every `M365_PERMS_INTERVAL_HOURS` (6 to 24), so at most
+4 scheduled passes a day, and **Sync access now** starts one at most once an
+hour.
 ## Mapping: Exchange to cmail
 
 Exchange rights are independent: Full Access does not allow sending, Send As
@@ -114,13 +120,22 @@ folders, archive, delete). The rule is **never more than Exchange grants**.
 
 Mapping is by Entra object id only (Exchange `ExternalDirectoryObjectId`, the
 same id the Microsoft 365 sync links on), never by address or name. The
-collector resolves each trustee with `Get-EXORecipient`: by its SID when the
-permission entry carries one (`UserSid`, `TrusteeSidString`), otherwise by the
-identity string Exchange returned (a UPN or the unique object Name; Exchange
-identity lookup does not match display names). It needs exactly one match;
-a name that matches two objects is unresolved and the mailbox is left as it
-is (no additions or removals there).
-Mail-enabled security groups are expanded with Microsoft Graph
+collector resolves each trustee only through documented lookups:
+
+- when the permission entry carries the trustee's SID (`UserSid` on Full
+  Access entries, `TrusteeSidString` on Send As entries; these output
+  properties are not listed on Microsoft Learn, so their presence is checked
+  in setup step 4): `Get-User` and `Get-Group -Filter "Sid -eq '<sid>'"`
+  (`Sid` is a documented filterable property of both:
+  [filterable properties](https://learn.microsoft.com/en-us/powershell/exchange/filter-properties#sid)),
+  then `Get-EXORecipient -Identity <that object's GUID>` (GUID is a
+  documented and recommended Identity value:
+  [Get-EXORecipient](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-exorecipient));
+- otherwise `Get-EXORecipient -Identity <the value Exchange returned>`, which
+  accepts a UPN, Name, alias or email address, not a display name.
+
+Every step needs exactly one match. Anything else is unresolved and the
+mailbox is left as it is (no additions or removals there).Mail-enabled security groups are expanded with Microsoft Graph
 `GET /groups/{id}/transitiveMembers/microsoft.graph.user`
 ([list transitive members](https://learn.microsoft.com/en-us/graph/api/group-list-transitivemembers)),
 with `$count=true` and `ConsistencyLevel: eventual`, because an OData cast on
@@ -197,6 +212,7 @@ time, so a removed assignment takes effect on the next request.
 | Exchange role missing a cmdlet | No change | `exchange_role_missing` or `unauthorized` |
 | Container fails to start, crashes, is killed after 13 minutes | No change | `collector_failed`, `collector_timeout`, `no_container`, `no_image` |
 | Collector still running after 25 minutes | Round dropped, no change | `collector_timeout` |
+| A pass needs more than 24 batches, or batches do not follow each other | Pass dropped, nothing applied | `pass_too_long`, `bad_snapshot` |
 | Bad JSON, wrong schema, wrong tenant, too large, too old | Whole snapshot rejected, no change | `bad_snapshot` |
 | One mailbox's query failed or a trustee unresolved | That mailbox: additions only, no removals | `mailboxNotCovered` |
 | A group cannot be expanded | Mailboxes with that group: additions only | `mailboxNotCovered` |
@@ -260,9 +276,8 @@ is not published; estimate). One run a day, up to about 13 minutes at worst:
 So **about USD 0.01 a month beyond Workers Paid** at a daily cadence in the
 worst case, and nothing extra for typical runs of a few minutes (estimate,
 unverified timings). At the 6-hour minimum the worst case is four times the
-usage, about USD 1.20 a month extra. A tenant too large for one run continues
-on the next 15-minute cron until the pass is complete, so each extra run adds
-up to 13 minutes. Durable Object and D1 use is a handful of requests a day.
+usage, about USD 1.20 a month extra. A tenant too large for one batch takes one more
+batch per 15-minute cron run until the pass is complete, each up to 13 minutes. Durable Object and D1 use is a handful of requests a day.
 Image storage in Cloudflare's registry was not found priced separately
 (unverified).
 ## Setup
@@ -311,20 +326,26 @@ Connect-ExchangeOnline -UserPrincipalName admin@<tenant>.onmicrosoft.com
 #    It is a one-time, tenant-wide switch; skip if it says it is already on.
 if ((Get-OrganizationConfig).IsDehydrated) { Enable-OrganizationCustomization }
 
-# a. See which built-in roles hold each cmdlet in YOUR tenant (do not assume).
-$needed = 'Get-Mailbox','Get-MailboxPermission','Get-RecipientPermission','Get-Recipient'
+# a. The read cmdlets the collector needs, and which built-in roles hold each
+#    in YOUR tenant (do not assume).
+$needed = 'Get-Mailbox','Get-MailboxPermission','Get-RecipientPermission','Get-Recipient','Get-User','Get-Group'
 foreach ($cmd in $needed) { Get-ManagementRoleEntry -Identity "*\$cmd" | Select-Object Role, Name }
 
-# b. A custom role whose parent holds all four (expected: "Mail Recipients";
-#    use the role step a showed if different), trimmed to the reads only.
-New-ManagementRole -Name "cmail Mailbox Access Reader" -Parent "Mail Recipients"
-Get-ManagementRoleEntry "cmail Mailbox Access Reader\*" |
-  Where-Object { $needed -notcontains $_.Name } |
-  ForEach-Object { Remove-ManagementRoleEntry -Identity "cmail Mailbox Access Reader\$($_.Name)" -Confirm:$false }
-Get-ManagementRoleEntry "cmail Mailbox Access Reader\*" | Select-Object Name   # must list exactly the four
-
+# b. One custom role per parent role, trimmed to these reads only. Pick for
+#    each cmdlet a parent that step a listed for it (expected: "Mail
+#    Recipients" for all six; if one is missing there, add its parent below).
+$parents = @{ 'Mail Recipients' = $needed }
+$roles = foreach ($parent in $parents.Keys) {
+  $name = "cmail Mailbox Access Reader ($parent)"
+  New-ManagementRole -Name $name -Parent $parent | Out-Null
+  Get-ManagementRoleEntry "$name\*" | Where-Object { $parents[$parent] -notcontains $_.Name } |
+    ForEach-Object { Remove-ManagementRoleEntry -Identity "$name\$($_.Name)" -Confirm:$false }
+  $name
+}
+# Must list exactly the six cmdlets, nothing else:
+$roles | ForEach-Object { Get-ManagementRoleEntry "$_\*" } | Select-Object Role, Name
 # c. A role group with only that role.
-New-RoleGroup -Name "cmail Mailbox Access Readers" -Roles "cmail Mailbox Access Reader" `
+New-RoleGroup -Name "cmail Mailbox Access Readers" -Roles $roles `
   -Description "Read-only: Full Access and Send As on shared mailboxes for cmail"
 
 # d. The app's service principal in Exchange, added to the group.
@@ -339,8 +360,9 @@ Add-RoleGroupMember -Identity "cmail Mailbox Access Readers" -Member $sp.Id
 `Get-EXORecipient` are the REST versions of `Get-Mailbox`,
 `Get-MailboxPermission`, `Get-RecipientPermission` and `Get-Recipient`
 ([module overview](https://learn.microsoft.com/en-us/powershell/exchange/exchange-online-powershell-v2));
-that they are authorised by these four role entries is **unverified** and is
-what step 4 checks.
+that they are authorised by these role entries is **unverified** and is
+what step 4 checks. `Get-User` and `Get-Group` are only used for the SID
+lookups described under Mapping.
 
 **Unverified, check in the test tenant:**
 - Which built-in role holds `Get-RecipientPermission`. Community reports say
@@ -356,27 +378,53 @@ Fallback if the custom role cannot be built: the Entra role **Global Reader**
 (read-only, tenant-wide, listed as supported for app-only access), but it may
 not cover `Get-RecipientPermission` (see above).
 
-### 4. Prove the role from your own PC
+### 4. Go / no-go: run the real collector from your own PC
+
+**Do not turn dry run off until this passes.** It runs the same
+`collect.ps1` the container runs, as the app, against the tenant, and shows a
+resolved trustee. Needs PowerShell 7.6 and ExchangeOnlineManagement 3.11.1
+on your PC.
 
 ```powershell
+# a. The role cannot write: this must FAIL (not recognised, or access denied).
 $pfx = Get-PfxCertificate -FilePath .\cmail-exo-reader.pfx   # prompts for the password
 Connect-ExchangeOnline -Certificate $pfx -AppId <M365_EXO_APP_ID> -Organization <tenant>.onmicrosoft.com -ShowBanner:$false
-$m = Get-EXOMailbox -RecipientTypeDetails SharedMailbox -ResultSize 1
-Get-EXOMailboxPermission -Identity $m.PrimarySmtpAddress
-Get-EXORecipientPermission -Identity $m.PrimarySmtpAddress -AccessRights SendAs
-Get-EXORecipient -Identity $m.PrimarySmtpAddress | Select-Object ExternalDirectoryObjectId, RecipientTypeDetails
-# The collector resolves trustees by SID: check one resolves.
-$p = Get-EXOMailboxPermission -Identity $m.PrimarySmtpAddress | Where-Object { $_.UserSid -like 'S-1-5-21-*' } | Select-Object -First 1
-if ($p) { Get-EXORecipient -Identity $p.UserSid | Select-Object ExternalDirectoryObjectId, RecipientTypeDetails }
-# Must FAIL (not recognised, or access denied): proves the role cannot write.
-Add-MailboxPermission -Identity $m.PrimarySmtpAddress -User nobody@example.test -AccessRights FullAccess -WhatIf
+Add-MailboxPermission -Identity (Get-EXOMailbox -RecipientTypeDetails SharedMailbox -ResultSize 1).PrimarySmtpAddress `
+  -User nobody@example.test -AccessRights FullAccess -WhatIf
+# Note whether the output carries SIDs (the collector then uses the SID path):
+Get-EXOMailboxPermission -Identity (Get-EXOMailbox -RecipientTypeDetails SharedMailbox -ResultSize 1).PrimarySmtpAddress |
+  Select-Object User, UserSid, AccessRights
 Disconnect-ExchangeOnline -Confirm:$false
+
+# b. The collector itself, first 5 shared mailboxes.
+$env:CMAIL_EXO_TENANT_ID = '<tenant GUID>'
+$env:CMAIL_EXO_APP_ID = '<M365_EXO_APP_ID>'
+$env:CMAIL_EXO_ORGANIZATION = '<tenant>.onmicrosoft.com'
+$env:CMAIL_EXO_CERT_PFX_B64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('.\cmail-exo-reader.pfx'))
+$env:CMAIL_EXO_CERT_PASSWORD = Read-Host 'PFX password'
+$env:CMAIL_BATCH_SIZE = '5'
+$env:CMAIL_OUT_DIR = Join-Path $env:TEMP 'cmail-collector-test'
+pwsh -NoProfile -File apps/email-worker/container/m365-perms/collect.ps1; "exit code: $LASTEXITCODE"
+$r = Get-Content (Join-Path $env:CMAIL_OUT_DIR 'result.json') -Raw | ConvertFrom-Json
+$r.mailboxes | Select-Object address, complete, @{ n = 'grants'; e = { $_.grants.Count } }
+$r.mailboxes.grants | Select-Object -First 5 trustee, kind, fullAccess, sendAs
+$r.skipped; $r.errors
+Remove-Item Env:CMAIL_EXO_CERT_PFX_B64, Env:CMAIL_EXO_CERT_PASSWORD -ErrorAction SilentlyContinue
 ```
 
-Also note what `User` and `Trustee` look like in the output (UPN, name or
-SID). The collector resolves each with `Get-EXORecipient`; any it cannot
-resolve marks that mailbox incomplete (no removals there).
+**Go** only when all of these hold:
+1. Step a failed (the app cannot write).
+2. `exit code: 0` and `result.json` exists (no `error.json`).
+3. For a shared mailbox where you know a person has Full Access: it shows
+   `complete = True` and a grant whose `trustee` equals that person's Object
+   ID in the Entra admin center (Users > the person > Object ID). This is the
+   resolved trustee.
+4. `skipped.unresolved` is 0, or each unresolved entry is explained (for
+   example a trustee that is not mail-enabled).
 
+**No-go** on any other result: leave dry run on and fix the role (step 3) or
+the certificate first. If no trustee resolves at all, tell the maintainers
+what `User`/`UserSid` looked like in step a.
 ### 5. Worker settings and secrets
 
 In `apps/email-worker/wrangler.toml` (`[vars]`): `M365_TENANT_ID` (already set
@@ -420,7 +468,8 @@ web app.
 
 Admin > Shared mailbox access: check there is no "not configured" notice,
 **Turn on** (dry run stays on), wait for two cron runs (collection, then
-report), read the report. When it matches Exchange, **Turn dry run off**.
+report), read the report. When it matches Exchange **and step 4 was a go**,
+**Turn dry run off**.
 
 ## How to test
 
@@ -483,9 +532,9 @@ no secret. Restricting egress to Microsoft hosts is a planned hardening step.
 - The container on Cloudflare: build, start with `enableInternet`, `exec`,
   reading the result file, the 15-minute alarm limit, and that Workers Paid
   covers it as estimated.
-- `Get-EXORecipient -Identity <SID>` resolving a trustee SID (check it in
-  setup step 4 with a `UserSid` value from `Get-EXOMailboxPermission`; if it
-  does not resolve, every such mailbox stays incomplete and nothing changes).
+- Whether `Get-EXOMailboxPermission` and `Get-EXORecipientPermission` return
+  `UserSid` / `TrusteeSidString` (not listed on Learn; step 4 shows it). Without
+  them the collector resolves the returned identity string instead.
 - The `standard-1` size being enough memory for PowerShell 7 + the module.
 - `X509CertificateLoader.LoadPkcs12` with `EphemeralKeySet` for the
   certificate inside the container (Linux, .NET 10).

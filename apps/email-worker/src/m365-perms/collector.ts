@@ -163,22 +163,46 @@ export async function runCollector(container: CollectorContainer | undefined, en
   }
 }
 
-/** The collector Durable Object. Bound as M365_PERMS_COLLECTOR. */
 /** The Worker's own bindings, which the Durable Object shares. */
 export interface CollectorEnv extends M365PermsEnv {
   DB?: D1Database;
 }
 
+/** Batches kept at most (a pass is made of several; older ones are pruned). */
+const MAX_STORED_RUNS = 40;
+/** Stored batches older than this are pruned. */
+const RUN_RETENTION_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * The collector Durable Object. Bound as M365_PERMS_COLLECTOR. One batch
+ * (run) at a time; each finished batch is kept under its run id until the
+ * Worker discards it, so a pass made of several batches can be read back
+ * together before anything is applied.
+ */
 export class M365PermsCollector implements DurableObject {
   constructor(private readonly state: DurableObjectState, private readonly env: CollectorEnv) {}
 
-  private async run(): Promise<RunRecord | null> {
-    return (await this.state.storage.get<RunRecord>('run')) ?? null;
+  private async index(): Promise<string[]> {
+    return (await this.state.storage.get<string[]>('runs')) ?? [];
   }
 
-  private async clearChunks(record: RunRecord | null): Promise<void> {
-    if (!record?.chunks) return;
-    await this.state.storage.delete(Array.from({ length: record.chunks }, (_, index) => `chunk:${index}`));
+  private async run(runId: string): Promise<RunRecord | null> {
+    return (await this.state.storage.get<RunRecord>(`run:${runId}`)) ?? null;
+  }
+
+  private async remove(runId: string): Promise<void> {
+    const record = await this.run(runId);
+    const keys = [`run:${runId}`, ...Array.from({ length: record?.chunks ?? 0 }, (_, index) => `chunk:${runId}:${index}`)];
+    await this.state.storage.delete(keys);
+    await this.state.storage.put('runs', (await this.index()).filter((id) => id !== runId));
+  }
+
+  /** The batch that is still running, if any (stale ones count as failed). */
+  private async running(): Promise<RunRecord | null> {
+    const current = await this.state.storage.get<string>('current');
+    if (!current) return null;
+    const record = await this.run(current);
+    return record?.status === 'running' && Date.now() - record.startedAt < COLLECT_STALE_MS ? record : null;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -193,26 +217,32 @@ export class M365PermsCollector implements DurableObject {
       const runId = typeof body.runId === 'string' && RUN_ID.test(body.runId) ? body.runId : '';
       const cursor = typeof body.cursor === 'string' && GUID.test(body.cursor) ? body.cursor : '';
       if (!runId) return Response.json({ status: 'bad_request' }, { status: 400 });
-      const current = await this.run();
-      if (current?.status === 'running' && Date.now() - current.startedAt < COLLECT_STALE_MS) {
-        return Response.json({ status: current.runId === runId ? 'started' : 'busy' }, { status: current.runId === runId ? 202 : 409 });
+      const busy = await this.running();
+      if (busy) return Response.json({ status: busy.runId === runId ? 'started' : 'busy' }, { status: busy.runId === runId ? 202 : 409 });
+      if (await this.run(runId)) return Response.json({ status: 'bad_request' }, { status: 409 });
+      // Prune old or surplus batches.
+      const now = Date.now();
+      for (const id of await this.index()) {
+        const old = await this.run(id);
+        if (!old || now - old.startedAt > RUN_RETENTION_MS) await this.remove(id);
       }
-      await this.clearChunks(current);
-      const record: RunRecord = { runId, status: 'running', startedAt: Date.now(), finishedAt: null, code: '', chunks: 0, cursor };
-      await this.state.storage.put('run', record);
-      await this.state.storage.setAlarm(Date.now());
+      const ids = await this.index();
+      while (ids.length >= MAX_STORED_RUNS) await this.remove(ids.shift()!);
+      const record: RunRecord = { runId, status: 'running', startedAt: now, finishedAt: null, code: '', chunks: 0, cursor };
+      await this.state.storage.put({ [`run:${runId}`]: record, current: runId, runs: [...ids, runId] });
+      await this.state.storage.setAlarm(now);
       return Response.json({ status: 'started' }, { status: 202 });
     }
     if (request.method === 'GET' && url.pathname === '/result') {
       const runId = url.searchParams.get('runId') ?? '';
-      const record = await this.run();
-      if (!record || record.runId !== runId) return Response.json({ status: 'unknown' }, { status: 404 });
+      const record = RUN_ID.test(runId) ? await this.run(runId) : null;
+      if (!record) return Response.json({ status: 'unknown' }, { status: 404 });
       if (record.status === 'running') {
         if (Date.now() - record.startedAt > COLLECT_STALE_MS) return Response.json({ status: 'failed', code: 'collector_timeout' });
         return Response.json({ status: 'running' });
       }
       if (record.status === 'failed') return Response.json({ status: 'failed', code: record.code || 'collector_failed' });
-      const keys = Array.from({ length: record.chunks }, (_, index) => `chunk:${index}`);
+      const keys = Array.from({ length: record.chunks }, (_, index) => `chunk:${runId}:${index}`);
       const stored = keys.length ? await this.state.storage.get<string>(keys) : new Map<string, string>();
       const parts: string[] = [];
       for (const k of keys) {
@@ -224,18 +254,16 @@ export class M365PermsCollector implements DurableObject {
     }
     if (request.method === 'POST' && url.pathname === '/discard') {
       const runId = url.searchParams.get('runId') ?? '';
-      const record = await this.run();
-      if (record && record.runId === runId && record.status !== 'running') {
-        await this.clearChunks(record);
-        await this.state.storage.delete('run');
-      }
+      const record = RUN_ID.test(runId) ? await this.run(runId) : null;
+      if (record && record.status !== 'running') await this.remove(runId);
       return Response.json({ status: 'ok' });
     }
     return new Response('Not found', { status: 404 });
   }
 
   async alarm(): Promise<void> {
-    const record = await this.run();
+    const current = await this.state.storage.get<string>('current');
+    const record = current ? await this.run(current) : null;
     if (!record || record.status !== 'running') return;
     // Switched off since the run was requested (or a retried alarm after it
     // was): no container, no Microsoft call.
@@ -246,28 +274,26 @@ export class M365PermsCollector implements DurableObject {
       enabled = false;
     }
     if (!enabled) {
-      await this.state.storage.put('run', { ...record, status: 'failed', finishedAt: Date.now(), code: 'switched_off' });
+      await this.state.storage.put(`run:${record.runId}`, { ...record, status: 'failed', finishedAt: Date.now(), code: 'switched_off' });
       return;
     }
     const outcome = await runCollector(this.state.container as CollectorContainer | undefined, this.env, record.cursor);
-    // Only finish the run this alarm started (a newer /begin may have replaced it).
-    const latest = await this.run();
-    if (!latest || latest.runId !== record.runId) return;
+    const latest = await this.run(record.runId);
+    if (!latest || latest.status !== 'running') return;
     if (!outcome.ok) {
-      await this.state.storage.put('run', { ...latest, status: 'failed', finishedAt: Date.now(), code: outcome.code });
+      await this.state.storage.put(`run:${record.runId}`, { ...latest, status: 'failed', finishedAt: Date.now(), code: outcome.code });
       return;
     }
     const chunks: Record<string, string> = {};
     let count = 0;
     for (let start = 0; start < outcome.snapshot.length; start += CHUNK_CHARS) {
-      chunks[`chunk:${count}`] = outcome.snapshot.slice(start, start + CHUNK_CHARS);
+      chunks[`chunk:${record.runId}:${count}`] = outcome.snapshot.slice(start, start + CHUNK_CHARS);
       count += 1;
     }
     if (count) await this.state.storage.put(chunks);
-    await this.state.storage.put('run', { ...latest, status: 'done', finishedAt: Date.now(), code: '', chunks: count });
+    await this.state.storage.put(`run:${record.runId}`, { ...latest, status: 'done', finishedAt: Date.now(), code: '', chunks: count });
   }
 }
-
 // ─── Worker side ─────────────────────────────────────────────────────────
 
 export type CollectStatus =

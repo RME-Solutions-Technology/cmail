@@ -42,9 +42,12 @@ export interface PermissionSnapshot {
   tenantId: string;
   organization: string;
   collectedAt: string;
-  /** True when every shared mailbox in the tenant is in `mailboxes`. */
+  /**
+   * One batch of a pass: true when this batch reached the end of the
+   * tenant's shared mailbox list (the pass is complete).
+   */
   complete: boolean;
-  /** Where the next run starts ('' = from the beginning). */
+  /** Where the next batch starts: the last mailbox id read ('' when complete). */
   nextCursor: string;
   /** Shared mailboxes Exchange listed in total. */
   mailboxCount: number;
@@ -109,7 +112,9 @@ export function parseSnapshot(
   if (!Array.isArray(raw.mailboxes) || raw.mailboxes.length > SNAPSHOT_MAX_MAILBOXES || raw.mailboxes.length > raw.mailboxCount) {
     return { ok: false, reason: 'bad_mailboxes' };
   }
-  if (raw.complete && raw.mailboxes.length !== raw.mailboxCount) return { ok: false, reason: 'bad_mailboxes' };
+  // A batch that completes the pass has no cursor; one that does not points
+  // at its own last mailbox (or is empty because it ran out of time at once).
+  if (raw.complete && raw.nextCursor !== '') return { ok: false, reason: 'bad_cursor' };
 
   if (!isRecord(raw.skipped) || !exactKeys(raw.skipped, SKIP_KEYS)) return { ok: false, reason: 'bad_skipped' };
   const skipped = {} as Record<SkipKey, number>;
@@ -152,8 +157,10 @@ export function parseSnapshot(
       if (!grant.fullAccess && !grant.sendAs) return { ok: false, reason: 'bad_grant' };
       grants.push({ trustee: grant.trustee, kind: grant.kind, fullAccess: grant.fullAccess, sendAs: grant.sendAs });
     }
+    if (mailboxes.length && item.id <= mailboxes[mailboxes.length - 1].id) return { ok: false, reason: 'unsorted_mailboxes' };
     mailboxes.push({ id: item.id, address: item.address, complete: item.complete, grants });
   }
+  if (!raw.complete && mailboxes.length && raw.nextCursor !== mailboxes[mailboxes.length - 1].id) return { ok: false, reason: 'bad_cursor' };
 
   return {
     ok: true,
@@ -178,4 +185,43 @@ export function groupTrustees(snapshot: PermissionSnapshot): string[] {
   const groups = new Set<string>();
   for (const mailbox of snapshot.mailboxes) for (const grant of mailbox.grants) if (grant.kind === 'group') groups.add(grant.trustee);
   return [...groups].sort();
+}
+
+/**
+ * Joins the batches of one pass, in order, into one snapshot. Each batch must
+ * start after the previous batch's cursor (ids ascending, no overlap), only
+ * the last may be complete, and the last must be. Returns null when they do
+ * not fit together.
+ */
+export function mergeBatches(batches: Array<{ startAfter: string; snapshot: PermissionSnapshot }>): PermissionSnapshot | null {
+  if (!batches.length) return null;
+  const mailboxes: SnapshotMailbox[] = [];
+  const skipped = Object.fromEntries(SKIP_KEYS.map((k) => [k, 0])) as Record<SkipKey, number>;
+  const errors = new Map<string, number>();
+  let previous = '';
+  let collectedAt = batches[0].snapshot.collectedAt;
+  for (const [index, { startAfter, snapshot }] of batches.entries()) {
+    const last = index === batches.length - 1;
+    if (startAfter !== previous) return null;
+    if (snapshot.complete !== last) return null;
+    for (const mailbox of snapshot.mailboxes) {
+      if (startAfter && mailbox.id <= startAfter) return null;
+      mailboxes.push(mailbox);
+    }
+    for (const k of SKIP_KEYS) skipped[k] += snapshot.skipped[k];
+    for (const error of snapshot.errors) errors.set(error.code, (errors.get(error.code) ?? 0) + error.count);
+    if (snapshot.collectedAt < collectedAt) collectedAt = snapshot.collectedAt;
+    previous = snapshot.nextCursor || previous;
+  }
+  const lastBatch = batches[batches.length - 1].snapshot;
+  return {
+    ...lastBatch,
+    collectedAt,
+    complete: true,
+    nextCursor: '',
+    mailboxCount: Math.max(lastBatch.mailboxCount, mailboxes.length),
+    mailboxes,
+    skipped,
+    errors: [...errors].sort(([a], [b]) => a.localeCompare(b)).slice(0, 50).map(([code, count]) => ({ code, count })),
+  };
 }

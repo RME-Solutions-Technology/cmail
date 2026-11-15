@@ -16,13 +16,15 @@ export function fakeCollector() {
   let outcome: FakeOutcome = { kind: 'failed', code: 'not_set' };
   const runs = new Map<string, FakeOutcome>();
   const calls: string[] = [];
+  const begins: Array<{ runId: string; cursor: string }> = [];
   const stub = {
     async fetch(input: string, init?: RequestInit): Promise<Response> {
       const url = new URL(input);
       calls.push(`${init?.method ?? 'GET'} ${url.pathname}`);
       if (url.pathname === '/begin') {
         if (outcome.kind === 'begin_error') return new Response('boom', { status: 500 });
-        const body = JSON.parse(String(init?.body)) as { runId: string };
+        const body = JSON.parse(String(init?.body)) as { runId: string; cursor: string };
+        begins.push({ runId: body.runId, cursor: body.cursor });
         runs.set(body.runId, outcome);
         return Response.json({ status: 'started' }, { status: 202 });
       }
@@ -51,6 +53,7 @@ export function fakeCollector() {
   return {
     namespace,
     calls,
+    begins,
     /** What the next begun run will produce. */
     setOutcome(next: FakeOutcome) { outcome = next; },
     /** Change what an already begun run reports. */

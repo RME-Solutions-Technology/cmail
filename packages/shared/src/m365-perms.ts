@@ -215,6 +215,14 @@ export interface M365PermsRound {
   /** What a held round would remove or lower (at most M365_PERMS_REPORT_LIMIT rows), for Admin. */
   heldItems: M365PermsReportItem[];
   snapshot: M365PermsSnapshotSummary | null;
+  /**
+   * The collector batches of this pass, in order. Each starts after the
+   * previous one's last mailbox; nothing is applied until the last batch
+   * reaches the end of the list.
+   */
+  batches: Array<{ runId: string; startAfter: string }>;
+  /** When the batch now running was started (its own timeout). */
+  batchStartedAt: string;
 }
 
 export interface M365PermsSnapshotSummary {
@@ -223,6 +231,8 @@ export interface M365PermsSnapshotSummary {
   mailboxesInTenant: number;
   grants: number;
   complete: boolean;
+  /** Collector batches the pass took. */
+  batches: number;
   skipped: Record<string, number>;
 }
 
@@ -249,8 +259,6 @@ export interface M365PermsState {
   /** Last round start, to space runs by the interval even when they fail. */
   lastStartedAt: string | null;
   handledRequestAt: string;
-  /** Collector resume point for tenants too large for one run. */
-  cursor: string;
   round: M365PermsRound | null;
   lastRound: M365PermsFinishedRound | null;
 }
@@ -269,7 +277,6 @@ export function emptyM365PermsState(): M365PermsState {
     lastFinishedAt: null,
     lastStartedAt: null,
     handledRequestAt: '',
-    cursor: '',
     round: null,
     lastRound: null,
   };

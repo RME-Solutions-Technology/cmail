@@ -152,7 +152,7 @@
           <h2 id="report-heading">Last run{last.mode === 'dry_run' ? ': dry run' : ''}</h2>
           <p class="muted">
             Finished {when(last.finishedAt)}.
-            {#if last.snapshot}Exchange read at {when(last.snapshot.collectedAt)}: {last.snapshot.mailboxes} of {last.snapshot.mailboxesInTenant} shared mailboxes{last.snapshot.complete ? '' : ' (the rest follow in the next runs)'}, {last.snapshot.grants} grants.{/if}
+            {#if last.snapshot}Exchange read at {when(last.snapshot.collectedAt)}: {last.snapshot.mailboxes} of {last.snapshot.mailboxesInTenant} shared mailboxes in {last.snapshot.batches ?? 1} {(last.snapshot.batches ?? 1) === 1 ? 'batch' : 'batches'}, {last.snapshot.grants} grants.{/if}
             {#if last.brake} {last.mode === 'dry_run' ? 'Live, removals would have been held for approval.' : 'Removals were held and then approved.'}{/if}
           </p>
           <ul class="counts">

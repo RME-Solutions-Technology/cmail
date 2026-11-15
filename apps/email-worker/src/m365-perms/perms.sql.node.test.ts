@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadM365PermsState } from '@cmail/shared/m365-perms';
 import { migratedDatabase } from '../testing/sqlite-d1';
-import { runM365PermsTick, type M365PermsDeps } from './sync';
+import { MAX_BATCHES_PER_PASS, runM365PermsTick, type M365PermsDeps } from './sync';
 import { ORGANIZATION, TENANT_ID, fakeCollector, snapshotOf, type FakeOutcome } from './testing/fake-collector';
-import type { SnapshotGrant, SnapshotMailbox } from './snapshot';
+import type { PermissionSnapshot, SnapshotGrant, SnapshotMailbox } from './snapshot';
 
 // The access sync against every real migration (node:sqlite), a fake
 // collector and a fake Graph. Placeholder GUIDs and example.test only.
@@ -37,7 +40,7 @@ function fakeGraph(groups: Record<string, string[]>, options: { failGroups?: str
   return { fetcher, calls };
 }
 
-function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; mailboxes?: number; env?: Record<string, unknown>; groups?: Record<string, string[]>; failGroups?: string[] } = {}) {
+function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; mailboxes?: number; env?: Record<string, unknown>; groups?: Record<string, string[]>; failGroups?: string[]; personId?: (n: number) => string; mailboxId?: (n: number) => string } = {}) {
   const { d1, sqlite } = migratedDatabase();
   const collector = fakeCollector();
   const graph = fakeGraph(options.groups ?? {}, { failGroups: options.failGroups });
@@ -55,12 +58,12 @@ function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; 
     sqlite.prepare(`INSERT INTO users (id, email, display_name, role, status) VALUES (?, ?, ?, 'standard', 'active')`).run(`u${n}`, `person${n}@example.test`, `Person ${n}`);
     sqlite.prepare(`INSERT INTO mailboxes (id, address, display_name, type, status, owner_user_id) VALUES (?, ?, ?, 'personal', 'active', ?)`).run(`pm${n}`, `person${n}@example.test`, `Person ${n}`, `u${n}`);
     sqlite.prepare(`INSERT INTO mailbox_assignments (mailbox_id, user_id, permissions) VALUES (?, ?, 'full')`).run(`pm${n}`, `u${n}`);
-    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id) VALUES (?, 'person', ?)`).run(PERSON(n), `u${n}`);
+    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id) VALUES (?, 'person', ?)`).run((options.personId ?? PERSON)(n), `u${n}`);
   }
   for (let n = 1; n <= (options.mailboxes ?? 2); n++) linkShared(n);
   function linkShared(n: number) {
     sqlite.prepare(`INSERT INTO mailboxes (id, address, display_name, type, status) VALUES (?, ?, ?, 'shared', 'active')`).run(`sm${n}`, `shared${n}@example.test`, `Shared ${n}`);
-    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id) VALUES (?, 'shared', ?)`).run(MBX(n), `sm${n}`);
+    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id) VALUES (?, 'shared', ?)`).run((options.mailboxId ?? MBX)(n), `sm${n}`);
   }
 
   const env = {
@@ -408,29 +411,12 @@ describe('Mailbox access sync: failures never remove access', () => {
   it('keeps grants on a mailbox marked incomplete or missing from the snapshot', async () => {
     const t = await withAccess();
     const before = t.assignments();
-    // Mailbox 1 incomplete (a query failed), mailbox 2 not in this snapshot at all.
-    const result = await t.round(t.snapshotAt([mailbox(1, [], false)], { complete: false, mailboxCount: 2, nextCursor: MBX(1) }));
+    // Mailbox 1 incomplete (a query failed), mailbox 2 not in this pass at all
+    // (for example an address the collector had to leave out).
+    const result = await t.round(t.snapshotAt([mailbox(1, [], false)], { mailboxCount: 2 }));
     expect(result).toMatchObject({ status: 'worked', finished: true });
     expect(t.assignments()).toEqual(before);
-    const state = await t.state();
-    expect(state.lastRound!.counts.mailboxNotCovered).toBe(2);
-    expect(state.cursor).toBe(MBX(1));
-  });
-
-  it('continues an unfinished pass on the next cron run instead of waiting a day', async () => {
-    const t = await withAccess();
-    // A partial run: the collector stopped at mailbox 1 and left a cursor.
-    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])], { complete: false, mailboxCount: 2, nextCursor: MBX(1) }));
-    expect((await t.state()).cursor).toBe(MBX(1));
-    t.collector.setOutcome(t.snapshotAt([mailbox(2, [grant(PERSON(2), true, true)])], { complete: false, mailboxCount: 2, nextCursor: '', collectedAt: new Date(t.clock() + 20 * 60 * 1000).toISOString() }));
-    t.advance(15 * 60 * 1000);
-    expect(await t.tick()).toEqual({ status: 'collecting' });
-    t.advance(15 * 60 * 1000);
-    await t.tick();
-    expect((await t.state()).cursor).toBe('');
-    // With no cursor left, the next run waits for the interval again.
-    t.advance(15 * 60 * 1000);
-    expect(await t.tick()).toEqual({ status: 'idle' });
+    expect((await t.state()).lastRound!.counts.mailboxNotCovered).toBe(2);
   });
 
   it('keeps grants given through a group that could not be expanded', async () => {
@@ -511,5 +497,77 @@ describe('Mailbox access sync: removal brake', () => {
     t.advance(HOUR);
     expect(await t.tick()).toEqual({ status: 'collecting' });
     expect(t.assignments()).toHaveLength(10);
+  });
+});
+
+describe('Mailbox access sync: a pass in batches (snapshots made by collect.ps1)', () => {
+  // Written by container/m365-perms/collect.Tests.ps1 from the real script
+  // with mocked cmdlets (batch size 2 over 4 shared mailboxes); CI checks the
+  // files still match what the script produces.
+  const fixture = (name: string) => JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'testing/fixtures', name), 'utf8')) as PermissionSnapshot;
+  const harnessId = (prefix: string) => (n: number) => `00000000-0000-0000-0000-00000000${prefix}${String(n).padStart(3, '0')}`;
+
+  function batches() {
+    const t = setup({ people: 2, mailboxes: 2, personId: harnessId('b'), mailboxId: harnessId('a'), groups: { '00000000-0000-0000-0000-00000000c001': [] } });
+    const at = (snapshot: PermissionSnapshot): FakeOutcome => ({ kind: 'snapshot', snapshot: { ...snapshot, collectedAt: new Date(t.clock() + 25 * HOUR).toISOString() } });
+    return { t, batch1: at(fixture('pass-batch-1.json')), batch2: at(fixture('pass-batch-2.json')) };
+  }
+
+  it('applies nothing until the last batch, then applies the whole pass once and starts the next pass only after the interval', async () => {
+    const { t, batch1, batch2 } = batches();
+    t.advance(25 * HOUR);
+    t.collector.setOutcome(batch1);
+    expect(await t.tick()).toEqual({ status: 'collecting' });
+    // Batch 1 is in: the next batch starts after its last mailbox; nothing is applied yet.
+    t.collector.setOutcome(batch2);
+    t.advance(15 * 60 * 1000);
+    expect(await t.tick()).toEqual({ status: 'collecting' });
+    expect(t.collector.begins.map((begin) => begin.cursor)).toEqual(['', harnessId('a')(2)]);
+    expect(t.assignments()).toEqual([]);
+    // Batch 2 completes the pass: applied once, from both batches.
+    t.advance(15 * 60 * 1000);
+    expect(await t.tick()).toMatchObject({ status: 'worked', finished: true });
+    expect(t.assignments()).toEqual([
+      { mailbox_id: 'sm1', user_id: 'u1', permissions: 'full', assigned_by: null },
+      { mailbox_id: 'sm2', user_id: 'u2', permissions: 'read', assigned_by: null },
+    ]);
+    const last = (await t.state()).lastRound!;
+    expect(last.snapshot).toMatchObject({ batches: 2, mailboxes: 4, complete: true });
+    // No cursor is carried over: the next pass waits for the interval.
+    t.advance(15 * 60 * 1000);
+    expect(await t.tick()).toEqual({ status: 'idle' });
+    expect(t.collector.begins).toHaveLength(2);
+  });
+
+  it('fails safely (nothing applied) when a pass needs more batches than allowed', async () => {
+    const { t, batch1 } = batches();
+    t.advance(25 * HOUR);
+    t.collector.setOutcome(batch1);
+    await t.tick();
+    let result;
+    // Every later batch comes back unfinished and empty (out of time at once).
+    const stuck: FakeOutcome = { kind: 'snapshot', snapshot: { ...(batch1 as { snapshot: PermissionSnapshot }).snapshot, mailboxes: [], nextCursor: '' } };
+    for (let i = 0; i < MAX_BATCHES_PER_PASS; i++) {
+      t.collector.setAll(stuck);
+      t.advance(15 * 60 * 1000);
+      result = await t.tick();
+      if (result.status !== 'collecting') break;
+    }
+    expect(result).toEqual({ status: 'failed', code: 'pass_too_long' });
+    expect(t.assignments()).toEqual([]);
+  });
+
+  it('rejects batches that do not follow each other', async () => {
+    const { t, batch1 } = batches();
+    t.advance(25 * HOUR);
+    t.collector.setOutcome(batch1);
+    await t.tick();
+    // The second batch repeats mailboxes from before the cursor.
+    t.collector.setOutcome({ kind: 'snapshot', snapshot: { ...(batch1 as { snapshot: PermissionSnapshot }).snapshot, complete: true, nextCursor: '' } });
+    t.advance(15 * 60 * 1000);
+    await t.tick();
+    t.advance(15 * 60 * 1000);
+    expect(await t.tick()).toEqual({ status: 'failed', code: 'bad_snapshot' });
+    expect(t.assignments()).toEqual([]);
   });
 });

@@ -48,7 +48,9 @@ $script:AllowedCommands = @(
   'Get-EXOMailbox',
   'Get-EXOMailboxPermission',
   'Get-EXORecipientPermission',
-  'Get-EXORecipient'
+  'Get-EXORecipient',
+  'Get-User',
+  'Get-Group'
 )
 
 # Recipient types that are people (cmail accounts) or groups. Everything
@@ -110,21 +112,40 @@ function Get-TrusteeSid {
   return ''
 }
 
-# Resolves a trustee to its Entra object id. By SID when the entry has one;
-# otherwise by the identity string Exchange returned (a UPN or the unique
-# object Name; Exchange identity lookup never matches display names). Exactly
-# one match is required: anything else is unresolved, which marks the mailbox
-# incomplete, so nothing is ever granted or removed on an ambiguous name.
+# Resolves a trustee to its Entra object id, only through documented lookups:
+# - with a SID: Get-User / Get-Group -Filter "Sid -eq '<sid>'" (Sid is a
+#   documented filterable property of both:
+#   https://learn.microsoft.com/powershell/exchange/filter-properties#sid),
+#   exactly one principal, then Get-EXORecipient -Identity <its GUID> (GUID is
+#   a documented, recommended Identity value);
+# - without: Get-EXORecipient -Identity <the value Exchange returned>, which
+#   accepts a UPN, Name, alias or email address and never a display name.
+# Exactly one match is required at every step: anything else is unresolved,
+# which marks the mailbox incomplete, so nothing is ever granted or removed on
+# an ambiguous name.
 function Resolve-Trustee {
   param(
     [Parameter(Mandatory)][string]$Name,
     [string]$Sid = '',
     [Parameter(Mandatory)][hashtable]$Cache
   )
-  $identity = if ($Sid) { $Sid } else { $Name }
-  if ($Cache.ContainsKey($identity)) { return $Cache[$identity] }
+  $key = if ($Sid) { "sid:$Sid" } else { "name:$Name" }
+  if ($Cache.ContainsKey($key)) { return $Cache[$key] }
+  $identity = $Name
   $result = $null
   try {
+    if ($Sid) {
+      # $Sid matched ^S-1-5-21-[0-9-]+$, so it cannot break out of the quotes.
+      $filter = "Sid -eq '$Sid'"
+      $principals = @(Invoke-Exo -Name 'Get-User' -Parameters @{ Filter = $filter; ResultSize = 2; ErrorAction = 'Stop' }) +
+        @(Invoke-Exo -Name 'Get-Group' -Parameters @{ Filter = $filter; ResultSize = 2; ErrorAction = 'Stop' })
+      $guid = if ($principals.Count -eq 1) { "$($principals[0].Guid)".ToLowerInvariant() } else { '' }
+      if ($guid -notmatch $script:GuidPattern) {
+        $Cache[$key] = @{ Skip = 'unresolved' }
+        return $Cache[$key]
+      }
+      $identity = $guid
+    }
     $found = @(Invoke-Exo -Name 'Get-EXORecipient' -Parameters @{ Identity = $identity; ErrorAction = 'Stop' })
     if ($found.Count -eq 1) {
       $recipient = $found[0]
@@ -148,7 +169,7 @@ function Resolve-Trustee {
     if ($code -eq 'throttled') { throw [CollectorException]::new('throttled') }
     $result = @{ Skip = 'unresolved' }
   }
-  $Cache[$identity] = $result
+  $Cache[$key] = $result
   return $result
 }
 
@@ -162,7 +183,9 @@ function Get-PermissionSnapshot {
     [Parameter(Mandatory)][string]$TenantId,
     [Parameter(Mandatory)][string]$Organization,
     [string]$StartAfter = '',
-    [Parameter(Mandatory)][datetime]$Deadline
+    [Parameter(Mandatory)][datetime]$Deadline,
+    # Mailboxes per batch (0 = as many as fit before the deadline).
+    [int]$BatchSize = 0
   )
   $skipped = [ordered]@{ inherited = 0; deny = 0; system = 0; orphaned = 0; unresolved = 0; otherKind = 0 }
   $errors = @{}
@@ -184,24 +207,29 @@ function Get-PermissionSnapshot {
     }
     $shared.Add([pscustomobject]@{ Id = $id; Address = $address })
   }
-  $ordered = @($shared | Sort-Object -Property Id -CaseSensitive)
+  # Ordinal order (the Worker compares ids the same way; culture sorting can
+  # treat hyphens differently).
+  $shared.Sort([System.Comparison[object]] { param($x, $y) [string]::CompareOrdinal($x.Id, $y.Id) })
+  $ordered = $shared.ToArray()
   $total = $ordered.Count
 
-  # Start after the cursor (large tenants are covered over several runs), then wrap.
+  # One batch of a pass: the mailboxes after the cursor, in object id order,
+  # until the deadline or the batch size. No wrap-around: the pass is complete
+  # when a batch reaches the end of the list.
   $start = 0
   if ($StartAfter -match $script:GuidPattern) {
     $start = $total
     for ($i = 0; $i -lt $total; $i++) {
       if ([string]::CompareOrdinal($ordered[$i].Id, $StartAfter) -gt 0) { $start = $i; break }
     }
-    if ($start -ge $total) { $start = 0 }
   }
 
   $out = [System.Collections.Generic.List[object]]::new()
   $lastId = ''
-  for ($n = 0; $n -lt $total; $n++) {
+  for ($n = $start; $n -lt $total; $n++) {
     if ((Get-Date) -gt $Deadline) { break }
-    $mailbox = $ordered[($start + $n) % $total]
+    if ($BatchSize -gt 0 -and $out.Count -ge $BatchSize) { break }
+    $mailbox = $ordered[$n]
     $complete = $true
     $hasDeny = $false
     $rights = [ordered]@{}
@@ -268,7 +296,10 @@ function Get-PermissionSnapshot {
     $lastId = $mailbox.Id
   }
 
-  $isComplete = ($out.Count -eq $total)
+  $isComplete = ($start + $out.Count -ge $total)
+  # Where the next batch starts: the last mailbox read, or the same cursor if
+  # this batch read none.
+  $cursor = if ($isComplete) { '' } elseif ($lastId) { $lastId } elseif ($StartAfter -match $script:GuidPattern) { $StartAfter } else { '' }
   $errorList = [System.Collections.Generic.List[object]]::new()
   foreach ($code in ($errors.Keys | Sort-Object)) { $errorList.Add([ordered]@{ code = $code; count = [int]$errors[$code] }) }
   return [ordered]@{
@@ -278,7 +309,7 @@ function Get-PermissionSnapshot {
     organization = $Organization
     collectedAt  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     complete     = $isComplete
-    nextCursor   = $(if ($isComplete) { '' } else { $lastId })
+    nextCursor   = $cursor
     mailboxCount = $total
     mailboxes    = $out.ToArray()
     skipped      = $skipped
@@ -344,7 +375,9 @@ function Invoke-Collector {
       throw [CollectorException]::new($code)
     }
 
-    $snapshot = Get-PermissionSnapshot -TenantId $tenantId -Organization $organization -StartAfter "$env:CMAIL_START_AFTER".Trim().ToLowerInvariant() -Deadline $deadline
+    $batchSize = 0
+    if ("$env:CMAIL_BATCH_SIZE" -match '^\d{1,5}$') { $batchSize = [int]$env:CMAIL_BATCH_SIZE }
+    $snapshot = Get-PermissionSnapshot -TenantId $tenantId -Organization $organization -StartAfter "$env:CMAIL_START_AFTER".Trim().ToLowerInvariant() -Deadline $deadline -BatchSize $batchSize
     $null = New-Item -ItemType Directory -Force -Path $outDir
     Set-Content -LiteralPath (Join-Path $outDir 'result.json') -Value (ConvertTo-SnapshotJson $snapshot) -Encoding utf8NoBOM -NoNewline
     return 0
