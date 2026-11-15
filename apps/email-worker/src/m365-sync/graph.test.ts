@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GRAPH_ROOT, GraphClient, GraphError, INITIAL_DELTA_URL, isGraphUrl, parseRetryAfter } from './graph';
+import { GRAPH_ROOT, GraphClient, GraphError, INITIAL_DELTA_URL, isGraphUrl, parsePurpose, parseRetryAfter } from './graph';
 import { CLIENT_ID, TENANT_ID, fakeGraph, oid, person } from './testing/fake-graph';
 
 function client(fake = fakeGraph(), sleep = vi.fn(async () => undefined)) {
@@ -147,5 +147,77 @@ describe('GraphClient', () => {
     });
     const error = await failure(graph.memberGroups([oid(1), oid(2)], ['00000000-0000-0000-0000-0000000000a1']));
     expect(error).toMatchObject({ code: 'throttled', retryAfterSeconds: 30 });
+  });
+});
+
+describe('mailbox type (userPurpose) lookups', () => {
+  it('reads the documented answer shape and maps unknown values to "others"', () => {
+    expect(parsePurpose({ '@odata.context': 'x', value: 'shared' })).toBe('shared');
+    expect(parsePurpose({ value: 'Room' })).toBe('room');
+    expect(parsePurpose({ value: 'unknownFutureValue' })).toBe('others');
+    expect(parsePurpose({ value: 'aNewKind' })).toBe('others');
+    expect(parsePurpose({ value: '' })).toBeNull();
+    expect(parsePurpose({ value: { value: 'shared' } })).toBeNull();
+    expect(parsePurpose(null)).toBeNull();
+  });
+
+  it('GETs /users/{id}/mailboxSettings/userPurpose in batches of 20', async () => {
+    const { fake, graph } = client();
+    const ids = Array.from({ length: 25 }, (_, index) => oid(100 + index));
+    fake.purposes.set(ids[0], 'shared');
+    fake.purposes.set(ids[24], 'equipment');
+    const result = await graph.mailboxPurposes(ids);
+    expect(fake.calls.filter((url) => url.endsWith('$batch'))).toHaveLength(2);
+    expect(result).toMatchObject({ throttled: false, retryAfterSeconds: null });
+    expect(result.purposes.get(ids[0])).toBe('shared');
+    expect(result.purposes.get(ids[1])).toBe('user');
+    expect(result.purposes.get(ids[24])).toBe('equipment');
+    expect(fake.purposeReads).toEqual(ids);
+  });
+
+  it('answers per object: 404 is "none", 401/403 "denied", other errors "failed"; a throttled item has no answer', async () => {
+    const { fake, graph } = client();
+    fake.queue(`${GRAPH_ROOT}$batch`, {
+      status: 200,
+      body: { responses: [
+        { id: '0', status: 404, body: { error: { code: 'MailboxNotEnabledForRESTAPI' } } },
+        { id: '1', status: 403, body: { error: { code: 'ErrorAccessDenied' } } },
+        { id: '2', status: 400, body: { error: { code: 'ErrorInvalidUser' } } },
+        { id: '3', status: 200, body: { value: 42 } },
+        { id: '4', status: 429, headers: { 'Retry-After': '30' } },
+        { id: '5', status: 503, headers: { 'retry-after': '90' } },
+        { id: '6', status: 200, body: { value: 'shared' } },
+      ] },
+    });
+    const ids = [1, 2, 3, 4, 5, 6, 7].map(oid);
+    const result = await graph.mailboxPurposes(ids);
+    expect(Object.fromEntries(result.purposes)).toEqual({
+      [ids[0]]: 'none', [ids[1]]: 'denied', [ids[2]]: 'failed', [ids[3]]: 'failed', [ids[6]]: 'shared',
+    });
+    expect(result).toMatchObject({ throttled: true, retryAfterSeconds: 90 });
+  });
+
+  it('stops sending batches after a throttled one', async () => {
+    const { fake, graph } = client();
+    const responses = Array.from({ length: 20 }, (_, index) => (index === 0 ? { id: '0', status: 429 } : { id: String(index), status: 200, body: { value: 'user' } }));
+    fake.queue(`${GRAPH_ROOT}$batch`, { status: 200, body: { responses } });
+    const ids = Array.from({ length: 21 }, (_, index) => oid(200 + index));
+    const result = await graph.mailboxPurposes(ids);
+    expect(fake.calls.filter((url) => url.endsWith('$batch'))).toHaveLength(1);
+    expect(result).toMatchObject({ throttled: true, retryAfterSeconds: null });
+    // The answers read before the stop are kept; the throttled and unsent ones have none.
+    expect(result.purposes.size).toBe(19);
+    expect(result.purposes.has(ids[0])).toBe(false);
+    expect(result.purposes.has(ids[20])).toBe(false);
+  });
+
+  it('fails on a missing or foreign item id, and on a refused $batch', async () => {
+    const { fake, graph } = client();
+    fake.queue(`${GRAPH_ROOT}$batch`, { status: 200, body: { responses: [{ id: '7', status: 200, body: { value: 'user' } }] } });
+    expect((await failure(graph.mailboxPurposes([oid(1)]))).code).toBe('bad_response');
+    fake.queue(`${GRAPH_ROOT}$batch`, { status: 200, body: { responses: [] } });
+    expect((await failure(graph.mailboxPurposes([oid(1)]))).code).toBe('bad_response');
+    fake.queue(`${GRAPH_ROOT}$batch`, { status: 403, body: { error: { code: 'Authorization_RequestDenied' } } });
+    expect((await failure(graph.mailboxPurposes([oid(1)]))).code).toBe('unauthorized');
   });
 });

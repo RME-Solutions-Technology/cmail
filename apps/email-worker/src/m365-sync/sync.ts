@@ -12,6 +12,8 @@
 //      after a resync-required answer, when the delta link is near its
 //      7-day limit, and always in dry run;
 //    - delta: the saved delta link, every M365_SYNC_INTERVAL_MINUTES.
+//    With M365_DETECT_SHARED_MAILBOXES on, each fetched page also gets
+//    Exchange's mailbox type for its on-domain objects (purpose.ts, cached).
 //    Each round runs fetch -> (sweep) -> pauses. Pauses are queued until the
 //    end and pass the mass-pause brake first: a round that would pause too
 //    many linked people, or a reconciliation that returned nothing, is held
@@ -37,7 +39,8 @@ import {
 } from '@cmail/shared/m365-sync';
 import { applyEntries, applyQueuedPause, linkedPeopleInScope, sweepUnseen, type ApplyContext } from './apply';
 import { classify, needsGroupCheck } from './classify';
-import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser } from './graph';
+import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser, type PurposeLookup } from './graph';
+import { prunePurposes, purposeCacheInstalled, resolvePurposes } from './purpose';
 
 export const M365_SYNC_CRON = '*/15 * * * *';
 
@@ -140,18 +143,30 @@ async function saveState(db: D1Database, state: M365SyncState): Promise<void> {
     .bind(JSON.stringify(state)).run();
 }
 
-function toPending(users: GraphUser[], config: M365SyncConfig, memberships: Map<string, Set<string>>): M365PendingEntry[] {
+function toPending(
+  users: GraphUser[],
+  config: M365SyncConfig,
+  memberships: Map<string, Set<string>>,
+  purposes: Map<string, PurposeLookup> | null = null,
+): M365PendingEntry[] {
   const groups = { scope: config.scopeGroupId, shared: config.sharedGroupId };
   const byId = new Map<string, M365PendingEntry>();
   for (const user of users) {
     if (typeof user.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(user.id)) continue;
     const id = user.id.toLowerCase();
-    const cls = classify(user, config.mailDomain, groups, memberships.get(user.id) ?? memberships.get(id) ?? null, config.mailboxPlanIds);
+    const cls = classify(
+      user,
+      config.mailDomain,
+      groups,
+      memberships.get(user.id) ?? memberships.get(id) ?? null,
+      config.mailboxPlanIds,
+      purposes?.get(id) ?? null,
+    );
     // A page may repeat an object (delta replays); the last copy wins.
     byId.delete(id);
-    byId.set(id, cls.kind === 'out'
-      ? { id, kind: 'out', address: cls.address, displayName: '', reason: cls.reason }
-      : { id, kind: cls.kind, address: cls.address, displayName: cls.displayName, reason: '' });
+    if (cls.kind === 'out' || cls.kind === 'skip') byId.set(id, { id, kind: cls.kind, address: cls.address, displayName: '', reason: cls.reason });
+    else if (cls.kind === 'shared') byId.set(id, { id, kind: 'shared', address: cls.address, displayName: cls.displayName, reason: cls.source });
+    else byId.set(id, { id, kind: 'person', address: cls.address, displayName: cls.displayName, reason: '' });
   }
   return [...byId.values()];
 }
@@ -221,6 +236,15 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
       return { status: 'not_configured' };
     }
     const config = check.config;
+    state.sharedDetection = config.detectSharedMailboxes;
+    if (config.detectSharedMailboxes && !await purposeCacheInstalled(db)) {
+      // Detection is on but its cache table is missing: change nothing rather
+      // than run without it (a converted mailbox would look like a leaver).
+      state.lastResult = 'error';
+      state.lastError = { code: 'migration_0026_missing', at: iso(startedAt) };
+      await saveState(db, state);
+      return { status: 'not_installed' };
+    }
 
     if (state.backoffUntil && Date.parse(state.backoffUntil) > startedAt) {
       await saveState(db, state);
@@ -310,7 +334,20 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
         // If this throttles, the page is not saved and is fetched again on
         // resume (one extra page request; nothing is applied twice).
         const memberships = needCheck.length ? await graph.memberGroups(needCheck, groupIds) : new Map<string, Set<string>>();
-        current.pending = toPending(page.users, config, memberships);
+        let purposes: Map<string, PurposeLookup> | null = null;
+        if (config.detectSharedMailboxes) {
+          // Shared-group members are shared whatever Exchange says: no lookup.
+          const inSharedGroup = new Set<string>();
+          if (config.sharedGroupId) {
+            for (const [id, groups] of memberships) if (groups.has(config.sharedGroupId)) inSharedGroup.add(id.toLowerCase());
+          }
+          // If this throttles, the answers read so far are kept (live) and the
+          // page is fetched again on resume, like the group check.
+          const resolved = await resolvePurposes({ db, graph, round: current, users: page.users, mailDomain: config.mailDomain, exclude: inSharedGroup });
+          d1Ops += resolved.ops;
+          purposes = resolved.purposes;
+        }
+        current.pending = toPending(page.users, config, memberships, purposes);
         current.fetched += page.users.length;
         current.nextLink = page.nextLink;
         if (page.deltaLink) current.finalDeltaLink = page.deltaLink;
@@ -352,6 +389,11 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
           d1Ops += ctx.ops;
         }
       } else {
+        if (config.detectSharedMailboxes && current.kind === 'reconcile' && current.mode === 'live') {
+          // Every object this reconciliation saw has a fresh row; the rest are gone.
+          await prunePurposes(db, current.id);
+          d1Ops += 1;
+        }
         finishRound(state, current, now());
         finished = true;
       }

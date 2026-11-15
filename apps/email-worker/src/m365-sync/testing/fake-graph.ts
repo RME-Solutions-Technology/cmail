@@ -1,5 +1,6 @@
 // Test-only fake of the three Microsoft endpoints the sync uses: the token
-// endpoint, users/delta and $batch (checkMemberGroups). Fixture data only:
+// endpoint, users/delta and $batch (checkMemberGroups, and
+// mailboxSettings/userPurpose reads for shared mailbox detection). Fixture data only:
 // placeholder GUIDs and example.test addresses.
 import { GRAPH_ROOT, INITIAL_DELTA_URL, type GraphUser } from '../graph';
 
@@ -31,7 +32,10 @@ export function person(n: number, local: string, overrides: Partial<GraphUser> =
 
 export const removed = (n: number, reason: 'changed' | 'deleted' = 'deleted'): GraphUser => ({ id: oid(n), '@removed': { reason } });
 
-type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
+export type Reply = { status: number; body?: unknown; headers?: Record<string, string> };
+
+/** A batch item answer for one userPurpose read: a mailbox type, or a raw reply (404, 403, 429...). */
+export type PurposeAnswer = string | Reply;
 
 export interface FakeGraph {
   fetch: typeof fetch;
@@ -43,6 +47,10 @@ export interface FakeGraph {
   /** One-off replies for the next request to a URL (checked before pages). */
   queue(url: string, ...replies: Reply[]): void;
   memberships: Map<string, string[]>;
+  /** userPurpose per object id. Absent = "user". A Reply array is answered in turn (last one repeats). */
+  purposes: Map<string, PurposeAnswer | PurposeAnswer[]>;
+  /** Object ids whose userPurpose was read, in order (one entry per batch item). */
+  purposeReads: string[];
   tokenReplies: Reply[];
 }
 
@@ -54,6 +62,8 @@ export function fakeGraph(): FakeGraph {
   const pages = new Map<string, Reply>();
   const queued = new Map<string, Reply[]>();
   const memberships = new Map<string, string[]>();
+  const purposes = new Map<string, PurposeAnswer | PurposeAnswer[]>();
+  const purposeReads: string[] = [];
   const calls: string[] = [];
   const tokenReplies: Reply[] = [];
 
@@ -90,14 +100,28 @@ export function fakeGraph(): FakeGraph {
     const once = queued.get(url);
     if (once?.length) return respond(once.shift()!);
     if (url === `${GRAPH_ROOT}$batch`) {
-      const body = JSON.parse(String(init?.body)) as { requests: Array<{ id: string; url: string; body: { groupIds: string[] } }> };
+      const body = JSON.parse(String(init?.body)) as { requests: Array<{ id: string; method: string; url: string; body?: { groupIds: string[] } }> };
       return respond({
         status: 200,
         body: {
           responses: body.requests.map((request) => {
             const id = decodeURIComponent(request.url.split('/')[2]);
+            if (request.method === 'GET' && request.url.endsWith('/mailboxSettings/userPurpose')) {
+              purposeReads.push(id);
+              const configured = purposes.get(id) ?? 'user';
+              let answer: PurposeAnswer;
+              if (Array.isArray(configured)) {
+                answer = configured.length > 1 ? configured.shift()! : configured[0];
+              } else {
+                answer = configured;
+              }
+              if (typeof answer === 'string') {
+                return { id: request.id, status: 200, body: { '@odata.context': `${GRAPH_ROOT}$metadata#users('${id}')/mailboxSettings/userPurpose`, value: answer } };
+              }
+              return { id: request.id, status: answer.status, headers: answer.headers, body: answer.body };
+            }
             const groups = memberships.get(id) ?? [];
-            return { id: request.id, status: 200, body: { value: request.body.groupIds.filter((group) => groups.includes(group)) } };
+            return { id: request.id, status: 200, body: { value: (request.body?.groupIds ?? []).filter((group) => groups.includes(group)) } };
           }),
         },
       });
@@ -111,6 +135,8 @@ export function fakeGraph(): FakeGraph {
     fetch: fetcher,
     calls,
     memberships,
+    purposes,
+    purposeReads,
     tokenReplies,
     setReconcile(data, deltaToken = 'delta-1') {
       chain(INITIAL_DELTA_URL, data, `full-${deltaToken}`, deltaToken);

@@ -124,6 +124,11 @@ M365_SYNC_MAX_PAUSE_PERCENT = "20"
 # Optional extra Exchange mailbox service plan ids (comma separated), for plans
 # newer than the built-in list in docs/m365-sync.md.
 M365_EXTRA_MAILBOX_PLAN_IDS = ""
+# "true" also finds shared mailboxes from Exchange Online's mailbox type
+# (Graph mailboxSettings userPurpose), besides M365_SHARED_GROUP_ID. Needs the
+# MailboxSettings.Read application permission with admin consent, and
+# migration 0026. Start in dry run.
+M365_DETECT_SHARED_MAILBOXES = "false"
 # The one mail domain this deployment hosts: the same value as the web app's
 # MAIL_DOMAIN. Only Microsoft 365 users whose primary address is on it sync.
 MAIL_DOMAIN = ""

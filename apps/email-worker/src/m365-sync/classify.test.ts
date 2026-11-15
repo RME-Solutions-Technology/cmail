@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { m365SyncConfig } from '@cmail/shared/m365-sync';
-import { classify, needsGroupCheck } from './classify';
+import { classify, needsGroupCheck, needsPurposeCheck } from './classify';
 import { CLIENT_ID, DOMAIN, PLAN_EXCHANGE_1, PLAN_EXCHANGE_FOUNDATION, SCOPE_GROUP, SHARED_GROUP, TENANT_ID, person, removed } from './testing/fake-graph';
 
 const none = { scope: null, shared: null };
@@ -98,5 +98,60 @@ describe('m365SyncConfig', () => {
 
   it('refuses the same group for scope and shared', () => {
     expect(m365SyncConfig({ ...base, M365_SCOPE_GROUP_ID: SCOPE_GROUP, M365_SHARED_GROUP_ID: SCOPE_GROUP }).configured).toBe(false);
+  });
+});
+
+describe('classify with shared mailbox detection', () => {
+  const disabledUnlicensed = person(9, 'team', { accountEnabled: false, assignedPlans: [] });
+
+  it('leaves the rules exactly as before when detection is off (no purpose)', () => {
+    expect(classify(disabledUnlicensed, DOMAIN, none, null)).toMatchObject({ kind: 'out', reason: 'disabled' });
+    expect(classify(person(1, 'alex'), DOMAIN, none, null)).toMatchObject({ kind: 'person' });
+  });
+
+  it('makes a disabled, unlicensed "shared" object a shared mailbox', () => {
+    expect(classify(disabledUnlicensed, DOMAIN, none, null, undefined, 'shared'))
+      .toEqual({ kind: 'shared', address: 'team@example.test', displayName: 'Person 9', source: 'shared_mailbox' });
+  });
+
+  it('keeps the licensed-person rule for user, linked, others and none', () => {
+    for (const purpose of ['user', 'linked', 'others', 'none'] as const) {
+      expect(classify(person(1, 'alex'), DOMAIN, none, null, undefined, purpose)).toMatchObject({ kind: 'person' });
+      expect(classify(disabledUnlicensed, DOMAIN, none, null, undefined, purpose)).toMatchObject({ kind: 'out', reason: 'disabled' });
+    }
+  });
+
+  it('never makes a room or equipment mailbox a person, even licensed and enabled', () => {
+    expect(classify(person(1, 'room'), DOMAIN, none, null, undefined, 'room')).toEqual({ kind: 'out', reason: 'resource_mailbox', address: 'room@example.test' });
+    expect(classify(person(1, 'kit'), DOMAIN, none, null, undefined, 'equipment')).toMatchObject({ kind: 'out', reason: 'resource_mailbox' });
+  });
+
+  it('skips an object whose type could not be read', () => {
+    expect(classify(person(1, 'alex'), DOMAIN, none, null, undefined, 'denied')).toEqual({ kind: 'skip', reason: 'mailbox_type_denied', address: 'alex@example.test' });
+    expect(classify(disabledUnlicensed, DOMAIN, none, null, undefined, 'failed')).toMatchObject({ kind: 'skip', reason: 'mailbox_type_failed' });
+  });
+
+  it('lets the shared group win, and the scope group limit detected shared mailboxes', () => {
+    const groups = { scope: SCOPE_GROUP, shared: SHARED_GROUP };
+    expect(classify(disabledUnlicensed, DOMAIN, groups, new Set([SHARED_GROUP]), undefined, 'failed')).toMatchObject({ kind: 'shared', source: 'in_shared_group' });
+    expect(classify(disabledUnlicensed, DOMAIN, groups, new Set(), undefined, 'shared')).toMatchObject({ kind: 'out', reason: 'not_in_scope_group' });
+    expect(classify(disabledUnlicensed, DOMAIN, groups, new Set([SCOPE_GROUP]), undefined, 'shared')).toMatchObject({ kind: 'shared', source: 'shared_mailbox' });
+  });
+
+  it('checks the type of on-domain objects only, disabled and unlicensed included', () => {
+    expect(needsPurposeCheck(disabledUnlicensed, DOMAIN)).toBe(true);
+    expect(needsPurposeCheck(person(1, 'x', { mail: 'x@other.example' }), DOMAIN)).toBe(false);
+    expect(needsPurposeCheck(person(1, 'x', { mail: null }), DOMAIN)).toBe(false);
+    expect(needsPurposeCheck(removed(1), DOMAIN)).toBe(false);
+  });
+
+  it('reads M365_DETECT_SHARED_MAILBOXES: default off, "true" on, anything else a named problem', () => {
+    const base = { M365_TENANT_ID: TENANT_ID, M365_CLIENT_ID: CLIENT_ID, M365_CLIENT_SECRET: 's', MAIL_DOMAIN: DOMAIN };
+    expect(m365SyncConfig(base)).toMatchObject({ configured: true, config: { detectSharedMailboxes: false } });
+    expect(m365SyncConfig({ ...base, M365_DETECT_SHARED_MAILBOXES: 'false' })).toMatchObject({ config: { detectSharedMailboxes: false } });
+    expect(m365SyncConfig({ ...base, M365_DETECT_SHARED_MAILBOXES: ' TRUE ' })).toMatchObject({ config: { detectSharedMailboxes: true } });
+    expect(m365SyncConfig({ ...base, M365_DETECT_SHARED_MAILBOXES: true })).toMatchObject({ config: { detectSharedMailboxes: true } });
+    const bad = m365SyncConfig({ ...base, M365_DETECT_SHARED_MAILBOXES: 'yes' });
+    expect(bad).toEqual({ configured: false, problems: ['M365_DETECT_SHARED_MAILBOXES must be "true" or "false"'] });
   });
 });

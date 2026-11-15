@@ -14,14 +14,16 @@
     update_name: ['Updated name', 'Would update name'],
     pause: ['Paused account', 'Would pause account'],
     resume: ['Resumed account', 'Would resume account'],
-    left_source_kept: ['Left Microsoft 365 group; kept active', 'Left Microsoft 365 group; would keep active'],
+    left_source_kept: ['No longer a shared mailbox in Microsoft 365; kept active', 'No longer a shared mailbox in Microsoft 365; would keep active'],
+    type_unknown: ['Mailbox type not readable; left as is', 'Mailbox type not readable; would leave as is'],
     conflict: ['Needs a manager', 'Needs a manager'],
   };
   const COUNT_LABELS: Array<[string, string]> = [
     ['created', 'Created'], ['adopted', 'Linked'], ['updated', 'Updated'], ['paused', 'Paused'],
-    ['resumed', 'Resumed'], ['sharedCreated', 'Shared created'], ['conflicts', 'Conflicts'],
-    ['unchanged', 'Unchanged'], ['ignored', 'Not in scope'],
+    ['resumed', 'Resumed'], ['sharedFound', 'Shared found'], ['sharedCreated', 'Shared created'], ['conflicts', 'Conflicts'],
+    ['unchanged', 'Unchanged'], ['ignored', 'Not in scope'], ['typeUnknown', 'Type unknown'],
   ];
+  const typeUnknown = $derived(Number((last?.counts as Record<string, number> | undefined)?.typeUnknown ?? 0));
 
   function actionLabel(action: string, dryRun: boolean): string {
     const pair = ACTIONS[action];
@@ -43,7 +45,7 @@
   <header class="page-heading">
     <p class="eyebrow">Identity &amp; organisation</p>
     <h1 id="sync-heading">Microsoft 365 sync</h1>
-    <p>Keep cmail accounts in step with your Microsoft 365 users. The sync only reads from Microsoft. It creates pending accounts and mailboxes for licensed users, and pauses accounts that are disabled, unlicensed or removed. It never deletes mail or mailboxes and never touches managers.</p>
+    <p>Keep cmail accounts in step with your Microsoft 365 users. The sync only reads from Microsoft. It creates pending accounts and mailboxes for licensed users, can create shared mailboxes (from a group, or from Exchange's mailbox type), and pauses accounts that are disabled, unlicensed or removed. It never deletes mail or mailboxes and never touches managers.</p>
   </header>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
@@ -142,6 +144,7 @@
           <div><dt>Last full reconciliation</dt><dd>{when(status.lastReconcileAt)}{status.lastReconcileMode === 'dry_run' ? ' (dry run)' : ''}</dd></div>
           <div><dt>Delta link</dt><dd>{deltaAge(status.deltaLinkAt)}</dd></div>
           <div><dt>Linked</dt><dd>{overview.linkedPeople} {overview.linkedPeople === 1 ? 'person' : 'people'}, {overview.linkedShared} shared {overview.linkedShared === 1 ? 'mailbox' : 'mailboxes'}</dd></div>
+          <div><dt>Shared mailbox detection</dt><dd>{status.sharedDetection === true ? 'On (Exchange mailbox type)' : status.sharedDetection === false ? 'Off' : 'not run yet'}</dd></div>
           {#if status.round}<div><dt>In progress</dt><dd>{status.round.kind === 'reconcile' ? 'Full reconciliation' : 'Delta'}{status.round.mode === 'dry_run' ? ' (dry run)' : ''}, started {when(status.round.startedAt)}</dd></div>{/if}
         </dl>
       </section>
@@ -150,6 +153,11 @@
         <section class="card" aria-labelledby="report-heading">
           <h2 id="report-heading">Last run: {last.kind === 'reconcile' ? 'full reconciliation' : 'delta'}{last.mode === 'dry_run' ? ', dry run' : ''}</h2>
           <p class="muted">Finished {when(last.finishedAt)}.{#if last.brake} {last.mode === 'dry_run' ? 'Live, this run would have been held for approval' : 'This run was held and then approved'} ({last.brake.reason === 'empty_result' ? 'no users returned' : `${last.brake.pauses} of ${last.brake.linked} people paused`}).{/if}</p>
+          {#if typeUnknown > 0}
+            <div class="notice notice-warning" role="status">
+              The Exchange mailbox type of {typeUnknown} {typeUnknown === 1 ? 'object' : 'objects'} could not be read, so {typeUnknown === 1 ? 'it was' : 'they were'} left exactly as before and will be checked again. If this covers everyone, the Entra app is missing the <code>MailboxSettings.Read</code> application permission or its admin consent.
+            </div>
+          {/if}
           <ul class="counts">
             {#each COUNT_LABELS as [key, label]}
               <li><span>{label}</span><strong>{last.counts[key as keyof typeof last.counts] ?? 0}</strong></li>

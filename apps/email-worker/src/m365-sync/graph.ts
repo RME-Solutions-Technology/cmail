@@ -1,6 +1,7 @@
 // Minimal Microsoft Graph client for the Microsoft 365 mailbox sync. It does
-// three things only: get an app-only token (client credentials), GET a
-// users/delta page, and POST a JSON $batch of checkMemberGroups calls. It
+// four things only: get an app-only token (client credentials), GET a
+// users/delta page, and POST a JSON $batch of checkMemberGroups calls or of
+// mailboxSettings/userPurpose reads (shared mailbox detection, optional). It
 // never sends a write to Microsoft. The standby copy-back client
 // (../copy-back/graph.ts) extends it with its own, separately consented app
 // and reuses the same token, URL, size, timeout and throttling rules.
@@ -66,6 +67,42 @@ export interface GraphUser {
   userType?: string | null;
   assignedPlans?: Array<{ service?: string | null; capabilityStatus?: string | null; servicePlanId?: string | null }> | null;
   '@removed'?: { reason?: string };
+}
+
+/**
+ * Exchange Online mailbox types (mailboxSettings userPurpose, Graph v1.0):
+ * user, linked, shared, room, equipment, others. Any other answer
+ * (unknownFutureValue, or a value added later) is read as 'others', which the
+ * sync treats like 'user': never as shared. 'none' is cmail's own value for
+ * "Graph says this object has no Exchange Online mailbox" (404).
+ */
+export const MAILBOX_PURPOSES = ['user', 'linked', 'shared', 'room', 'equipment', 'others', 'none'] as const;
+export type MailboxPurpose = (typeof MAILBOX_PURPOSES)[number];
+/**
+ * One lookup's answer: a mailbox type, or why there is none this time.
+ * 'denied' = 401/403 for that mailbox (consent missing, or an Exchange
+ * application access policy that leaves it out); 'failed' = any other error.
+ * Neither is cached, and neither ever changes cmail.
+ */
+export type PurposeLookup = MailboxPurpose | 'denied' | 'failed';
+
+const KNOWN_PURPOSE: ReadonlySet<string> = new Set(MAILBOX_PURPOSES.filter((value) => value !== 'none'));
+
+/** Reads `{ "value": "shared" }` (the documented answer for .../mailboxSettings/userPurpose). */
+export function parsePurpose(body: unknown): MailboxPurpose | null {
+  const value = (body as { value?: unknown } | null)?.value;
+  if (typeof value !== 'string' || !value || value.length > 64) return null;
+  const purpose = value.toLowerCase();
+  return KNOWN_PURPOSE.has(purpose) ? purpose as MailboxPurpose : 'others';
+}
+
+export interface PurposeBatchResult {
+  /** One answer per object that was not throttled. */
+  purposes: Map<string, PurposeLookup>;
+  /** True when at least one item was throttled (429/503/504); those objects have no answer. */
+  throttled: boolean;
+  /** Longest Retry-After among throttled items, in seconds, or null. */
+  retryAfterSeconds: number | null;
 }
 
 export interface DeltaPage {
@@ -313,5 +350,60 @@ export class GraphClient {
       if (slice.some((id) => !result.has(id))) throw new GraphError('bad_response', 200);
     }
     return result;
+  }
+
+  /**
+   * Exchange Online mailbox type for each object id:
+   * `GET /users/{id}/mailboxSettings/userPurpose` (application permission
+   * MailboxSettings.Read), 20 per JSON `$batch`. Unlike memberGroups, one
+   * object's failure does not fail the rest: a 404 is 'none' (no Exchange
+   * Online mailbox), a 401/403 is 'denied' and any other error 'failed'.
+   * Throttled items (429/503/504) get no answer and are reported with the
+   * longest Retry-After; no further batch is sent after a throttled one. The
+   * caller keeps the answers it has and stops until the wait is over. A
+   * failure of the `$batch` request itself throws as usual (429 with its
+   * Retry-After, 401/403 as unauthorized).
+   */
+  async mailboxPurposes(objectIds: string[]): Promise<PurposeBatchResult> {
+    const purposes = new Map<string, PurposeLookup>();
+    let throttled = false;
+    let longestWait: number | null = null;
+    for (let start = 0; start < objectIds.length; start += GRAPH_BATCH_LIMIT) {
+      const slice = objectIds.slice(start, start + GRAPH_BATCH_LIMIT);
+      const requests = slice.map((id, index) => ({
+        id: String(index),
+        method: 'GET',
+        url: `/users/${encodeURIComponent(id)}/mailboxSettings/userPurpose`,
+      }));
+      const body = await this.graphJson(`${GRAPH_ROOT}$batch`, { method: 'POST', body: JSON.stringify({ requests }) }) as
+        { responses?: Array<{ id?: string; status?: number; headers?: Record<string, string>; body?: unknown }> } | null;
+      if (!body || !Array.isArray(body.responses)) throw new GraphError('bad_response', 200);
+      let batchThrottled = false;
+      const answered = new Set<string>();
+      for (const item of body.responses) {
+        const objectId = slice[Number(item?.id)];
+        if (!objectId || !/^\d{1,2}$/.test(String(item?.id))) throw new GraphError('bad_response', 200);
+        answered.add(objectId);
+        const status = Number(item.status);
+        if (RETRYABLE.has(status)) {
+          batchThrottled = true;
+          const headers = Object.fromEntries(Object.entries(item.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value]));
+          const wait = parseRetryAfter(headers['retry-after'], this.now());
+          if (wait !== null) longestWait = Math.max(longestWait ?? 0, wait);
+          continue;
+        }
+        if (status === 200) purposes.set(objectId, parsePurpose(item.body) ?? 'failed');
+        else if (status === 404) purposes.set(objectId, 'none');
+        else if (status === 401 || status === 403) purposes.set(objectId, 'denied');
+        else purposes.set(objectId, 'failed');
+      }
+      if (slice.some((id) => !answered.has(id))) throw new GraphError('bad_response', 200);
+      if (batchThrottled) {
+        // Stop sending more batches into a throttled service; the rest wait too.
+        throttled = true;
+        break;
+      }
+    }
+    return { purposes, throttled, retryAfterSeconds: longestWait };
   }
 }

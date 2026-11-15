@@ -1,7 +1,7 @@
 // Pure eligibility rules for the Microsoft 365 mailbox sync. See
 // docs/m365-sync.md, "Which accounts are synced".
 import { EXCHANGE_MAILBOX_PLANS, isGuid } from '@cmail/shared/m365-sync';
-import type { GraphUser } from './graph';
+import type { GraphUser, PurposeLookup } from './graph';
 
 export type OutReason =
   | 'deleted'
@@ -12,12 +12,19 @@ export type OutReason =
   | 'other_domain'
   | 'not_in_scope_group'
   | 'in_shared_group'
+  | 'shared_mailbox'
+  | 'resource_mailbox'
   | 'not_seen';
+
+/** Why a shared mailbox counts as one: the explicit group, or Exchange's mailbox type. */
+export type SharedSource = 'in_shared_group' | 'shared_mailbox';
 
 export type Classification =
   | { kind: 'person'; address: string; displayName: string }
-  | { kind: 'shared'; address: string; displayName: string }
-  | { kind: 'out'; reason: OutReason; address: string };
+  | { kind: 'shared'; address: string; displayName: string; source: SharedSource }
+  | { kind: 'out'; reason: OutReason; address: string }
+  /** The mailbox type lookup failed: leave this object exactly as it is this round. */
+  | { kind: 'skip'; reason: 'mailbox_type_denied' | 'mailbox_type_failed'; address: string };
 
 /**
  * Exchange service plan states that still mean a working mailbox. Warning is
@@ -58,6 +65,17 @@ export function cleanDisplayName(value: unknown): string {
   return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120) : '';
 }
 
+/**
+ * True when Exchange's mailbox type (userPurpose) is needed to classify this
+ * object, with shared mailbox detection on: not deleted, a valid object id,
+ * and a `mail` value on MAIL_DOMAIN. Disabled and unlicensed objects are
+ * included on purpose: that is what a shared mailbox usually looks like.
+ */
+export function needsPurposeCheck(user: GraphUser, mailDomain: string): boolean {
+  if (user['@removed'] || !isGuid(typeof user.id === 'string' ? user.id.toLowerCase() : user.id)) return false;
+  return primaryAddress(user, mailDomain).onDomain;
+}
+
 /** True when a group membership check is needed to classify this object. */
 export function needsGroupCheck(user: GraphUser, mailDomain: string, groups: { scope: string | null; shared: string | null }): boolean {
   if (user['@removed'] || !isGuid(user.id)) return false;
@@ -65,12 +83,18 @@ export function needsGroupCheck(user: GraphUser, mailDomain: string, groups: { s
   return primaryAddress(user, mailDomain).onDomain;
 }
 
+/**
+ * `purpose` is Exchange's mailbox type when shared mailbox detection is on
+ * and the object needed a check, else null (detection off: the rules are
+ * exactly as before).
+ */
 export function classify(
   user: GraphUser,
   mailDomain: string,
   groups: { scope: string | null; shared: string | null },
   memberOf: Set<string> | null,
   planIds: ReadonlySet<string> = DEFAULT_PLANS,
+  purpose: PurposeLookup | null = null,
 ): Classification {
   const { address, onDomain } = primaryAddress(user, mailDomain);
   if (user['@removed']) return { kind: 'out', reason: 'deleted', address };
@@ -78,10 +102,26 @@ export function classify(
   if (!onDomain) return { kind: 'out', reason: 'other_domain', address };
   const displayName = cleanDisplayName(user.displayName);
 
-  // An explicit shared-mailbox group is the only way to say "shared": Graph
-  // has no reliable property for it. Membership wins over licences, because a
-  // shared mailbox may carry a licence (archive, over 50 GB).
-  if (groups.shared && memberOf?.has(groups.shared)) return { kind: 'shared', address, displayName };
+  // The explicit shared-mailbox group always counts. Membership wins over
+  // licences, because a shared mailbox may carry a licence (archive, over
+  // 50 GB).
+  if (groups.shared && memberOf?.has(groups.shared)) return { kind: 'shared', address, displayName, source: 'in_shared_group' };
+
+  // Shared mailbox detection (M365_DETECT_SHARED_MAILBOXES). An unreadable
+  // mailbox type changes nothing: no create, no pause, no update.
+  if (purpose === 'denied') return { kind: 'skip', reason: 'mailbox_type_denied', address };
+  if (purpose === 'failed') return { kind: 'skip', reason: 'mailbox_type_failed', address };
+  if (purpose === 'shared') {
+    // Exchange says shared: licence and sign-in state do not matter (shared
+    // mailboxes are usually disabled and unlicensed). The scope group, when
+    // set, limits detected shared mailboxes too.
+    if (groups.scope && !memberOf?.has(groups.scope)) return { kind: 'out', reason: 'not_in_scope_group', address };
+    return { kind: 'shared', address, displayName, source: 'shared_mailbox' };
+  }
+  // Room and equipment mailboxes are never people, even when licensed and
+  // enabled (Teams Rooms resource accounts are).
+  if (purpose === 'room' || purpose === 'equipment') return { kind: 'out', reason: 'resource_mailbox', address };
+  // user, linked, others and none: the licensed-person rule below, unchanged.
 
   if (user.userType && user.userType !== 'Member') return { kind: 'out', reason: 'guest', address };
   if (user.accountEnabled !== true) return { kind: 'out', reason: 'disabled', address };
