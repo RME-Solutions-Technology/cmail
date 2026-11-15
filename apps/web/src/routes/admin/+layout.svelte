@@ -23,6 +23,7 @@
         { href: '/admin/orgchart', label: 'Organisation', description: 'Units, roles and directory', icon: 'orgChart' },
         { href: '/admin/travel', label: 'Travel approvals', description: 'Temporary overseas sign-in', icon: 'globe', count: data.pendingTravelCount || undefined },
         { href: '/admin/m365-sync', label: 'Microsoft 365 sync', description: 'Accounts from your tenant', icon: 'refresh' },
+        { href: '/admin/m365-mailbox-access', label: 'Shared mailbox access', description: 'Full Access and Send As from Exchange', icon: 'mailMultiple' },
         { href: '/admin/passkeys', label: 'Passkey sign-in', description: 'Break-glass sign-in', icon: 'key' },
       ],
     },

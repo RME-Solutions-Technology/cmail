@@ -28,15 +28,15 @@ describe('Microsoft 365 sync wiring in the email Worker', () => {
     expect((await worker.fetch(new Request(configUrl, { method: 'POST' }), {} as never)).status).toBe(404);
   });
 
-  it('runs the sync (and the standby copy-back) on its own cron and nothing else there', async () => {
+  it('runs the sync (and the shared mailbox access sync and standby copy-back) on its own cron and nothing else there', async () => {
     const all = vi.fn(async () => ({ results: [] }));
     const first = vi.fn(async () => null);
     const db = { prepare: vi.fn(() => ({ bind: () => ({ all, first }) })) };
     const waits: Promise<unknown>[] = [];
     await worker.scheduled({ cron: M365_SYNC_CRON } as ScheduledController, { DB: db } as never, { waitUntil: (promise: Promise<unknown>) => waits.push(promise) } as never);
     await Promise.all(waits);
-    // Only the two switches were read: both are off by default.
-    expect(db.prepare).toHaveBeenCalledTimes(2);
+    // Only the three switches were read: all are off by default.
+    expect(db.prepare).toHaveBeenCalledTimes(3);
     for (const call of db.prepare.mock.calls) expect(String((call as unknown[])[0])).toContain('org_settings');
   });
 });
