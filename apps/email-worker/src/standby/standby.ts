@@ -2,13 +2,13 @@
 //
 // 1. Alias: local@<label>.<MAIL_DOMAIN> delivers into the mailbox at
 //    local@<MAIL_DOMAIN>, only while a manager has the switch on, only into
-//    an active mailbox, and never for a paused or offboarded owner. It does
-//    not forward, relay or create anything, and an unknown local part gets
-//    the same neutral refusal as on the primary domain.
+//    an active mailbox: the primary address's own rule, so both answer the
+//    same. It does not forward, relay or create anything, and an unknown
+//    local part gets the same neutral refusal as on the primary domain.
 // 2. Probe: once a day (and on "Run test now") the Worker sends one message
-//    through Cloudflare Email Sending to the probe mailbox's standby address,
-//    so it goes out and back in through the public MX and Email Routing like
-//    real mail. The inbound handler matches its one-time token, stores it in
+//    through Cloudflare Email Sending to the probe mailbox's standby address;
+//    it passes only when Email Routing hands it back to this Worker (the
+//    path inside Cloudflare is not verified). The inbound handler matches its one-time token, stores it in
 //    the dedicated system mailbox through the normal delivery path, and
 //    records the round trip here. No arrival within the timeout is a failure.
 //
@@ -31,8 +31,8 @@ import {
 export const STANDBY_PROBE_CRON = '*/10 * * * *';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Scheduled probes start once a day; the slack keeps a 10-minute cron from drifting later each day. */
-const SCHEDULE_EVERY_MS = DAY_MS - 10 * 60 * 1000;
+/** After a daily probe that could not be sent, it is tried again this long after. */
+const RETRY_AFTER_FAILURE_MS = 30 * 60 * 1000;
 /** Run test now: at most one start per minute. */
 const MANUAL_MIN_GAP_MS = 60 * 1000;
 const LEASE_MS = 60 * 1000;
@@ -74,10 +74,10 @@ export interface ResolvedMailbox {
 
 /**
  * The mailbox a standby address delivers to, or null. Called only after the
- * exact address lookup found nothing. Every condition is in one query: the
- * switch is on, the primary mailbox is active, and it is shared or owned by
- * an active or pending (not paused or offboarded) account. A personal mailbox
- * with no recorded owner is refused. A database error is thrown, like the
+ * exact address lookup found nothing. It applies exactly the primary
+ * address's rule (an active mailbox at that address) plus the switch, so the
+ * standby address never answers differently from the primary one and cannot
+ * be used to learn an account's status. A database error is thrown, like the
  * exact lookup, so the delivery is retried rather than bounced.
  */
 export async function resolveStandbyMailbox(
@@ -91,9 +91,7 @@ export async function resolveStandbyMailbox(
   if (!primary) return null;
   return db.prepare(
     `SELECT m.id, m.status, m.address FROM mailboxes m
-     LEFT JOIN users u ON u.id = m.owner_user_id
      WHERE m.address = ? AND m.status = 'active'
-       AND (m.type = 'shared' OR (m.type = 'personal' AND u.status IN ('active', 'pending')))
        AND EXISTS (SELECT 1 FROM org_settings WHERE key = ? AND value = 'true')
      LIMIT 1`,
   ).bind(primary, STANDBY_SETTING_ENABLED).first<ResolvedMailbox>();
@@ -138,9 +136,10 @@ export async function decideProbeDelivery(
 ): Promise<ProbeDecision> {
   const check = standbyConfig(env);
   if (!check.configured || input.mailbox.address !== check.config.probeAddress) return { action: 'normal' };
+  // Fails closed: a read error is thrown so Email Routing retries the
+  // delivery, rather than letting a non-probe into the system mailbox.
   const state = await db.prepare('SELECT mailbox_id FROM standby_probe_state WHERE id = 1')
-    .first<{ mailbox_id: string | null }>()
-    .catch(() => null);
+    .first<{ mailbox_id: string | null }>();
   // A real mailbox that happens to have this address is left alone.
   if (!state?.mailbox_id || state.mailbox_id !== input.mailbox.id) return { action: 'normal' };
   const token = probeTokenFrom(input.headers);
@@ -152,12 +151,19 @@ export async function decideProbeDelivery(
   if (run.status === 'sending' || run.status === 'waiting') {
     return { action: 'deliver', runId: run.id, startedAt: Number(run.started_at) };
   }
-  if (run.status === 'fail' && run.reason === 'timeout') {
+  // A probe whose send was reported as failed (an ambiguous error) may still
+  // have left: its arrival is recorded like a late one, not as a duplicate.
+  if (run.status === 'fail' && (run.reason === 'timeout' || run.reason === 'send_failed')) {
     const now = (deps.now ?? Date.now)();
+    const seconds = Math.round((now - Number(run.started_at)) / 1000);
     await db.prepare(
       `UPDATE standby_probe_runs SET reason = 'late', late_ms = ?, detail = ?
-       WHERE id = ? AND status = 'fail' AND reason = 'timeout'`,
-    ).bind(now - Number(run.started_at), `Arrived after ${Math.round((now - Number(run.started_at)) / 1000)} s`, run.id).run();
+       WHERE id = ? AND status = 'fail' AND reason IN ('timeout', 'send_failed')`,
+    ).bind(
+      now - Number(run.started_at),
+      run.reason === 'send_failed' ? `Arrived after ${seconds} s although the send reported a failure` : `Arrived after ${seconds} s`,
+      run.id,
+    ).run();
     return { action: 'drop', why: 'late' };
   }
   return { action: 'drop', why: 'duplicate' };
@@ -221,15 +227,29 @@ async function ensureState(db: D1Database): Promise<void> {
   await db.prepare('INSERT OR IGNORE INTO standby_probe_state (id) VALUES (1)').run();
 }
 
-async function takeLease(db: D1Database, now: number): Promise<boolean> {
+/** Takes the lease and returns its value, or null when another run holds it. */
+async function takeLease(db: D1Database, now: number): Promise<number | null> {
+  const until = now + LEASE_MS;
   const lease = await db.prepare(
     'UPDATE standby_probe_state SET lease_until = ? WHERE id = 1 AND lease_until < ?',
-  ).bind(now + LEASE_MS, now).run();
-  return lease.meta.changes > 0;
+  ).bind(until, now).run();
+  return lease.meta.changes > 0 ? until : null;
 }
 
-async function releaseLease(db: D1Database): Promise<void> {
-  await db.prepare('UPDATE standby_probe_state SET lease_until = 0 WHERE id = 1').run().catch(() => undefined);
+/** Releases only our own lease: one that expired and was taken by another run is left alone. */
+async function releaseLease(db: D1Database, until: number): Promise<void> {
+  await db.prepare('UPDATE standby_probe_state SET lease_until = 0 WHERE id = 1 AND lease_until = ?')
+    .bind(until).run().catch(() => undefined);
+}
+
+function isUniqueViolation(error: unknown, column: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /UNIQUE constraint failed/i.test(message) && message.includes(column);
+}
+
+/** UTC calendar day number of an epoch-millisecond time. */
+function utcDay(ms: number): number {
+  return Math.floor(ms / DAY_MS);
 }
 
 /** Overdue probes become failures with reason 'timeout'. */
@@ -245,7 +265,9 @@ export async function finalizeOverdue(db: D1Database, now: number, timeoutMinute
 /**
  * The dedicated system mailbox: a shared mailbox at the probe address with
  * nobody assigned. Created on first use; never adopted if a manager already
- * made a mailbox at that address for something else.
+ * made a mailbox at that address for something else. If
+ * STANDBY_PROBE_LOCAL_PART changed, the old probe mailbox is disabled in the
+ * same batch (so it refuses mail instead of collecting it) and audited.
  */
 async function ensureProbeMailbox(
   db: D1Database,
@@ -260,9 +282,19 @@ async function ensureProbeMailbox(
     if (existing.status !== 'active') return { ok: false, reason: 'probe_mailbox_disabled' };
     return { ok: true, mailboxId: existing.id };
   }
+  const previous = state?.mailbox_id
+    ? await db.prepare('SELECT id FROM mailboxes WHERE id = ?').bind(state.mailbox_id).first<{ id: string }>()
+    : null;
   const mailboxId = newId();
   try {
     await db.batch([
+      ...(previous ? [
+        db.prepare(`UPDATE mailboxes SET status = 'disabled' WHERE id = ?`).bind(previous.id),
+        db.prepare(
+          `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
+           VALUES (?, datetime('now'), NULL, 'system', 'org.standby_probe_mailbox_disabled', ?, ?)`,
+        ).bind(newId(), previous.id, 'Disabled the old standby probe mailbox after the probe address changed'),
+      ] : []),
       db.prepare(
         `INSERT INTO mailboxes (id, address, display_name, type, status, owner_user_id, created_at)
          VALUES (?, ?, 'Standby probe (system)', 'shared', 'active', NULL, datetime('now'))`,
@@ -273,8 +305,10 @@ async function ensureProbeMailbox(
          VALUES (?, datetime('now'), NULL, 'system', 'org.standby_probe_mailbox_created', ?, ?)`,
       ).bind(newId(), mailboxId, 'Created the standby probe system mailbox'),
     ]);
-  } catch {
-    return { ok: false, reason: 'probe_mailbox_missing' };
+  } catch (error) {
+    // Lost a race for the address: report it. Any other database error is real.
+    if (isUniqueViolation(error, 'mailboxes.address')) return { ok: false, reason: 'probe_mailbox_missing' };
+    throw error;
   }
   return { ok: true, mailboxId };
 }
@@ -299,9 +333,11 @@ async function insertRun(
       run.reason ?? '', (run.detail ?? '').slice(0, 200), run.startedAt,
     ).run();
     return true;
-  } catch {
-    // The UNIQUE in_flight column: another probe is already running.
-    return false;
+  } catch (error) {
+    // The UNIQUE in_flight column: another probe is already running. Any
+    // other error is a real database failure and is thrown.
+    if (run.status === 'sending' && isUniqueViolation(error, 'in_flight')) return false;
+    throw error;
   }
 }
 
@@ -322,14 +358,12 @@ async function startProbe(
   const runId = deps.newId();
   const token = deps.newToken();
   const tokenHash = await hashProbeToken(token);
-  await db.prepare(
-    kind === 'schedule'
-      ? 'UPDATE standby_probe_state SET last_scheduled_at = ? WHERE id = 1'
-      : 'UPDATE standby_probe_state SET last_manual_at = ? WHERE id = 1',
-  ).bind(now).run();
 
   const inFlight = await db.prepare('SELECT 1 AS busy FROM standby_probe_runs WHERE in_flight = 1').first<{ busy: number }>();
   if (inFlight) return { status: 'busy' };
+  // Run test now is limited by attempts; the daily slot only by real sends
+  // (see runStandbyProbeTick), so a busy or failed start never skips a day.
+  if (kind === 'manual') await db.prepare('UPDATE standby_probe_state SET last_manual_at = ? WHERE id = 1').bind(now).run();
 
   const fail = async (reason: string, detail = ''): Promise<ProbeStart> => {
     await insertRun(db, { id: runId, tokenHash, kind, status: 'fail', reason, detail, startedAt: now });
@@ -389,11 +423,12 @@ async function guarded(
     return { status: 'not_configured', problems: check.problems };
   }
   await ensureState(env.DB);
-  if (!await takeLease(env.DB, deps.now())) return { status: 'busy' };
+  const lease = await takeLease(env.DB, deps.now());
+  if (lease === null) return { status: 'busy' };
   try {
     return await work(check.config);
   } finally {
-    await releaseLease(env.DB);
+    await releaseLease(env.DB, lease);
   }
 }
 
@@ -415,7 +450,11 @@ export type TickResult =
 
 /**
  * The cron. Off: one org_settings read and nothing else. On: time out
- * overdue probes, prune, and start the daily probe when it is due.
+ * overdue probes, prune, and start the daily probe when it is due: on the
+ * first run of each UTC day (so the start time does not drift), until one is
+ * actually sent. A busy start is retried on the next run; a probe that could
+ * not be sent is retried after 30 minutes, so a lasting fault adds at most
+ * two failed results an hour.
  */
 export async function runStandbyProbeTick(env: StandbyWorkerEnv, deps: StandbyDeps = {}): Promise<TickResult> {
   const d = fullDeps(deps);
@@ -424,9 +463,20 @@ export async function runStandbyProbeTick(env: StandbyWorkerEnv, deps: StandbyDe
     const finalized = await finalizeOverdue(env.DB, now, config.timeoutMinutes);
     const pruned = await pruneStandby(env, now);
     await env.DB.prepare(`UPDATE standby_probe_state SET last_tick_at = ?, last_problem = '' WHERE id = 1`).bind(now).run();
-    const state = await env.DB.prepare('SELECT last_scheduled_at FROM standby_probe_state WHERE id = 1').first<{ last_scheduled_at: number }>();
-    if (state && now - Number(state.last_scheduled_at) < SCHEDULE_EVERY_MS) return { status: 'idle', finalized, pruned };
-    return startProbe(env, config, 'schedule', d);
+    const state = await env.DB.prepare('SELECT last_scheduled_at, last_attempt_at FROM standby_probe_state WHERE id = 1')
+      .first<{ last_scheduled_at: number; last_attempt_at: number }>();
+    const lastSent = Number(state?.last_scheduled_at ?? 0);
+    const lastAttempt = Number(state?.last_attempt_at ?? 0);
+    if ((lastSent && utcDay(lastSent) >= utcDay(now)) || now - lastAttempt < RETRY_AFTER_FAILURE_MS) {
+      return { status: 'idle', finalized, pruned };
+    }
+    const result = await startProbe(env, config, 'schedule', d);
+    if (result.status === 'started') {
+      await env.DB.prepare('UPDATE standby_probe_state SET last_scheduled_at = ? WHERE id = 1').bind(now).run();
+    } else if (result.status === 'failed') {
+      await env.DB.prepare('UPDATE standby_probe_state SET last_attempt_at = ? WHERE id = 1').bind(now).run();
+    }
+    return result;
   });
 }
 

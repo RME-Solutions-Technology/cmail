@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS standby_probe_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   mailbox_id TEXT REFERENCES mailboxes(id) ON DELETE SET NULL,
   lease_until INTEGER NOT NULL DEFAULT 0,
+  -- Last daily probe actually sent, and last daily start that failed before sending.
   last_scheduled_at INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at INTEGER NOT NULL DEFAULT 0,
   last_manual_at INTEGER NOT NULL DEFAULT 0,
   last_tick_at INTEGER NOT NULL DEFAULT 0,
   last_problem TEXT NOT NULL DEFAULT '' CHECK (length(last_problem) <= 200),

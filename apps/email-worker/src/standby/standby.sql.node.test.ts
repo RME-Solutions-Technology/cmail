@@ -142,10 +142,33 @@ describe('standby address: delivery', () => {
     t.restore();
   });
 
-  it('refuses paused and offboarded owners and disabled mailboxes', async () => {
+  it('answers exactly as the primary address does, so it reveals no account status', async () => {
     const t = setup();
-    for (const local of ['paul', 'olive', 'old']) {
-      expect((await t.deliver({ to: `${local}@${STANDBY}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    for (const local of ['paul', 'olive', 'old', 'alice']) {
+      const primary = await t.deliver({ to: `${local}@${DOMAIN}` });
+      const standby = await t.deliver({ to: `${local}@${STANDBY}` });
+      expect(standby.rejected).toBe(primary.rejected);
+    }
+    // Disabled mailboxes are refused on both; paused and offboarded owners'
+    // active mailboxes keep receiving on both, as the primary always has.
+    expect((await t.deliver({ to: `old@${STANDBY}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    expect(t.messagesIn('mbx-paul')).toBe(2);
+    t.restore();
+  });
+
+  it('delivers to a legacy personal mailbox with no recorded owner, as the primary does', async () => {
+    const t = setup();
+    t.sqlite.exec('DROP TRIGGER trg_mailboxes_owner_insert');
+    t.sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status, owner_user_id) VALUES ('mbx-legacy', ?, 'personal', 'active', NULL)`).run(`legacy@${DOMAIN}`);
+    expect((await t.deliver({ to: `legacy@${STANDBY}` })).rejected).toBeUndefined();
+    expect(t.messagesIn('mbx-legacy')).toBe(1);
+    t.restore();
+  });
+
+  it('maps plus, quoted and Unicode local parts literally, so they reach no other mailbox', async () => {
+    const t = setup();
+    for (const to of [`alice+tag@${STANDBY}`, `"alice"@${STANDBY}`, `\u00e1lice@${STANDBY}`, `ALICE @${STANDBY}`]) {
+      expect((await t.deliver({ to })).rejected).toBeDefined();
     }
     expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: 0 });
     t.restore();
@@ -334,6 +357,88 @@ describe('standby probe', () => {
     t.advance(DAY);
     expect(await t.tick()).toEqual({ status: 'off' });
     expect(t.sent).toHaveLength(1);
+    t.restore();
+  });
+
+  it('fails closed when the probe state cannot be read: the delivery throws (and is retried), nothing is stored', async () => {
+    const t = setup();
+    await t.tick();
+    t.sqlite.exec('DROP TABLE standby_probe_state');
+    const result = await t.deliverSent();
+    expect(result.error).toBeTruthy();
+    expect(result.rejected).toBeUndefined();
+    expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: 0 });
+    t.restore();
+  });
+
+  it('a daily tick during a manual test waits, then sends the daily probe once that test finishes', async () => {
+    const t = setup();
+    expect(await t.runNow()).toMatchObject({ status: 'started' });
+    t.advance(MINUTE);
+    expect(await t.tick()).toEqual({ status: 'busy' });
+    await t.deliverSent();
+    t.advance(10 * MINUTE);
+    expect(await t.tick()).toMatchObject({ status: 'started' });
+    expect(t.runs().map((run) => run.kind)).toEqual(['manual', 'schedule']);
+    t.restore();
+  });
+
+  it('a daily probe that could not be sent does not use up the day: it is retried after 30 minutes', async () => {
+    let fail = true;
+    const t = setup({ send: async () => { if (fail) throw new Error('socket'); return { messageId: '<ok@cf.example.test>' }; } });
+    expect(await t.tick()).toMatchObject({ status: 'failed', reason: 'send_failed' });
+    t.advance(10 * MINUTE);
+    expect(await t.tick()).toMatchObject({ status: 'idle' });
+    fail = false;
+    t.advance(25 * MINUTE);
+    expect(await t.tick()).toMatchObject({ status: 'started' });
+    t.restore();
+  });
+
+  it('records a probe that arrives after an ambiguous send failure as late, not as a duplicate', async () => {
+    const t = setup({ send: async () => { throw new Error('socket'); } });
+    await t.tick();
+    t.advance(30_000);
+    await t.deliverSent();
+    expect(t.runs()[0]).toMatchObject({ status: 'fail', reason: 'late', late_ms: 30_000 });
+    expect(String(t.runs()[0]!.detail)).toContain('send reported a failure');
+    t.restore();
+  });
+
+  it('throws a real database error instead of reporting busy', async () => {
+    const t = setup();
+    t.sqlite.exec(`CREATE TRIGGER t_fail BEFORE INSERT ON standby_probe_runs BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+    await expect(t.tick()).rejects.toThrow(/disk I\/O error/);
+    t.restore();
+  });
+
+  it('disables the old probe mailbox when STANDBY_PROBE_LOCAL_PART changes, so it stops taking mail', async () => {
+    const t = setup();
+    await t.tick();
+    await t.deliverSent();
+    const oldId = t.probeMailbox()!.id;
+    t.env.STANDBY_PROBE_LOCAL_PART = 'probe-two';
+    t.advance(DAY);
+    expect(await t.tick()).toMatchObject({ status: 'started' });
+    expect(t.sqlite.prepare('SELECT status FROM mailboxes WHERE id = ?').get(oldId)).toEqual({ status: 'disabled' });
+    expect(t.sent.at(-1)!.to).toBe(`probe-two@${STANDBY}`);
+    expect((await t.deliver({ to: `${PROBE}@${DOMAIN}` })).rejected).toBe(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+    expect(t.sqlite.prepare(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'org.standby_probe_mailbox_disabled'`).get()).toEqual({ n: 1 });
+    t.restore();
+  });
+
+  it('never prunes a message outside the probe mailbox, even if a run points at it', async () => {
+    const t = setup();
+    await t.deliver({ to: `alice@${DOMAIN}` });
+    await t.tick();
+    await t.deliverSent();
+    const aliceMessage = (t.sqlite.prepare(`SELECT id FROM messages WHERE mailbox_id = 'mbx-alice'`).get() as { id: string }).id;
+    t.sqlite.prepare('UPDATE standby_probe_runs SET message_id = ?').run(aliceMessage);
+    expect(await pruneStandby(t.env as never, T0 + 8 * DAY)).toBe(0);
+    expect(t.messagesIn('mbx-alice')).toBe(1);
+    // The result row is kept while its (non-probe) message exists.
+    await pruneStandby(t.env as never, T0 + 31 * DAY);
+    expect(t.messagesIn('mbx-alice')).toBe(1);
     t.restore();
   });
 

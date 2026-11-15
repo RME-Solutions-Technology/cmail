@@ -156,6 +156,12 @@ export async function applyStandbyAdminAction(
       detail: `Ran the standby test now: ${status || 'no answer'}${typeof body.reason === 'string' ? ` (${body.reason.slice(0, 64)})` : ''}`,
     });
   } catch {
+    await audit(db, {
+      event_type: 'org.standby_test_requested',
+      actor_id: manager.id,
+      actor_role: 'manager',
+      detail: 'Ran the standby test now: no answer from the email Worker',
+    });
     return { ok: false, status: 503, error: 'The email Worker did not answer. Try again in a minute.' };
   }
   if (status === 'failed') return { ok: false, status: 502, error: 'The test failed before it left. The reason is shown below.' };

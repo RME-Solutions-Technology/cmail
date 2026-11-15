@@ -5,6 +5,18 @@ Cloudflare account.** The code paths are covered by tests with a mocked
 Email Sending binding and a simulated Email Routing delivery (see
 [How to test](#how-to-test)).
 
+> **Unproven for the main use case.** Cloudflare Email Routing needs
+> exclusive control of the root domain's MX records: onboarding fails with
+> error 2008 ("Non-Cloudflare MX records exist") while another provider's MX
+> is there ([domains](https://developers.cloudflare.com/email-service/configuration/domains/),
+> [troubleshooting](https://developers.cloudflare.com/email-service/reference/troubleshooting/)).
+> Subdomains are added from the apex domain's Email Routing settings
+> ([subdomains](https://developers.cloudflare.com/email-service/configuration/subdomains/)).
+> So the case this feature is for, with the apex MX at Exchange Online and only
+> `standby.<domain>` at Cloudflare, may not be possible at all. Try it on a
+> real test account before anyone turns this on. If it cannot be done, the
+> standby address does not work on that domain, whatever the code does.
+
 When cmail is kept as a standby for another mail system (for example Exchange
 Online), the main domain's MX records point at the other system, so nothing
 proves day to day that cmail would receive mail if you switched. This feature
@@ -27,10 +39,11 @@ Cloudflare, and sends a test message through it once a day.
  ──────────────────────────          ─────────────────────         ──────────────────────────────
  switch on? config ok? lease          Email Sending                 exact address? no
  time out overdue probes      ──▶    (from probe@example.com) ──▶  standby address? yes ─▶ probe mailbox
- prune old probes                     public MX of                  probe token known and live?
+ prune old probes                     delivery to                   probe token known and live?
  daily probe due? ─ send ─────────▶   standby.example.com           store via the normal path
-   insert run (waiting)               Email Routing literal rule    record pass + round trip
-                                      ─▶ this Worker
+   insert run (waiting)               (path inside Cloudflare       record pass + round trip
+                                      not verified), Email Routing
+                                      literal rule ─▶ this Worker
 ```
 
 | Part | Where |
@@ -51,11 +64,11 @@ that finds no active mailbox does it try the standby mapping:
    exactly. Deeper subdomains (`a@x.standby.example.com`) and look-alikes are
    not mapped.
 2. The local part is kept and the domain replaced by `MAIL_DOMAIN`.
-3. One query requires, together: the manager switch is on; a mailbox exists at
-   that primary address with status `active`; and it is a shared mailbox or a
-   personal mailbox whose owner is `active` or `pending`. Paused and
-   offboarded owners, disabled mailboxes and legacy personal mailboxes with no
-   recorded owner are refused.
+3. One query requires, together: the manager switch is on, and a mailbox
+   exists at that primary address with status `active`. That is exactly the
+   primary address's own rule, so the standby address always answers the
+   same way as the primary one and cannot be used to learn whether an account
+   is paused or offboarded.
 
 Anything that does not match gets the same neutral permanent refusal as an
 unknown address on the primary domain, and nothing is written to D1 for it.
@@ -65,8 +78,9 @@ What this means for safety:
 - **No open relay.** The alias only stores mail into existing cmail
   mailboxes. It never forwards, redirects or sends anything.
 - **No catch-all.** An unknown local part is refused; nothing is created.
-- **Paused and offboarded people.** Refused on the standby address. (The
-  primary address behaves as before.)
+- **Paused and offboarded people.** The standby address behaves exactly
+  like the primary one: mail is refused only when the mailbox itself is
+  disabled. Disable a leaver's mailbox in Admin to stop mail on both.
 - **Same rules as the primary address.** After the mailbox is found, the
   message goes through the unchanged pipeline: size, attachment and body
   limits, inbound rate and quota guards, SPF/DKIM/DMARC recording from the
@@ -83,6 +97,12 @@ domain looks up exact addresses only.
 
 ### The probe
 
+- **Changing `STANDBY_PROBE_LOCAL_PART`.** The next probe creates a new
+  system mailbox at the new address and disables the old one in the same
+  batch (audited as `org.standby_probe_mailbox_disabled`), so the old one
+  refuses mail rather than keeping a mailbox nobody reads. Its stored probes
+  are not pruned any more; delete the old mailbox in Admin > Mailboxes if you
+  want them gone.
 - **Dedicated system mailbox.** On the first probe the Worker creates a shared
   mailbox `cmail-standby-probe@<MAIL_DOMAIN>` ("Standby probe (system)") with
   nobody assigned, records its id in `standby_probe_state`, and writes an
@@ -95,15 +115,19 @@ domain looks up exact addresses only.
   still waiting. Everything else for that mailbox (on either address) is
   refused like an unknown address, so it cannot collect spam or real mail.
 - **Token.** Each probe has 32 random bytes (base64url) in the
-  `X-Cmail-Standby-Probe` header, and in the subject as a fallback. Only the
-  SHA-256 of the token is stored. A probe is matched by token, never by
-  sender, which anyone can forge.
+  `X-Cmail-Standby-Probe` header, and in the subject as a fallback. The run
+  table stores only the token's SHA-256. The raw token does appear in the
+  stored probe message's subject (`messages.subject`) and in mail trace,
+  because the probe is stored like any message. That is harmless: a token is
+  single-use and is spent once its probe has a result. A probe is matched by
+  token, never by sender, which anyone can forge.
 - **Send path.** The Worker's native `EMAIL` binding (Cloudflare Email
   Sending) sends from the probe mailbox's primary address to its standby
-  address. The message leaves Cloudflare's outbound service and comes back
-  through the standby subdomain's MX and Email Routing, like any outside
-  message. There is no internal shortcut, which is the point: a shortcut
-  would test nothing that matters in an outage.
+  address, and the test passes only when Email Routing hands it to this
+  Worker. cmail itself takes no shortcut, but whether Cloudflare delivers it
+  through the public MX or inside its own network is not documented and has
+  not been checked. So the probe proves Cloudflare can deliver to the
+  standby address; it may not prove that an outside server can.
 - **Receipt.** After the message is stored, the handler marks the run
   `pass` with the round trip (from the start of the send to storage), the
   folder it was filed to and the recorded SPF/DKIM/DMARC. The update only
@@ -112,14 +136,22 @@ domain looks up exact addresses only.
 - **Timeout.** A run still waiting after `STANDBY_PROBE_TIMEOUT_MINUTES`
   (default 10) becomes `fail` / `timeout` on the next cron run, or on Run test
   now. Admin shows an overdue run as red straight away. A probe that arrives
-  after its timeout is recorded as `late` (with how late) and not stored.
+  after its timeout is recorded as `late` (with how late) and not stored. So is a probe that arrives after
+  its send was reported as an ambiguous failure (`send_failed`).
 - **One at a time.** `in_flight` is a UNIQUE column that is 1 only while a
   probe is sending or waiting, and the cron takes a 60-second lease, so two
   runs never send two probes. Run test now is limited to one start a minute.
-- **Schedule.** The cron runs every 10 minutes; the daily probe starts once
-  23 h 50 min have passed since the last scheduled one (the slack stops the
-  start time drifting later each day). It also times out overdue probes and
-  prunes.
+- **Schedule.** The cron runs every 10 minutes. The daily probe starts on the
+  first run of each UTC day (shortly after 00:00 UTC, so the time does not
+  drift) and keeps trying that day until one is actually sent: a start that
+  finds a test running waits for the next run, and a probe that could not be
+  sent is tried again after 30 minutes (at most two failed results an hour
+  for a lasting fault). The first probe runs on the first cron run after the
+  switch is turned on. Each run also times out overdue probes and prunes.
+- **Failing closed.** If the probe state cannot be read when mail arrives for
+  the probe mailbox, the delivery throws so Email Routing retries it; it is
+  never let into the system mailbox. Other database errors are reported as
+  errors, never as "busy".
 - **Pruning.** Probe messages are deleted from the probe mailbox (D1 row and
   R2 body and attachments) after 7 days; results after 30 days. Only messages
   that a probe run recorded, in the probe mailbox, are ever selected, so no
@@ -147,9 +179,9 @@ ambiguous or network failure), `no_send_binding`, `probe_address_in_use`,
 ## What a green light means, and what it does NOT mean
 
 Green means: within the last day, a message sent by Cloudflare Email Sending
-to the standby address went out, came back in through the standby subdomain's
-public MX and Email Routing, reached this email Worker, passed the same
-inbound checks as any mail, and was stored in D1 and R2 within the time limit.
+to the standby address was delivered by Cloudflare Email Routing to this email
+Worker, passed the same inbound checks as any mail, and was stored in D1 and
+R2 within the time limit.
 
 Green does **not** mean:
 
@@ -159,8 +191,8 @@ Green does **not** mean:
   the subdomain needs its own Email Routing rule (see Setup); the probe only
   proves the probe address's rule.
 - that **outside senders** reach you. The probe is sent from Cloudflare's own
-  network; another provider's outbound path, reputation checks or a blocklist
-  are not tested.
+  network and may never leave it; the public MX lookup, another provider's
+  outbound path, reputation checks or a blocklist are not tested.
 - that **sending** to outside recipients works, or that people can **sign
   in** (Access, Entra) and read mail.
 - that a **message to a person** would land in their Inbox: their own inbox
@@ -233,19 +265,26 @@ Automated (no Cloudflare account needed):
 
 - `apps/email-worker/src/standby/standby.sql.node.test.ts` runs every real
   migration in `node:sqlite` and drives the real `email()` handler: alias
-  delivery for personal, pending and shared mailboxes; no catch-all; paused,
-  offboarded and disabled refused; exact domain match; switch off; custom
-  label; the same spam rules; dedupe across both addresses; the probe pass
-  path with round trip and auth; timeout and late; duplicates; the probe
-  mailbox refusing non-probes; send refused, failed and unbound; an address
-  already in use; a disabled probe mailbox; Run test now limits; switching off
-  mid-probe; pruning only probe messages; the private endpoints; and the cron
-  doing only one read while off. Email Sending is a mock that records the
+  delivery for personal, pending, shared and ownerless legacy mailboxes; the
+  same answer as the primary address for paused, offboarded and disabled; no
+  catch-all; plus, quoted and Unicode local parts; exact domain match; switch
+  off; custom label; the same spam rules; dedupe across both addresses; the
+  probe pass path with round trip and auth; timeout and late (also after an
+  ambiguous send failure); duplicates; the probe mailbox refusing non-probes;
+  failing closed when the probe state cannot be read; send refused, failed
+  (retried after 30 minutes) and unbound; real database errors thrown; an
+  address already in use; a disabled probe mailbox; a changed probe local
+  part; Run test now limits; a daily run during a manual test; switching off
+  mid-probe; pruning only probe messages in the probe mailbox; the private
+  endpoints; and the cron doing only one read while off. Email Sending is a mock that records the
   message, and the test delivers that message back as Email Routing would.
 - `apps/email-worker/src/standby/status.test.ts`: configuration parsing, the
   address mapping, token parsing and every status-light rule.
 - `apps/web/src/lib/server/standby-admin.test.ts`: the Admin switch, Run test
-  now through the binding, audit entries and the light from stored results.
+  now through the binding, audit entries (also when the Worker does not
+  answer) and the light from stored results.
+- `apps/web/src/routes/admin/standby/standby-route.test.ts`: the page action
+  refuses standard users (403), signed-out requests and unknown actions.
 
 By hand, on a test domain first:
 
@@ -256,12 +295,21 @@ By hand, on a test domain first:
    Mail trace shows the standby address.
 4. Send to an address on the subdomain with no cmail mailbox (but a rule):
    the sender gets a refusal.
-5. Pause that person in Admin > People and send again: refused.
+5. Disable that person's mailbox in Admin > Mailboxes and send again to both
+   addresses: both refused the same way.
 6. Remove the probe address's routing rule and Run test now: red `timeout`
    after the timeout (on the next cron run). Put the rule back.
 7. Turn the switch off and send to the standby address: refused.
 
-Not verified yet (needs a real account): that Email Sending delivers to an
-Email Routing subdomain in the same account without any loop protection
-interfering, that the `X-Cmail-Standby-Probe` header survives the round trip
-(the subject fallback covers it if not), and typical round-trip times.
+Not verified yet (needs a real account):
+
+- **Whether Email Routing can run on `standby.<domain>` while the apex MX
+  points at another provider.** Cloudflare documents that Email Routing
+  needs exclusive control of the root domain MX (error 2008). If that blocks
+  subdomain-only routing, the main use case does not work. Prove this first.
+- Whether Email Sending delivers to an Email Routing subdomain in the same
+  account (no loop protection getting in the way), and whether it goes
+  through the public MX or inside Cloudflare.
+- Whether the `X-Cmail-Standby-Probe` header survives the round trip (the
+  subject fallback covers it if not).
+- Typical round-trip times.
