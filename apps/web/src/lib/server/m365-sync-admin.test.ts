@@ -96,6 +96,16 @@ describe('Microsoft 365 sync admin', () => {
     expect(audits().map((row) => (row as { event_type: string }).event_type)).toEqual(['org.m365_sync_approved']);
   });
 
+  it('refuses on the server to approve a round held for an empty result', async () => {
+    const { env, d1, sqlite } = setup();
+    sqlite.prepare(`INSERT INTO m365_sync_state (id, state) VALUES (1, ?)`).run(JSON.stringify({
+      round: { id: 'round-empty-1', kind: 'reconcile', mode: 'live', phase: 'held', startedAt: '2026-11-15T00:00:00.000Z',
+        pauseQueue: [], pending: [], fetched: 0, brake: { reason: 'empty_result', pauses: 3, linked: 3, percent: 100 } },
+    }));
+    expect(await applyM365AdminAction(env, { id: 'manager-1' }, 'approve_round', new Date(), 'round-empty-1')).toMatchObject({ ok: false, status: 409 });
+    expect((await loadM365SyncSwitch(d1)).approvedRound).toBe('');
+  });
+
   it('accepts only known actions', () => {
     expect(parseM365AdminAction('enable')).toBe('enable');
     expect(parseM365AdminAction('drop_tables')).toBeNull();

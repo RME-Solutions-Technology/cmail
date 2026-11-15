@@ -242,7 +242,8 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
       if (state.round.mode !== mode || age(startedAt, state.round.startedAt) > maxAge || (held && requested)) state.round = null;
     }
     if (state.round?.phase === 'held') {
-      if (toggle.approvedRound !== state.round.id) {
+      // An empty directory answer is never approvable (Admin refuses it too).
+      if (toggle.approvedRound !== state.round.id || state.round.brake?.reason === 'empty_result') {
         state.lastResult = 'held';
         await saveState(db, state);
         return { status: 'held' };

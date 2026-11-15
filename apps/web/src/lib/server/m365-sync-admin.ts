@@ -112,6 +112,9 @@ export async function applyM365AdminAction(
     const state = await loadM365SyncState(db).catch(() => null);
     const held = state?.round?.phase === 'held' ? state.round : null;
     if (!held || !roundId || held.id !== roundId) return { ok: false, status: 409, error: 'There is no held change with that id. Reload the page.' };
+    // An empty directory answer is never approvable: it means a wrong tenant,
+    // a lost permission or an outage, not that everyone left.
+    if (held.brake?.reason === 'empty_result') return { ok: false, status: 409, error: 'Microsoft 365 returned no users. Fix the cause and use Discard and sync again.' };
     await putSetting(db, M365_SYNC_SETTING_APPROVED_ROUND, held.id, manager.id);
     await audit(db, {
       event_type: 'org.m365_sync_approved',

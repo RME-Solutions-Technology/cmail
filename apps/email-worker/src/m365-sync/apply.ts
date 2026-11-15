@@ -93,10 +93,13 @@ function markedAuditStatement(db: D1Database, eventType: string, userId: string,
   ).bind(crypto.randomUUID(), eventType, userId.slice(0, 256), detail.slice(0, 1000), userId, marker);
 }
 
-/** A users.updated_at value unique to one sync write: 'YYYY-MM-DD HH:MM:SS.mmm' plus a random suffix. */
+/**
+ * A users.updated_at value for one sync write: a valid SQLite datetime with
+ * milliseconds ('YYYY-MM-DD HH:MM:SS.SSS'). Every other writer uses
+ * datetime('now'), which has no fraction, so the two never compare equal.
+ */
 function changeMarker(ctx: ApplyContext): string {
-  const base = new Date(ctx.now()).toISOString().replace('T', ' ').replace('Z', '');
-  return `${base}${crypto.randomUUID().slice(0, 8)}`;
+  return new Date(ctx.now()).toISOString().replace('T', ' ').replace('Z', '');
 }
 
 async function runBatch(ctx: ApplyContext, statements: D1PreparedStatement[]): Promise<boolean> {
@@ -246,7 +249,12 @@ export async function applyQueuedPause(ctx: ApplyContext, item: M365QueuedPause)
        WHERE object_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND updated_at = ? AND status = 'paused')`,
     ).bind(user.status, link.object_id, user.id, marker),
     ...pausedAccountLockoutStatements(ctx.db, user.id),
-    linkStateStatement(ctx.db, link.object_id, 'out_of_scope', item.reason),
+    // Marked as handled only if the pause landed. Otherwise the link stays in
+    // scope and the next reconciliation queues the pause again.
+    ctx.db.prepare(
+      `UPDATE m365_sync_links SET source_state = 'out_of_scope', last_reason = ?, updated_at = datetime('now')
+       WHERE object_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND updated_at = ? AND status = 'paused')`,
+    ).bind(item.reason.slice(0, 64), link.object_id, user.id, marker),
     markedAuditStatement(ctx.db, 'm365_sync.user_paused', user.id, marker, `Paused by Microsoft 365 sync: ${item.reason}`),
   ]);
   if (ok && await markerLanded(ctx, user.id, marker)) {

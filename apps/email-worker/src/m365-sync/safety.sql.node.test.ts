@@ -113,6 +113,32 @@ describe('pauses are conditional (finding 3)', () => {
     expect(t.user('user2@example.test')?.status).toBe('paused');
   });
 
+  it('keeps a leaver in scope when the pause did not land, and pauses them on the next reconciliation', async () => {
+    const t = await linked(3);
+    t.fake.setDelta('tok-1', [[person(1, 'user1', { accountEnabled: false })]], 'tok-2');
+    // Some other writer changes the status between the sync's read and its write.
+    t.onNextBatch(() => t.sqlite.prepare(`UPDATE users SET status = 'pending', updated_at = datetime('now') WHERE email = 'user1@example.test'`).run());
+    await t.tick();
+    expect(t.user('user1@example.test')?.status).toBe('pending');
+    expect(t.link(1)).toMatchObject({ source_state: 'in_scope', paused_by_sync: 0 });
+
+    t.fake.setReconcile([[person(1, 'user1', { accountEnabled: false }), person(2, 'user2'), person(3, 'user3')]], 'tok-3');
+    t.advance(1000);
+    t.syncNow();
+    await t.tick();
+    expect(t.user('user1@example.test')?.status).toBe('paused');
+    expect(t.link(1)).toMatchObject({ source_state: 'out_of_scope', paused_by_sync: 1, status_before_pause: 'pending' });
+  });
+
+  it('writes a valid datetime as its change marker', async () => {
+    const t = await linked(2);
+    t.fake.setDelta('tok-1', [[person(1, 'user1', { accountEnabled: false })]], 'tok-2');
+    await t.tick();
+    const updated = t.user('user1@example.test')!.updated_at;
+    expect(updated).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+    expect(t.sqlite.prepare(`SELECT datetime(?) IS NOT NULL AS ok`).get(updated)).toEqual({ ok: 1 });
+  });
+
   it('only pauses from the status it read', async () => {
     const t = await linked(3);
     t.fake.setDelta('tok-1', [[person(3, 'user3', { accountEnabled: false })]], 'tok-2');
