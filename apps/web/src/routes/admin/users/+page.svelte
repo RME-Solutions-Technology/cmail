@@ -304,6 +304,21 @@
                   {:else}
                     <span class="secondary action-note">Reactivate before inviting</span>
                   {/if}
+                  {#if user.access_bound && user.id !== data.currentUserId}
+                    <form method="POST" action="?/resetAccess" aria-label={`Reset Access link for ${user.email}`}>
+                      <input type="hidden" name="user_id" value={user.id} />
+                      <button
+                        type="submit"
+                        class="btn btn-sm btn-ghost"
+                        title="Remove the Cloudflare Access link so the next Access sign-in binds again"
+                        onclick={(event) => {
+                          if (!window.confirm(`Reset the Access link for ${user.email}? Their sessions are signed out and their next Access sign-in links again.`)) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >Reset Access link</button>
+                    </form>
+                  {/if}
                 </div>
               </td>
             </tr>

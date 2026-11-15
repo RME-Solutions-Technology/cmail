@@ -21,7 +21,7 @@ const MAX_TOKEN_LENGTH = 8192;
 const KEY_CACHE_TTL_MS = 60 * 60 * 1000;
 /** If a refresh fails, cached keys stay usable for at most this long. */
 const KEY_CACHE_STALE_MS = 24 * 60 * 60 * 1000;
-/** An unknown `kid` triggers at most one refetch in this window. */
+/** At most one certs fetch per window: unknown `kid`, stale cache or failures alike. */
 const KEY_REFRESH_MIN_INTERVAL_MS = 30 * 1000;
 const KEY_FETCH_TIMEOUT_MS = 5000;
 const MAX_KEYS = 16;
@@ -133,8 +133,10 @@ export class AccessKeyStore {
     const fresh = set && nowMs - set.fetchedAtMs < KEY_CACHE_TTL_MS;
     if (fresh && set!.keys.has(kid)) return set!.keys.get(kid)!;
 
+    // One refetch per window whatever the reason (stale cache, unknown kid,
+    // or a failing endpoint), so a certs outage is never hammered per request.
     const lastAttempt = this.lastAttemptMs.get(certsUrl) ?? -Infinity;
-    if (!fresh || nowMs - lastAttempt >= KEY_REFRESH_MIN_INTERVAL_MS) {
+    if (nowMs - lastAttempt >= KEY_REFRESH_MIN_INTERVAL_MS) {
       const refreshed = await this.refresh(certsUrl, nowMs);
       if (refreshed) set = refreshed;
     }
@@ -253,6 +255,10 @@ export async function verifyAccessJwt(
   // Claims are only read after the signature is known to be good.
   if (payload.iss !== config.issuer) return null;
   if (!audienceMatches(payload.aud, config.audience)) return null;
+  // Cloudflare documents `type` as "app" (application token) or "org" (the
+  // global session token) and shows it in its examples, but does not promise
+  // it is always present. Refuse anything that says it is not an app token;
+  // a missing `type` is still bound to this application by `aud`.
   if (payload.type !== undefined && payload.type !== 'app') return null;
 
   const now = Math.floor(nowMs / 1000);

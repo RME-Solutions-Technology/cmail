@@ -87,9 +87,10 @@ accepts it only if all of these hold:
 - `type`, when present, is `app`, and the token carries a non-empty `sub` and
   a valid `email`. Service tokens have neither, so they never open a mailbox.
 
-Keys are cached per isolate for an hour. An unknown `kid` refetches at most
-once every 30 seconds. If the certs endpoint is down, cached keys keep working
-for up to 24 hours; with no usable key, every token is refused.
+Keys are cached per isolate for an hour. The certs endpoint is fetched at
+most once every 30 seconds, whatever the reason (an unknown `kid`, a stale
+cache or a failing endpoint). If it is down, cached keys keep working for up
+to 24 hours; with no usable key, every token is refused.
 
 **Fail closed.** With the bridge on, a request without a valid token gets no
 session, even with a valid cmail cookie. A cookie session is used only when
@@ -107,11 +108,15 @@ endpoints) as follows:
 1. A returning visit is looked up by Access `sub` only. If the token's email no
    longer matches the account, the binding stays and an
    `auth.access_email_changed` audit entry is written.
-2. A first visit may bind to an existing account whose email equals the
-   verified token email (an invited or synced account). It is refused when the
-   account is paused or offboarded, already has a different Access `sub`, or
-   is a manager. Managers link by visiting once while signed in through their
-   existing provider.
+2. A first visit may adopt an existing account by verified email only when
+   that account has no sign-in identity at all: an invited account that never
+   enrolled, or a synced account. It must be a standard account that is
+   pending or active. Adoption is refused when the account is paused or
+   offboarded, already has a different Access `sub`, is a manager, or already
+   signs in with Google, Microsoft or an email code. Those people, managers
+   included, link by signing in once the normal way while behind Access: the
+   request then carries both their cmail session and a matching Access token,
+   and the binding is made.
 3. With `ACCESS_AUTO_PROVISION=true`, an email on `MAIL_DOMAIN` with no account
    gets a standard account and a personal mailbox at that address. Emails on
    other domains, and addresses already used by any mailbox, are refused.
@@ -119,11 +124,29 @@ endpoints) as follows:
 4. Nothing is bound or created before the first manager exists. The first
    manager still uses `/bootstrap`.
 
-Each account holds at most one Access binding and one Access `sub` belongs to
-one account (migration `0021`). The country gate, session cap, policy
-acceptance and audit trail work as for OAuth sign-in. Sign-out also ends the
-Access session (`/cdn-cgi/access/logout`); otherwise Access would sign the
-user straight back in.
+The sign-in country gate runs before any binding, activation or account
+creation, so a refused country changes nothing. Each account holds at most
+one Access binding and one Access `sub` belongs to one account (migration
+`0021`). Policy acceptance and the audit trail work as for OAuth sign-in.
+Repeated denials (`auth.sign_in_denied`) and email-change notes are audited
+once per person and reason every 10 minutes.
+
+A request that has a valid Access token but no cmail cookie reuses the
+account's newest live session if there is one: no new cookie, no new
+`auth.sign_in` row, and the user's other sessions are not evicted. A new
+session and cookie are minted only when the account has no live session.
+This is safe because every request must carry a valid Access token anyway.
+
+Sign-out also ends the Access session (`/cdn-cgi/access/logout`); otherwise
+Access would sign the user straight back in.
+
+**Resetting a binding.** Cloudflare gives a person a new `sub` when they are
+removed from and re-added to the Zero Trust organisation. Their old binding
+then makes every visit fail with an identity conflict. A manager fixes this
+in **Admin > Users > Reset Access link**: it removes the Access binding (not
+the person's other sign-in identity), signs out their sessions, and writes an
+`auth.identity_reset` audit entry. The next Access visit binds again under the
+rules above.
 
 An Access-bound account cannot later accept a Google, Microsoft or email
 invitation: the invitation reports an identity conflict, as for any account
@@ -144,9 +167,21 @@ that already has a binding.
    both limit how long someone stays signed in. Both need a valid Access token
    on each request.
 
-AI app (MCP) connections and other bearer-token clients do not carry an
-Access token. Keep them off, or give those paths their own Access policy;
-the bridge does not change how they authenticate.
+**Bearer-token paths are outside the bridge.** AI app (MCP) connections
+(`/mcp`, `/oauth/token`, `/oauth/register`, `/oauth/revoke`,
+`/.well-known/*`) authenticate with their own OAuth bearer tokens, not with
+the Access token or a cmail cookie, and the bridge leaves them unchanged
+(a test covers this). They never get a session from Access. Choose one per
+deployment:
+
+- leave AI app connections off (the default in Admin > Settings); or
+- if they are on and Access covers the whole hostname, add an Access policy
+  for those paths (for example a service-token or Bypass policy scoped to
+  them), because AI clients cannot complete an interactive Access login.
+
+Turning a person off in Access does not revoke their AI app grants. When
+someone leaves, also pause or offboard them in cmail: both revoke every MCP
+token and grant they hold. Remove them in Access too.
 
 ## Live configuration still needs verification
 

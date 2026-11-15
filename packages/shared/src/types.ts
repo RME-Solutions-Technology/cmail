@@ -194,7 +194,7 @@ export type AuditEventType =
   | 'user.travel_approved' | 'user.travel_denied' | 'user.travel_exception_revoked'
   | 'auth.sign_in' | 'auth.sign_in_denied' | 'auth.session_expired'
   | 'auth.identity_bound' | 'auth.bootstrap_completed' | 'auth.enrollment_issued'
-  | 'auth.access_email_changed'
+  | 'auth.access_email_changed' | 'auth.identity_reset'
   | 'policy.publish' | 'policy.sign' | 'policy.reset'
   | 'mailbox.create' | 'mailbox.delete' | 'mailbox.assign' | 'mailbox.unassign'
   | 'signature.update' | 'signature.lock'

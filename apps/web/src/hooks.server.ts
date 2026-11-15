@@ -191,8 +191,9 @@ export const handle: Handle = async ({ event, resolve }) => {
       if (established) {
         event.locals.user = established.user;
         event.locals.sessionId = established.sessionId;
+        // A reused session sends no cookie; a stale cookie is still cleared.
         accessSessionCookie = established.cookie;
-        clearInvalidCookie = false;
+        if (established.cookie) clearInvalidCookie = false;
       }
     } catch (error) {
       console.error('Access sign-in failed', {

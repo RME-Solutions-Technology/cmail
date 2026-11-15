@@ -227,6 +227,26 @@ describe('AccessKeyStore caching', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('rate-limits refetches while the certs endpoint is down, whatever the cache age', async () => {
+    let up = true;
+    const fetcher = vi.fn(async () => (up ? Response.json({ keys: [publicJwk] }) : new Response('down', { status: 503 })));
+    const store = new AccessKeyStore(fetcher as unknown as FetchLike);
+    const token = await sign(claims({ exp: NOW + 48 * 60 * 60 }));
+    await verify(token, store);
+    up = false;
+    const stale = NOW_MS + 2 * 60 * 60 * 1000;
+    for (let offset = 0; offset < 20_000; offset += 1000) await verify(token, store, stale + offset);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await verify(token, store, stale + 31_000);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+
+    // With no cache at all, a failing endpoint is also tried once per window.
+    const cold = vi.fn(async () => new Response('down', { status: 503 }));
+    const coldStore = new AccessKeyStore(cold as unknown as FetchLike);
+    for (let offset = 0; offset < 10_000; offset += 1000) await verify(token, coldStore, NOW_MS + offset);
+    expect(cold).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps using cached keys for a while if a refresh fails, then stops', async () => {
     let up = true;
     const fetcher = vi.fn(async () => (up ? Response.json({ keys: [publicJwk] }) : new Response('down', { status: 503 })));

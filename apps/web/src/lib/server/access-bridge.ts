@@ -5,12 +5,15 @@
 // - The authority is user_identities('access', <Access sub>). Returning
 //   visits are looked up by sub only; the token's email is never a lookup
 //   key once a binding exists.
-// - A first visit may bind to an existing account whose email equals the
-//   verified token email, unless that account is paused or offboarded,
-//   already has an Access binding, or is a manager. A manager links by
-//   visiting while already signed in through their existing provider.
+// - A first visit may adopt an existing account by verified email only when
+//   that account has no sign-in identity yet (an invited or synced account
+//   that never signed in), is standard, and is pending or active. An account
+//   that already signs in with Google, Microsoft or email, and every manager,
+//   links instead by visiting once while signed in through that provider.
 // - ACCESS_AUTO_PROVISION=true creates a standard account and personal
 //   mailbox only for an email on MAIL_DOMAIN. Managers are never created.
+// - The sign-in country gate runs before any binding, activation or account
+//   creation.
 // - Nothing happens before the first manager exists: /bootstrap stays the
 //   only way to create that account.
 
@@ -18,15 +21,16 @@ import type { Env, User } from '@cmail/shared/types';
 import type { AccessIdentity } from './access-jwt';
 import { audit } from './db';
 import { maxSessionsPerUser, sessionTtlMs } from './config';
-import { buildSessionCookie, createSessionToken } from './session';
+import { buildSessionCookie, createSessionToken, hashToken } from './session';
 import { loadOrgSettings } from './org-settings';
-import { recordTravelRequest, requestCountry, signInCountryGate } from './travel';
+import { consumeRateLimit } from './rate-limit';
+import { countryAllowed, recordTravelRequest, requestCountry, signInCountryGate } from './travel';
 import { normalizeDomain, normalizeEmail, normalizeMailboxLocalPart } from './validation';
 
 export type AccessDenyReason =
   | 'account_suspended'
   | 'identity_conflict'
-  | 'manager_link_required'
+  | 'link_required'
   | 'enrollment_required'
   | 'not_set_up'
   | 'country_pending';
@@ -35,7 +39,12 @@ export type AccessResolution =
   | { ok: true; user: User; how: 'returning' | 'bound_existing' | 'provisioned'; emailChanged: boolean }
   | { ok: false; reason: AccessDenyReason; userId?: string };
 
+/** Country check run before anything is bound or created; null = no account yet. */
+export type AccessCountryGate = (user: User | null) => Promise<boolean>;
+
 const SUSPENDED = new Set(['paused', 'offboarded']);
+/** Repeated denials and email-change notes for one person are audited once per window. */
+export const ACCESS_AUDIT_DEDUPE_SECONDS = 10 * 60;
 
 /** Paths where an Access identity must not open a session on its own. */
 export function accessSignInPathAllowed(method: string, pathname: string): boolean {
@@ -61,16 +70,38 @@ export async function accessSubjectForUser(db: D1Database, userId: string): Prom
 }
 
 /**
+ * Writes the audit row only once per person, reason and window, so a
+ * refused user browsing around cannot flood audit_log. The rate-limit key is
+ * a hash, so the table never holds the sub or email. If the throttle itself
+ * fails the row is written anyway: losing the record is worse than a repeat.
+ */
+async function auditDeduped(
+  db: D1Database,
+  key: string,
+  event: Parameters<typeof audit>[1],
+): Promise<void> {
+  try {
+    const hashed = (await hashToken(key)).slice(0, 32);
+    const slot = await consumeRateLimit(db, 'access-audit', hashed, 1, ACCESS_AUDIT_DEDUPE_SECONDS);
+    if (!slot.allowed) return;
+  } catch {
+    // Fall through and audit.
+  }
+  await audit(db, event);
+}
+
+/**
  * Inserts the binding only if this account still has no Access identity and
- * is still eligible. The (provider, subject) primary key stops one sub
- * binding twice; the (provider, user_id) unique key from migration 0021
- * stops one account holding two subs.
+ * is still eligible. `requireNoIdentity` is the first-visit adoption rule:
+ * the account must have no identity of any kind. The (provider, subject)
+ * primary key stops one sub binding twice; the (provider, user_id) unique key
+ * from migration 0021 stops one account holding two subs.
  */
 async function bindAccessIdentity(
   db: D1Database,
   userId: string,
   subject: string,
-  allowManager: boolean,
+  options: { allowManager: boolean; requireNoIdentity: boolean },
 ): Promise<boolean> {
   try {
     const result = await db.prepare(
@@ -79,8 +110,11 @@ async function bindAccessIdentity(
        WHERE u.id = ?
          AND u.status IN ('pending', 'active')
          AND (? = 1 OR u.role = 'standard')
-         AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.provider = 'access' AND i.user_id = u.id)`,
-    ).bind(subject, userId, allowManager ? 1 : 0).run();
+         AND NOT EXISTS (
+           SELECT 1 FROM user_identities i
+           WHERE i.user_id = u.id AND (i.provider = 'access' OR ? = 1)
+         )`,
+    ).bind(subject, userId, options.allowManager ? 1 : 0, options.requireNoIdentity ? 1 : 0).run();
     if (!result.meta.changes) return false;
   } catch {
     // A primary-key or unique violation means another request or account
@@ -94,13 +128,17 @@ async function bindAccessIdentity(
   return true;
 }
 
+function provisionableAddress(identity: AccessIdentity, mailDomain: string): { localPart: string } | null {
+  const [localPart, domain] = identity.email.split('@');
+  if (domain !== mailDomain || normalizeMailboxLocalPart(localPart) !== localPart) return null;
+  return { localPart };
+}
+
 async function provisionAccessUser(
   db: D1Database,
   identity: AccessIdentity,
-  mailDomain: string,
+  localPart: string,
 ): Promise<User | null> {
-  const [localPart, domain] = identity.email.split('@');
-  if (domain !== mailDomain || normalizeMailboxLocalPart(localPart) !== localPart) return null;
   const userId = crypto.randomUUID();
   const mailboxId = crypto.randomUUID();
   try {
@@ -142,15 +180,19 @@ async function provisionAccessUser(
   return db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first<User>();
 }
 
+const allowAll: AccessCountryGate = async () => true;
+
 /** Finds or binds the account for a verified Access identity. Creates no session. */
 export async function resolveAccessUser(
   db: D1Database,
   identity: AccessIdentity,
-  options: { autoProvision: boolean; mailDomain: string },
+  options: { autoProvision: boolean; mailDomain: string; countryGate?: AccessCountryGate },
 ): Promise<AccessResolution> {
+  const countryGate = options.countryGate ?? allowAll;
   const bound = await findAccessBoundUser(db, identity.subject);
   if (bound) {
     if (SUSPENDED.has(bound.status)) return { ok: false, reason: 'account_suspended', userId: bound.id };
+    if (!await countryGate(bound)) return { ok: false, reason: 'country_pending', userId: bound.id };
     return { ok: true, user: bound, how: 'returning', emailChanged: normalizeEmail(bound.email) !== identity.email };
   }
 
@@ -159,15 +201,20 @@ export async function resolveAccessUser(
 
   const candidate = await db.prepare(
     `SELECT u.*,
-            EXISTS (SELECT 1 FROM user_identities i WHERE i.provider = 'access' AND i.user_id = u.id) AS has_access
+            EXISTS (SELECT 1 FROM user_identities i WHERE i.provider = 'access' AND i.user_id = u.id) AS has_access,
+            EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id) AS has_identity
      FROM users u WHERE lower(u.email) = ? LIMIT 1`,
-  ).bind(identity.email).first<User & { has_access: number }>();
+  ).bind(identity.email).first<User & { has_access: number; has_identity: number }>();
 
   if (candidate) {
     if (SUSPENDED.has(candidate.status)) return { ok: false, reason: 'account_suspended', userId: candidate.id };
     if (candidate.has_access) return { ok: false, reason: 'identity_conflict', userId: candidate.id };
-    if (candidate.role !== 'standard') return { ok: false, reason: 'manager_link_required', userId: candidate.id };
-    if (!await bindAccessIdentity(db, candidate.id, identity.subject, false)) {
+    // Email alone never adopts an account someone already signs in to, or a manager.
+    if (candidate.role !== 'standard' || candidate.has_identity) {
+      return { ok: false, reason: 'link_required', userId: candidate.id };
+    }
+    if (!await countryGate(candidate)) return { ok: false, reason: 'country_pending', userId: candidate.id };
+    if (!await bindAccessIdentity(db, candidate.id, identity.subject, { allowManager: false, requireNoIdentity: true })) {
       return { ok: false, reason: 'identity_conflict', userId: candidate.id };
     }
     await audit(db, {
@@ -175,7 +222,7 @@ export async function resolveAccessUser(
       actor_id: candidate.id,
       actor_role: candidate.role,
       target: candidate.id,
-      detail: 'Bound a Cloudflare Access identity to an existing account by verified email',
+      detail: 'Bound a Cloudflare Access identity to an account with no sign-in identity, by verified email',
     });
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').bind(candidate.id).first<User>();
     if (!user) return { ok: false, reason: 'identity_conflict' };
@@ -183,8 +230,10 @@ export async function resolveAccessUser(
   }
 
   const mailDomain = normalizeDomain(options.mailDomain);
-  if (!options.autoProvision || !mailDomain) return { ok: false, reason: 'enrollment_required' };
-  const created = await provisionAccessUser(db, identity, mailDomain);
+  const address = options.autoProvision && mailDomain ? provisionableAddress(identity, mailDomain) : null;
+  if (!address) return { ok: false, reason: 'enrollment_required' };
+  if (!await countryGate(null)) return { ok: false, reason: 'country_pending' };
+  const created = await provisionAccessUser(db, identity, address.localPart);
   if (created) {
     await audit(db, {
       event_type: 'auth.identity_bound',
@@ -205,8 +254,9 @@ export async function resolveAccessUser(
  * For a request that already has a valid cmail session: true when the
  * session's account is bound to this Access sub, or when it has no Access
  * binding yet, its email matches the verified token, and the binding is
- * made now (this is how managers and existing OAuth users link). False
- * means the session belongs to someone else and must not be used.
+ * made now. This is how managers and existing Google, Microsoft or email
+ * users link: one visit while signed in the normal way. False means the
+ * session belongs to someone else and must not be used.
  */
 export async function confirmSessionAccessBinding(
   db: D1Database,
@@ -217,7 +267,9 @@ export async function confirmSessionAccessBinding(
   const subject = await accessSubjectForUser(db, user.id);
   if (subject !== null) return subject === identity.subject;
   if (normalizeEmail(user.email) !== identity.email) return false;
-  if (!await bindAccessIdentity(db, user.id, identity.subject, true)) return false;
+  if (!await bindAccessIdentity(db, user.id, identity.subject, { allowManager: true, requireNoIdentity: false })) {
+    return false;
+  }
   await audit(db, {
     event_type: 'auth.identity_bound',
     actor_id: user.id,
@@ -229,8 +281,14 @@ export async function confirmSessionAccessBinding(
   return true;
 }
 
-async function denyAccess(db: D1Database, reason: AccessDenyReason, clientIp: string, userId?: string): Promise<null> {
-  await audit(db, {
+async function denyAccess(
+  db: D1Database,
+  identity: AccessIdentity,
+  reason: AccessDenyReason,
+  clientIp: string,
+  userId?: string,
+): Promise<null> {
+  await auditDeduped(db, `deny:${reason}:${identity.subject}:${identity.email}`, {
     event_type: 'auth.sign_in_denied',
     actor_id: userId ?? null,
     actor_role: 'system',
@@ -242,39 +300,48 @@ async function denyAccess(db: D1Database, reason: AccessDenyReason, clientIp: st
 }
 
 /**
- * Resolves the account and opens a cmail session for it, with the same
- * country gate, session cap and audit trail as an OAuth sign-in. Returns
- * null (signed out) on any refusal.
+ * Resolves the account and gives the request a session, with the same
+ * country gate, session cap and audit trail as an OAuth sign-in.
+ *
+ * Every request already needs a valid Access token, so a request that
+ * arrives without a cmail cookie reuses the account's newest live session
+ * when it has one (no cookie, no sign-in row, no eviction of the user's
+ * other sessions). A new session and cookie are minted only when none is
+ * live. Returns null (signed out) on any refusal.
  */
 export async function establishAccessSession(
   env: Record<string, unknown> & { DB: D1Database; SESSION_SECRET: string },
   identity: AccessIdentity,
   request: Request,
   options: { autoProvision: boolean; secureCookie: boolean },
-): Promise<{ user: User; sessionId: string; cookie: string } | null> {
+): Promise<{ user: User; sessionId: string; cookie: string | null } | null> {
   const db = env.DB;
   const clientIp = (request.headers.get('cf-connecting-ip') || '').slice(0, 64);
+  const country = requestCountry(request);
+  const settings = await loadOrgSettings(env);
+  const countryGate: AccessCountryGate = async (user) => {
+    if (!user) return countryAllowed(country, settings.signInCountries);
+    const gate = await signInCountryGate(db, settings, { userId: user.id, country });
+    if (!gate.allowed) {
+      await recordTravelRequest(db, env as unknown as Env, { user, country, appUrl: settings.appUrl || String(env.APP_URL || '') });
+    }
+    return gate.allowed;
+  };
+
   const resolution = await resolveAccessUser(db, identity, {
     autoProvision: options.autoProvision,
     mailDomain: typeof env.MAIL_DOMAIN === 'string' ? env.MAIL_DOMAIN : '',
+    countryGate,
   });
   if (!resolution.ok) {
     // Before the first manager exists there is nothing to deny; stay quiet.
     if (resolution.reason === 'not_set_up') return null;
-    return denyAccess(db, resolution.reason, clientIp, resolution.userId);
+    return denyAccess(db, identity, resolution.reason, clientIp, resolution.userId);
   }
   const user = resolution.user;
 
-  const country = requestCountry(request);
-  const settings = await loadOrgSettings(env);
-  const gate = await signInCountryGate(db, settings, { userId: user.id, country });
-  if (!gate.allowed) {
-    await recordTravelRequest(db, env as unknown as Env, { user, country, appUrl: settings.appUrl || String(env.APP_URL || '') });
-    return denyAccess(db, 'country_pending', clientIp, user.id);
-  }
-
   if (resolution.emailChanged) {
-    await audit(db, {
+    await auditDeduped(db, `email-changed:${user.id}:${identity.email}`, {
       event_type: 'auth.access_email_changed',
       actor_id: user.id,
       actor_role: user.role,
@@ -282,6 +349,18 @@ export async function establishAccessSession(
       detail: 'Cloudflare Access email differs from the account email; binding kept by subject',
       ip_address: clientIp,
     });
+  }
+
+  const live = await db.prepare(
+    `SELECT id FROM sessions
+     WHERE user_id = ? AND revoked = 0 AND expires_at > datetime('now')
+     ORDER BY expires_at DESC, id DESC LIMIT 1`,
+  ).bind(user.id).first<{ id: string }>();
+  if (live) {
+    const current = await db.prepare(
+      `SELECT * FROM users WHERE id = ? AND status IN ('active', 'pending')`,
+    ).bind(user.id).first<User>();
+    return current ? { user: current, sessionId: live.id, cookie: null } : null;
   }
 
   await db.prepare(

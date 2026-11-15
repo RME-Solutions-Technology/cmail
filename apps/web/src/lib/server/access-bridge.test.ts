@@ -8,6 +8,7 @@ import {
   resolveAccessUser,
 } from './access-bridge';
 import { buildSessionCookie, createSessionToken } from './session';
+import { findEnrollment, issueEnrollmentToken } from './identity';
 import { handle } from '../../hooks.server';
 
 const SUB_A = 'access-sub-a';
@@ -106,11 +107,42 @@ describe('resolveAccessUser', () => {
       expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.identity_bound' AND target = 'invitee'`)).toBe(1);
     });
 
-    it('binds an active account that already signs in with Microsoft', async () => {
+    it('adopts an active account that has no sign-in identity yet (for example a synced account)', async () => {
+      seed(`INSERT INTO users (id, email, status) VALUES ('synced', 'synced@example.test', 'active');`);
+      expect(await resolve(SUB_A, 'synced@example.test')).toMatchObject({ ok: true, how: 'bound_existing' });
+      expect(count(`SELECT COUNT(*) AS n FROM user_identities WHERE provider = 'access' AND user_id = 'synced'`)).toBe(1);
+    });
+
+    it('never adopts by email an account that already signs in with Microsoft or email', async () => {
+      seed(`INSERT INTO users (id, email, status, auth_provider) VALUES
+          ('ms-user', 'staff@example.test', 'active', 'microsoft'),
+          ('otp-user', 'otp@example.test', 'active', '');
+        INSERT INTO user_identities (provider, subject, user_id) VALUES
+          ('microsoft', 'ms-sub', 'ms-user'), ('email', 'otp@example.test', 'otp-user');`);
+      expect(await resolve(SUB_A, 'staff@example.test')).toMatchObject({ ok: false, reason: 'link_required' });
+      expect(await resolve(SUB_B, 'otp@example.test')).toMatchObject({ ok: false, reason: 'link_required' });
+      expect(count(`SELECT COUNT(*) AS n FROM user_identities WHERE provider = 'access'`)).toBe(0);
+    });
+
+    it('links an account with a Microsoft identity once its owner visits while signed in', async () => {
       seed(`INSERT INTO users (id, email, status, auth_provider) VALUES ('ms-user', 'staff@example.test', 'active', 'microsoft');
         INSERT INTO user_identities (provider, subject, user_id) VALUES ('microsoft', 'ms-sub', 'ms-user');`);
-      expect(await resolve(SUB_A, 'staff@example.test')).toMatchObject({ ok: true, how: 'bound_existing' });
-      expect(count(`SELECT COUNT(*) AS n FROM user_identities WHERE user_id = 'ms-user'`)).toBe(2);
+      expect(await confirmSessionAccessBinding(db.d1, userRow('ms-user'), { subject: SUB_A, email: 'staff@example.test' }, '')).toBe(true);
+      expect(await resolve(SUB_A, 'staff@example.test')).toMatchObject({ ok: true, how: 'returning' });
+    });
+
+    it('runs the country gate before binding, activating or creating anything', async () => {
+      seed(`INSERT INTO users (id, email, status) VALUES ('invitee', 'invitee@example.test', 'pending');`);
+      const deny = vi.fn(async () => false);
+      const options = { autoProvision: true, mailDomain: MAIL_DOMAIN, countryGate: deny };
+      expect(await resolveAccessUser(db.d1, { subject: SUB_A, email: 'invitee@example.test' }, options))
+        .toMatchObject({ ok: false, reason: 'country_pending' });
+      expect(userRow('invitee').status).toBe('pending');
+      expect(await resolveAccessUser(db.d1, { subject: SUB_B, email: 'brand.new@example.test' }, options))
+        .toMatchObject({ ok: false, reason: 'country_pending' });
+      expect(count(`SELECT COUNT(*) AS n FROM user_identities WHERE provider = 'access'`)).toBe(0);
+      expect(count(`SELECT COUNT(*) AS n FROM users WHERE email = 'brand.new@example.test'`)).toBe(0);
+      expect(deny).toHaveBeenCalledTimes(2);
     });
 
     it('never binds a paused or offboarded account', async () => {
@@ -128,7 +160,7 @@ describe('resolveAccessUser', () => {
     });
 
     it('never binds a manager by email alone', async () => {
-      expect(await resolve(SUB_A, 'manager@example.test', true)).toMatchObject({ ok: false, reason: 'manager_link_required' });
+      expect(await resolve(SUB_A, 'manager@example.test', true)).toMatchObject({ ok: false, reason: 'link_required' });
       expect(count(`SELECT COUNT(*) AS n FROM user_identities WHERE provider = 'access'`)).toBe(0);
     });
 
@@ -241,6 +273,66 @@ describe('establishAccessSession', () => {
     expect(result).toBeNull();
     expect(count(`SELECT COUNT(*) AS n FROM sessions`)).toBe(0);
     expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.sign_in_denied'`)).toBe(1);
+  });
+
+  const establish = (subject: string, email: string) => establishAccessSession(
+    { DB: db.d1, SESSION_SECRET, MAIL_DOMAIN },
+    { subject, email },
+    new Request('https://mail.example.test/mail'),
+    { autoProvision: false, secureCookie: true },
+  );
+
+  it('audits a repeated denial for the same person once per window', async () => {
+    for (let index = 0; index < 5; index += 1) await establish(SUB_A, 'stranger@example.test');
+    await establish(SUB_B, 'other.stranger@example.test');
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.sign_in_denied'`)).toBe(2);
+    // The throttle key is hashed: no sub or email is stored in rate_limits.
+    expect(count(`SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE ? OR key LIKE ?`, `%${SUB_A}%`, '%stranger%')).toBe(0);
+  });
+
+  it('reuses a live session for cookie-less visits instead of minting, evicting or auditing again', async () => {
+    seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'person@example.test', 'active');
+      INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1');`);
+    const first = await establish(SUB_A, 'person@example.test');
+    expect(first?.cookie).toMatch(/^cmail_session=/);
+    for (let index = 0; index < 8; index += 1) {
+      const again = await establish(SUB_A, 'person@example.test');
+      expect(again?.cookie).toBeNull();
+      expect(again?.sessionId).toBe(first?.sessionId);
+    }
+    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1'`)).toBe(1);
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.sign_in'`)).toBe(1);
+  });
+
+  it("never evicts the user's other device sessions on a cookie-less visit", async () => {
+    seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'person@example.test', 'active');
+      INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1');
+      INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked) VALUES
+        ('s1', 'u1', 'h1', datetime('now', '+1 day'), 0), ('s2', 'u1', 'h2', datetime('now', '+2 days'), 0),
+        ('s3', 'u1', 'h3', datetime('now', '+3 days'), 0), ('s4', 'u1', 'h4', datetime('now', '+4 days'), 0),
+        ('s5', 'u1', 'h5', datetime('now', '+5 days'), 0);`);
+    const result = await establish(SUB_A, 'person@example.test');
+    expect(result?.sessionId).toBe('s5');
+    expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1' AND revoked = 0`)).toBe(5);
+  });
+
+  it('audits an email change once per window, not on every visit', async () => {
+    seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'old@example.test', 'active');
+      INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1');`);
+    for (let index = 0; index < 4; index += 1) await establish(SUB_A, 'renamed@example.test');
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.access_email_changed'`)).toBe(1);
+  });
+});
+
+describe('findEnrollment with two identity rows', () => {
+  it('reports the sign-in identity, not the Access one, every time', async () => {
+    seedManager();
+    seed(`INSERT INTO users (id, email, status) VALUES ('u1', 'person@example.test', 'active');
+      INSERT INTO user_identities (provider, subject, user_id) VALUES ('access', '${SUB_A}', 'u1'), ('microsoft', 'ms-1', 'u1');`);
+    const { token } = await issueEnrollmentToken(db.d1, 'u1', 'manager-1');
+    for (let index = 0; index < 3; index += 1) {
+      expect((await findEnrollment(db.d1, token))?.bound_provider).toBe('microsoft');
+    }
   });
 });
 
@@ -375,6 +467,30 @@ describe('hooks with the Access bridge', () => {
     });
     expect(locals.user?.id).toBe('u2');
     expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'u1' AND revoked = 0`)).toBe(0);
+  });
+
+  it('leaves /mcp bearer requests to their own auth: no Access gate, no session, no cookie', async () => {
+    const url = new URL('/mcp', 'https://mail.example.test');
+    const event = {
+      url,
+      request: new Request(url, {
+        method: 'POST',
+        headers: { authorization: 'Bearer example-test-token', 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      locals: { user: null as User | null, sessionId: null as string | null },
+      platform: {
+        env: { DB: db.d1, SESSION_SECRET, MAIL_DOMAIN, APP_URL: 'https://mail.example.test', ...ACCESS_ENV },
+        context: { waitUntil: vi.fn() },
+        caches: {},
+      },
+    };
+    const resolveRoute = vi.fn(async () => new Response('mcp handler'));
+    const response: Response = await (handle as any)({ event, resolve: resolveRoute });
+    expect(resolveRoute).toHaveBeenCalledTimes(1);
+    expect(await response.text()).toBe('mcp handler');
+    expect(event.locals.user).toBeNull();
+    expect(response.headers.get('set-cookie')).toBeNull();
   });
 
   it('does not open an Access session on the bootstrap page', async () => {
