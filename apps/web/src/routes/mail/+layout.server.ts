@@ -5,6 +5,7 @@ import { getEnabledProviders, isAuthProvider } from '#lib/server/auth.js';
 import { BOOTSTRAP_PROOF_COOKIE } from '#lib/server/bootstrap.js';
 import { ENROLLMENT_COOKIE } from '#lib/server/identity.js';
 import { PROVIDER_PREFERENCE_COOKIE } from '#lib/server/provider-preference.js';
+import { passkeySigninEnabled } from '#lib/server/passkeys.js';
 
 export const load: LayoutServerLoad = async ({ locals, platform, cookies, request, url, isDataRequest, setHeaders }) => {
   const env = platform?.env;
@@ -41,5 +42,6 @@ export const load: LayoutServerLoad = async ({ locals, platform, cookies, reques
     user: locals.user,
     mailboxes,
     totalUnread,
+    passkeysEnabled: await passkeySigninEnabled(env.DB),
   };
 };

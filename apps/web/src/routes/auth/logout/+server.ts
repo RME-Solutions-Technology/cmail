@@ -26,6 +26,9 @@ export const POST: RequestHandler = async ({ locals, platform, url }) => {
   // user straight back in, so end that too. Cloudflare serves this path on
   // every Access-protected hostname.
   const accessOn = env ? accessMode(env as unknown as Record<string, unknown>).mode !== 'off' : false;
-  headers.set('Location', accessOn ? '/cdn-cgi/access/logout' : '/');
+  // A passkey session was not opened through Access (it may be in use
+  // precisely because Access or Microsoft is down), so it returns to the
+  // passkey page instead of the Access logout.
+  headers.set('Location', locals.passkeySession ? '/auth/passkey' : accessOn ? '/cdn-cgi/access/logout' : '/');
   return new Response(null, { status: 303, headers });
 };

@@ -17,6 +17,8 @@ declare global {
     interface Locals {
       user: User | null;
       sessionId: string | null;
+      /** True when this request's session was opened with a passkey (docs/passkeys.md). */
+      passkeySession?: boolean;
     }
     interface Platform {
       env: CmailEnv;

@@ -99,7 +99,9 @@ binding yet and its email matches the token, the binding is made then (this is
 how a manager or an existing Google/Microsoft user links). Otherwise the
 session belongs to someone else: it is revoked and ignored. If only one of the
 two variables is set, or either is invalid, every request is signed out and
-the error is logged once per isolate.
+the error is logged once per isolate. The one exception is a session opened
+with a passkey at `/auth/passkey` (optional, off by default): it does not need
+an Access token. See [Passkey break-glass sign-in](passkeys.md#cloudflare-access).
 
 **Binding.** An Access identity opens a session (on an ordinary page `GET`,
 not `/bootstrap`, `/enroll/*`, `/auth/*`, `/mcp` or the OAuth machine

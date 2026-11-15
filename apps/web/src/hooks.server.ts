@@ -1,13 +1,18 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit/hooks';
 import type { User } from '@cmail/shared/types';
 import { assertStrongSessionSecret, publicRuntimeConfig, sessionTtlMs } from '#lib/server/config.js';
-import { clearSessionCookie, getSessionTokenFromCookie, hashToken, shouldRenewSession, verifySessionToken } from '#lib/server/session.js';
+import { SESSION_COOKIE, clearSessionCookie, getSessionTokenFromCookie, hashToken, shouldRenewSession, verifySessionToken } from '#lib/server/session.js';
 import { mcpMaintenanceStatements } from '#lib/server/mcp/maintenance.js';
 import { runtimePlatform } from '#lib/server/cloudflare-runtime.js';
 import { ACCESS_JWT_HEADER, accessMode, verifyAccessJwt, type AccessIdentity } from '#lib/server/access-jwt.js';
 import { accessSignInPathAllowed, confirmSessionAccessBinding, establishAccessSession } from '#lib/server/access-bridge.js';
+import { passkeySessionState, relyingParty } from '#lib/server/passkeys.js';
 
 let loggedAccessMisconfiguration = false;
+
+function setsSessionCookie(response: Response): boolean {
+  return response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION_COOKIE}=`) && !/;\s*Max-Age=0/i.test(cookie));
+}
 
 function appendVary(headers: Headers, value: string): void {
   const values = new Set(
@@ -76,6 +81,7 @@ function isAdminRequestPath(pathname: string): boolean {
 export const handle: Handle = async ({ event, resolve }) => {
   event.locals.user = null;
   event.locals.sessionId = null;
+  event.locals.passkeySession = false;
   if (!event.platform) {
     // adapter-cloudflare 8 no longer provides event.platform; RequestEvent types it read-only.
     Object.defineProperty(event, 'platform', { value: runtimePlatform(), writable: true, configurable: true, enumerable: true });
@@ -98,6 +104,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   // Cloudflare Access bridge. Off when ACCESS_TEAM_DOMAIN and ACCESS_AUD are
   // both unset. Otherwise every session, cookie-based or new, needs a valid
   // Access token on this request, and a broken configuration fails closed.
+  // The one exception is a passkey session (see below).
   const access = env ? accessMode(env as unknown as Record<string, unknown>) : { mode: 'off' as const };
   let accessIdentity: AccessIdentity | null = null;
   if (access.mode === 'misconfigured') {
@@ -116,24 +123,63 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   let clearInvalidCookie = false;
   let accessSessionCookie: string | null = null;
+  // A passkey session (sessions.passkey_credential_id set) was opened without
+  // Microsoft or Access, so it does not need an Access token: it is the one
+  // kind of cookie session the Access gate lets through (docs/passkeys.md).
+  // Every other cookie session still needs a valid Access token whenever the
+  // bridge is on or misconfigured, exactly as before.
+  let keepCookie = !accessGatePassed;
+  let setAsidePasskeySessionId: string | null = null;
   const token = getSessionTokenFromCookie(event.request.headers.get('cookie'));
-  if (env && token && accessGatePassed) {
+  if (env && token) {
     try {
       assertStrongSessionSecret(env.SESSION_SECRET);
       const verified = await verifySessionToken(token, env.SESSION_SECRET);
       if (verified) {
         const tokenHash = await hashToken(token);
+        // SELECT * so a database without migration 0025 (no marker column)
+        // still reads every session as an ordinary one.
         const session = await env.DB.prepare(
-          `SELECT id, user_id, expires_at FROM sessions
+          `SELECT * FROM sessions
            WHERE token_hash = ? AND revoked = 0 AND expires_at > datetime('now')`,
-        ).bind(tokenHash).first<{ id: string; user_id: string; expires_at: string }>();
+        ).bind(tokenHash).first<{ id: string; user_id: string; expires_at: string; passkey_credential_id?: string | null }>();
+        const passkeyCredentialId = typeof session?.passkey_credential_id === 'string' && session.passkey_credential_id
+          ? session.passkey_credential_id
+          : null;
 
-        if (session && session.id === verified.sessionId && session.user_id === verified.userId) {
-          const user = await env.DB.prepare(
+        if (
+          session && session.id === verified.sessionId && session.user_id === verified.userId
+          && (accessGatePassed || passkeyCredentialId)
+        ) {
+          let user = await env.DB.prepare(
             `SELECT * FROM users WHERE id = ? AND status IN ('active', 'pending')`,
           ).bind(verified.userId).first<User>();
+          if (user && passkeyCredentialId && user.status !== 'active') {
+            // Passkey sessions are for active accounts only (not pending).
+            user = null;
+          } else if (user && passkeyCredentialId && event.url.origin !== relyingParty(env as unknown as Record<string, unknown>)?.origin) {
+            // Passkey sessions are bound to the relying party's origin
+            // (APP_URL): a replayed cookie on *.pages.dev or another
+            // hostname gets nothing. The session itself is left alone.
+            user = null;
+          } else if (user && passkeyCredentialId) {
+            // Live only while the feature is on and the passkey still exists.
+            const state = await passkeySessionState(env.DB, passkeyCredentialId, user.id);
+            if (state === 'dead') {
+              await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(session.id).run();
+              keepCookie = false;
+            } else if (state === 'error') {
+              // The check failed, not the session: signed out for this
+              // request only, cookie kept.
+              keepCookie = true;
+            }
+            if (state !== 'live') user = null;
+          }
           // Under Access, the session must belong to the person Access
-          // admitted. A session for someone else is revoked, not reused.
+          // admitted. An ordinary session for someone else is revoked, not
+          // reused. A passkey session for someone else is only set aside for
+          // this request (never revoked, cookie kept): Access then signs the
+          // token's person in as usual.
           const sessionMatchesAccess = !user || !accessIdentity
             || await confirmSessionAccessBinding(
               env.DB,
@@ -142,11 +188,17 @@ export const handle: Handle = async ({ event, resolve }) => {
               (event.request.headers.get('cf-connecting-ip') || '').slice(0, 64),
             );
           if (user && !sessionMatchesAccess) {
-            await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(session.id).run();
+            if (passkeyCredentialId) {
+              keepCookie = true;
+              setAsidePasskeySessionId = session.id;
+            } else {
+              await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(session.id).run();
+            }
           }
           if (user && sessionMatchesAccess) {
             event.locals.user = user;
             event.locals.sessionId = session.id;
+            event.locals.passkeySession = passkeyCredentialId !== null;
 
             // Sliding session: the DB row's expires_at is the only expiry
             // authority (the token itself carries none). Push it back out to
@@ -154,9 +206,11 @@ export const handle: Handle = async ({ event, resolve }) => {
             // session alive; sign-out, pause, and offboarding still revoke it
             // immediately elsewhere. Best-effort and isolated from the outer
             // catch below — a renewal failure must never clear a valid cookie.
+            // Passkey sessions are never renewed: their short lifetime
+            // (PASSKEY_SESSION_TTL_HOURS) is fixed at sign-in.
             try {
               const ttlMs = sessionTtlMs(env as unknown as Record<string, unknown>);
-              if (shouldRenewSession(Date.parse(session.expires_at), Date.now(), ttlMs)) {
+              if (!passkeyCredentialId && shouldRenewSession(Date.parse(session.expires_at), Date.now(), ttlMs)) {
                 const ttlHours = Math.max(1, Math.round(ttlMs / (60 * 60 * 1000)));
                 event.platform?.context.waitUntil(
                   env.DB.prepare(
@@ -170,9 +224,9 @@ export const handle: Handle = async ({ event, resolve }) => {
           }
         }
       }
-      clearInvalidCookie = !event.locals.user;
+      clearInvalidCookie = !event.locals.user && !keepCookie;
     } catch {
-      clearInvalidCookie = true;
+      clearInvalidCookie = !keepCookie;
     }
   }
 
@@ -193,6 +247,12 @@ export const handle: Handle = async ({ event, resolve }) => {
         event.locals.sessionId = established.sessionId;
         accessSessionCookie = established.cookie;
         clearInvalidCookie = false;
+        if (setAsidePasskeySessionId) {
+          // The browser's passkey cookie is being replaced by this Access
+          // session, so the set-aside passkey session can never be used
+          // again: revoke it rather than leave it live in the database.
+          await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(setAsidePasskeySessionId).run();
+        }
       }
     } catch (error) {
       console.error('Access sign-in failed', {
@@ -202,7 +262,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   const withSessionCookies = (response: Response): Response => {
     if (accessSessionCookie) response.headers.append('Set-Cookie', accessSessionCookie);
-    else if (clearInvalidCookie) response.headers.append('Set-Cookie', clearSessionCookie(isHttps));
+    else if (clearInvalidCookie && !setsSessionCookie(response)) {
+      // A sign-in route that just issued a fresh session cookie (for example
+      // /auth/passkey/verify from a browser holding an expired one) keeps it.
+      response.headers.append('Set-Cookie', clearSessionCookie(isHttps));
+    }
     return response;
   };
 
@@ -243,6 +307,8 @@ export const handle: Handle = async ({ event, resolve }) => {
         env.DB.prepare(`DELETE FROM enrollment_tokens WHERE consumed_at IS NOT NULL OR expires_at < unixepoch('now')`).run(),
         env.DB.prepare(`DELETE FROM auth_otp_codes WHERE expires_epoch < unixepoch('now')`).run(),
         env.DB.prepare(`DELETE FROM send_idempotency WHERE created_at < datetime('now', '-7 days')`).run(),
+        // Own catch: the table exists only once migration 0025 is applied.
+        env.DB.prepare(`DELETE FROM passkey_challenges WHERE expires_at < unixepoch('now')`).run().catch(() => undefined),
         ...mcpMaintenanceStatements(env.DB).map((statement) => statement.run()),
       ]).then(() => undefined).catch(() => undefined),
     );
