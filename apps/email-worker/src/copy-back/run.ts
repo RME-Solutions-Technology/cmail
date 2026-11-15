@@ -103,8 +103,8 @@ type Outcome =
   | { state: 'failed'; reason: string; skipTarget: boolean; final?: boolean; network?: boolean }
   /** Not recorded: the mailbox is throttled; try its items next tick. */
   | { state: 'deferred' }
-  /** Exchange holds a copy as a draft: stop the whole job. */
-  | { state: 'halt' };
+  /** Exchange holds a copy as a draft, or did not say: stop the whole job. */
+  | { state: 'halt'; reason: 'created_as_draft' | 'draft_state_unknown' };
 
 /** Errors that stop the run. The item is not touched. */
 class RunStop extends Error {
@@ -236,7 +236,7 @@ async function copyOne(
   try {
     message = await db.prepare(
       `SELECT id, folder, from_address, from_name, to_participants, cc_participants, reply_to_participants,
-              to_addresses, cc_addresses, subject, body_r2_key, is_read, importance, message_id_header,
+              to_addresses, cc_addresses, bcc_participants, bcc_addresses, subject, body_r2_key, is_read, importance, message_id_header,
               in_reply_to, references_header, received_at, size_bytes
        FROM messages WHERE id = ?`,
     ).bind(item.message_id).first<CopyMessageRow>();
@@ -269,7 +269,8 @@ async function copyOne(
     return graphFailure(caught, 'lookup');
   }
   if (existing) {
-    if (existing.isDraft) return { state: 'halt' };
+    // Fails closed: a draft, or an answer that does not say, stops the job.
+    if (existing.isDraft !== false) return { state: 'halt', reason: existing.isDraft ? 'created_as_draft' : 'draft_state_unknown' };
     return (await unread(existing.id)) ?? { state: 'copied', reason: 'found_marker' };
   }
 
@@ -299,7 +300,7 @@ async function copyOne(
   } catch (caught) {
     return graphFailure(caught, 'create');
   }
-  if (created.isDraft) return { state: 'halt' };
+  if (created.isDraft !== false) return { state: 'halt', reason: created.isDraft ? 'created_as_draft' : 'draft_state_unknown' };
   return (await unread(created.id)) ?? { state: 'copied', reason: 'created' };
 }
 
@@ -330,9 +331,11 @@ export async function runCopyBackTick(env: CopyBackWorkerEnv, deps: CopyBackDeps
 
   const startedAt = now();
   const nowSeconds = Math.floor(startedAt / 1000);
+  // The lease value doubles as the owner token: only this invocation clears it.
+  const leaseUntil = nowSeconds + LEASE_SECONDS;
   const lease = await db.prepare(
     `UPDATE standby_copyback_jobs SET lease_until = ? WHERE id = ? AND status = 'running' AND lease_until < ?`,
-  ).bind(nowSeconds + LEASE_SECONDS, job.id, nowSeconds).run();
+  ).bind(leaseUntil, job.id, nowSeconds).run();
   if (!lease.meta.changes) return { status: 'busy' };
 
   const counts = { copied: 0, skipped: 0, failed: 0 };
@@ -377,6 +380,7 @@ export async function runCopyBackTick(env: CopyBackWorkerEnv, deps: CopyBackDeps
     let exhausted = false;
     let stopped = false;
     let halted = false;
+    let haltReason = '';
     const nowDb = dbTime(startedAt);
     work: while (withinTime() && processed < budgets.items && graph.requests < budgets.graph) {
       const batch = await dueItems(db, params, nowDb, budgets.workChunk, cursor);
@@ -395,11 +399,12 @@ export async function runCopyBackTick(env: CopyBackWorkerEnv, deps: CopyBackDeps
         const outcome = await copyOne(env, graph, item, budgets.maxBytes);
         if (outcome.state === 'halt') {
           // Draft canary: record this item as given up and stop the job.
-          await recordOutcome(db, job.id, item, { state: 'failed', reason: 'created_as_draft', skipTarget: true, final: true }, now());
+          await recordOutcome(db, job.id, item, { state: 'failed', reason: outcome.reason, skipTarget: true, final: true }, now());
+          haltReason = outcome.reason;
           counts.failed += 1;
           await db.prepare(`UPDATE standby_copyback_jobs SET status = 'halted', finished_at = datetime('now'), updated_at = datetime('now')
             WHERE id = ? AND status = 'running'`).bind(job.id).run();
-          console.error('Standby copy-back halted: Exchange created a draft instead of a received item');
+          console.error('Standby copy-back halted by the draft canary', { reason: outcome.reason });
           halted = true;
           break work;
         }
@@ -418,7 +423,7 @@ export async function runCopyBackTick(env: CopyBackWorkerEnv, deps: CopyBackDeps
     }
 
     if (halted) {
-      await setJob(db, job.id, { last_result: 'halted', last_error_code: 'created_as_draft' });
+      await setJob(db, job.id, { last_result: 'halted', last_error_code: haltReason });
       return { status: 'halted', ...counts, done: false };
     }
     if (stopped) {
@@ -454,7 +459,10 @@ export async function runCopyBackTick(env: CopyBackWorkerEnv, deps: CopyBackDeps
     }).catch(() => undefined);
     return { status: 'error', code };
   } finally {
-    await db.prepare('UPDATE standby_copyback_jobs SET lease_until = 0 WHERE id = ?').bind(job.id).run().catch(() => undefined);
+    // Clear only our own lease: if this run outlived it and another invocation
+    // took the job, its lease stays.
+    await db.prepare('UPDATE standby_copyback_jobs SET lease_until = 0 WHERE id = ? AND lease_until = ?')
+      .bind(job.id, leaseUntil).run().catch(() => undefined);
   }
 }
 

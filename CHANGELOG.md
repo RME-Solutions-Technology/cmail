@@ -6,6 +6,9 @@ Notable changes to cmail are recorded here. The project follows
 
 ## [Unreleased]
 
+### Fixed
+- Standby copy-back: a create is never retried in place after a 503/504 (Exchange may already have stored it), so the next attempt's marker lookup prevents a duplicate; Sent copies keep Bcc; the draft canary fails closed when Exchange's answer does not say `isDraft: false`; a copy of a self-addressed message in the user's own Sent Items or Drafts no longer makes the Inbox copy look already delivered; the job lease is cleared only by its owner. No schema change. docs/copy-back.md.
+
 ### Changed
 - License: from this change on, cMail is licensed under the Apache License 2.0 (was MIT). The new license keeps the permissive terms and requires anyone who redistributes cMail or a derived work to keep the LICENSE and the NOTICE file (credit to RME Solutions Technology), keep copyright and attribution notices in source files, and state significant changes. It also gives an explicit patent grant. Copies you already received under the MIT License stay under MIT. The new `NOTICE` file is part of the license terms for new versions.
 

@@ -23,6 +23,7 @@
     internal: 'cmail could not read the message',
     copy_not_found: 'Copy disappeared before it could be set unread',
     created_as_draft: 'Exchange created a draft (job halted)',
+    draft_state_unknown: 'Exchange did not confirm it is not a draft (job halted)',
   };
 
   function when(value: string | null | undefined): string {

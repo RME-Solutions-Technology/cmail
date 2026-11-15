@@ -30,6 +30,9 @@ export interface CopyMessageRow {
   reply_to_participants: string;
   to_addresses: string;
   cc_addresses: string;
+  /** Only the sender's own Sent copy ever has Bcc (migration 0015). */
+  bcc_participants: string;
+  bcc_addresses: string;
   subject: string;
   body_r2_key: string | null;
   is_read: number;
@@ -180,6 +183,8 @@ export async function buildGraphMessage(
     toRecipients: recipients(message.to_participants, message.to_addresses),
     ccRecipients: recipients(message.cc_participants, message.cc_addresses),
     replyTo: recipients(message.reply_to_participants, '[]'),
+    // Bcc only on a Sent copy, as in cmail; received copies never reveal it.
+    ...(message.folder === 'sent' ? { bccRecipients: recipients(message.bcc_participants, message.bcc_addresses) } : {}),
     importance,
     isRead: true,
     categories: [COPYBACK_CATEGORY],
