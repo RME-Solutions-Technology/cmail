@@ -304,7 +304,7 @@ describe('sign-in', () => {
     }
     // A forged response with a lower counter must never look like a copied passkey.
     expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_counter_rollback'`)).toBe(0);
-    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_failed' AND detail LIKE '%verification_failed%'`)).toBe(3);
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_failed' AND target = 'user-alice' AND (detail LIKE '%not_verified%' OR detail LIKE '%verification_failed%')`)).toBe(3);
     expect(count(`SELECT COUNT(*) AS n FROM sessions WHERE passkey_credential_id IS NOT NULL`)).toBe(0);
   });
 

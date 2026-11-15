@@ -89,13 +89,15 @@ export class SoftAuthenticator {
   static async create(algorithm: SoftAlgorithm = 'ES256'): Promise<SoftAuthenticator> {
     const authenticator = new SoftAuthenticator();
     authenticator.algorithm = algorithm;
-    authenticator.keys = await crypto.subtle.generateKey(
-      algorithm === 'ES256' ? { name: 'ECDSA', namedCurve: 'P-256' }
-        : algorithm === 'Ed25519' ? { name: 'Ed25519' }
-          : { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
-      true,
-      ['sign', 'verify'],
-    ) as CryptoKeyPair;
+    const usages: KeyUsage[] = ['sign', 'verify'];
+    if (algorithm === 'ES256') {
+      authenticator.keys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' } as EcKeyGenParams, true, usages) as CryptoKeyPair;
+    } else if (algorithm === 'Ed25519') {
+      authenticator.keys = await crypto.subtle.generateKey({ name: 'Ed25519' } as Algorithm, true, usages) as CryptoKeyPair;
+    } else {
+      const params: RsaHashedKeyGenParams = { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' };
+      authenticator.keys = await crypto.subtle.generateKey(params, true, usages) as CryptoKeyPair;
+    }
     return authenticator;
   }
 

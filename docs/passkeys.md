@@ -24,8 +24,13 @@ is on):
 1. The person must be signed in the normal way, not with a passkey, and the
    session must have been opened in the last 15 minutes
    (`REGISTRATION_FRESH_MINUTES`). Otherwise the page asks them to sign out
-   and in again. This stops an old or stolen session cookie from planting a
-   passkey that would outlive it.
+   and in again. This stops an old or stolen cmail session cookie from
+   planting a passkey that would outlive it. **Limit under Access:** with the
+   Access bridge on, signing out and back in can mint a fresh cmail session
+   silently from a still-valid Access session, without a new Entra sign-in.
+   So behind Access the 15-minute rule proves a live Access session, not a
+   fresh password or MFA prompt. The notices to the person and the managers,
+   and the newest-passkeys list in Admin, are the backstop.
 2. cmail creates a WebAuthn registration challenge, stores it in D1 tied to
    that account and session, and asks the browser for a **discoverable**
    credential (`residentKey: required`) with **user verification required**
@@ -37,8 +42,9 @@ is on):
    and the key algorithm (Ed25519, ES256 or RS256 only).
 4. The credential is stored with a name the person chooses (up to 64
    characters), the date added and, later, the date last used. Up to 10 per
-   person. The person gets an email when a passkey is added, and the event is
-   audited.
+   person. The person and every active manager are emailed when a passkey is
+   added or removed, and the event is audited. Admin > Passkey sign-in lists
+   the newest passkeys with the date added.
 
 The WebAuthn user handle given to the authenticator is 32 random bytes, never
 an email or account id. An account's later passkeys reuse it.
@@ -53,32 +59,51 @@ an email or account id. An account's later passkeys reuse it.
    fails), finds the credential by id, checks that the authenticator returned
    the user handle stored with it, and verifies the signature, origin, RP ID,
    user presence and user verification.
-4. The signature counter must go up, unless the authenticator always reports
-   0 (synced passkeys do). The stored counter moves with a compare-and-set, so
-   two responses racing against the same value cannot both succeed. A counter
-   that goes backwards on a valid signature points to a copied authenticator:
-   the sign-in is refused, `auth.passkey_counter_rollback` is audited and the
-   managers are emailed.
+4. The signature is verified first. The library's own counter check runs
+   before its signature check, so cmail switches it off (it passes a stored
+   counter of 0, which never rejects) and compares the counter itself once the
+   signature is known to be valid: it must go up, unless the authenticator
+   always reports 0 (synced passkeys do). A forged response can never raise
+   the alarm. A counter that goes backwards on a valid signature points to a
+   copied authenticator: the sign-in is refused,
+   `auth.passkey_counter_rollback` is audited and the managers are emailed.
+   The stored counter moves with a compare-and-set, so two responses racing
+   against the same value cannot both succeed.
 5. The account must be active. Paused and offboarded accounts are refused.
 6. The sign-in country gate runs as for every other sign-in method.
-7. A session is minted with the same lifetime (`SESSION_TTL_HOURS`), the same
-   cap and eviction (`MAX_SESSIONS_PER_USER`) and the same policy check as any
-   other sign-in. It is marked as a passkey session
-   (`sessions.passkey_credential_id`).
+7. A session is minted with the same cap and eviction
+   (`MAX_SESSIONS_PER_USER`) and the same policy check as any other sign-in,
+   but a short, fixed lifetime: `PASSKEY_SESSION_TTL_HOURS` (default 8, at
+   most 72), never extended by use, unlike the sliding `SESSION_TTL_HOURS`.
+   It is marked as a passkey session (`sessions.passkey_credential_id`) and
+   accepted only on `APP_URL`'s origin, so a copied cookie replayed on the
+   `*.pages.dev` address gets nothing. "Last used" is set only once a session
+   is actually opened (after the country gate).
 
 Every refusal on the two sign-in endpoints returns the same message, so they
 never reveal whether a credential or account exists or why it was refused. The
-audit log (`auth.passkey_failed`) records the reason. The country gate is the
-one exception: it runs after the passkey is proven and says why, as for the
-email code.
+audit log (`auth.passkey_failed`) records the reason for refusals of a known
+passkey. Unknown passkey ids are counted, not logged one by one: an audit row
+is written at the 1st, 10th, 100th, 1,000th and 10,000th in an hour. The
+country gate is the one exception to the single message: it runs after the
+passkey is proven and says why, as for the email code.
 
 **Managers** can sign in with a passkey (it is break-glass). Each manager
 passkey sign-in is also audited as `auth.passkey_manager_sign_in`, and every
 active manager is emailed.
 
-**A passkey session ends** when the person signs out, when the passkey is
-removed (by them or a manager), when the account is paused or offboarded, and
-when a manager turns the feature off.
+**Notices.** The person and every active manager are emailed when a passkey is
+added or removed; the managers are emailed when a manager signs in with a
+passkey, when a counter rollback is seen, and when the switch is turned on or
+off. With no outbound provider or system From address nothing is skipped
+silently: each missed notice is audited as `email.failed`, and Admin >
+Passkey sign-in shows a warning and the newest-passkeys list to review by
+hand.
+
+**A passkey session ends** after `PASSKEY_SESSION_TTL_HOURS` whatever
+happens, and earlier when the person signs out, when the passkey is removed
+(by them or a manager), when the account is paused or offboarded, and when a
+manager turns the feature off.
 
 ## Threat model
 
@@ -88,10 +113,12 @@ when a manager turns the feature off.
 | Replayed response | Challenges are server-side, single use (deleted when read) and expire after 5 minutes. |
 | Cloned hardware key | Signature counter must increase; a rollback is refused, audited and emailed to managers. |
 | Stolen phone or key | User verification is required (biometric or PIN). A manager removes the person's passkeys in Admin, which also ends their passkey sessions. |
-| Stolen session cookie used to plant a passkey | Adding needs an ordinary (non-passkey) session opened in the last 15 minutes. The person is emailed when a passkey is added. |
+| Stolen session cookie used to plant a passkey | Adding needs an ordinary (non-passkey) session opened in the last 15 minutes. The person and every manager are emailed when a passkey is added, and Admin lists the newest passkeys. Behind Access a fresh session can be minted silently (see "Adding a passkey"), so the notices are the main control there. |
 | Passkey session used to add more passkeys | Refused: adding or removing your own passkeys needs an ordinary session. |
 | Account enumeration | No credential list in the challenge; one message for every refusal; the user handle is random. |
-| Online guessing or flooding | Per-address limits on challenges (30 per 10 minutes) and on verification (10 per 10 minutes), a per-credential limit (10 per hour), and a high global challenge cap (5,000 per 10 minutes) as a flood backstop only, because a low global cap would let one attacker lock everyone out during an outage. Refusals that involve no credential (bad or used challenge, malformed response) are not audited, so they cannot flood the audit log. Expired challenges are deleted by the normal maintenance sweep. |
+| Online guessing or flooding | Per address (IPv4, or IPv6 per /64): 30 challenges per 10 minutes, and 10 **failed** sign-ins per 10 minutes (successes never count, so an office NAT is not locked out during an outage). Per passkey: 20 sign-ins with a valid signature per hour, counted only after the signature checks out, so nobody without the passkey can use it up. No global cap, so one host cannot lock everyone out. Refusals with no known passkey are not audited one by one, and a rate limit is audited once when it is hit, so the audit log cannot be flooded. Expired challenges are deleted by the normal maintenance sweep. |
+| Replayed passkey session cookie on another hostname | Passkey sessions are accepted only on `APP_URL`'s origin; on `*.pages.dev` they give nothing. |
+| A passkey session left open | Fixed 8-hour lifetime (`PASSKEY_SESSION_TTL_HOURS`), never renewed by use. |
 | Leaver keeps access | Paused and offboarded accounts cannot sign in, and pausing ends their sessions. |
 | Manager misuse | Allowed for break-glass, but audited separately and emailed to all managers. |
 | Passkey sessions weakening the Access gate | See below: only a session minted by a verified passkey skips the Access token check, and only while the feature is on and the passkey still exists. |
@@ -112,9 +139,13 @@ with a valid cmail cookie. Passkey sessions are the one exception, by design:
 - If a valid Access token for the **same** person arrives with a passkey
   session, the session is used as is.
 - If a valid Access token for **someone else** arrives, the passkey session is
-  set aside for that request (not revoked, cookie kept) and Access signs the
-  token's person in as usual. An ordinary session in the same position is
-  still revoked, as before.
+  set aside for that request (cookie kept) and Access signs the token's
+  person in as usual. Only when Access does sign them in, replacing the
+  browser's cookie, is the set-aside passkey session revoked, because it can
+  no longer be used. An ordinary session in the same position is revoked, as
+  before.
+- A passkey session is used only on `APP_URL`'s origin. It is never renewed
+  by use.
 - Every other session keeps the bridge's rules unchanged. `/auth/passkey`
   never opens a session from an Access token.
 
@@ -179,6 +210,25 @@ sign-in is actually failing:
    until the gate closes.
 5. When Entra ID works again, delete the Bypass policy from the main
    application.
+
+**What the outage Bypass also exposes.** While the main application bypasses
+Access, every path reaches cmail without Access, not only the mail pages:
+
+- AI app (MCP) paths: `/mcp`, `/oauth/*` and `/.well-known/*`. They still need
+  cmail's own OAuth bearer tokens, but they lose Access in front of them.
+- `/bootstrap`, which is refused once a manager exists, but is better not
+  reachable at all.
+- `/enroll/*` invitation links, which still need a valid single-use
+  invitation token.
+
+To keep those behind Access during the Bypass, create one more self-hosted
+Access application now, before any outage, covering exactly those paths
+(`mcp`, `mcp/*`, `oauth/*`, `.well-known/*`, `bootstrap`, `enroll/*` on the
+cmail hostname) with your normal Allow policy, or a **Block** policy if you
+do not use them. Access picks the most specific application path, so this
+application keeps applying while the main one bypasses. Also leave AI app
+connections off in Admin > Settings unless you need them, and remove
+`BOOTSTRAP_ADMIN_TOKEN` once the first manager exists.
 
 Prepare it: write the policy as a reusable policy in advance and practise
 adding and removing it, so the step takes a minute. Opening the gate is the
@@ -277,5 +327,12 @@ kept for when it is turned on again.
   key, in Safari, Chrome, Edge and Firefox.
 - The Access Bypass application for `/auth/passkey` on a live Zero Trust
   account, and whether Access sends a token on bypassed requests.
-- Bundle size and runtime behaviour of `@simplewebauthn/server` on Cloudflare
-  Pages (CI builds it; the tests run on Node's Web Crypto).
+- Runtime behaviour of `@simplewebauthn/server` on Cloudflare Pages itself:
+  the tests run on Node's Web Crypto (ES256, Ed25519 and RS256 are all
+  covered there). Size, measured on a local `pnpm build` (15 Nov 2026): the
+  library bundles to 321 KB minified, 88 KB gzip; the whole server output is
+  about 1.3 MB gzip, within the Pages Functions limits (3 MB free, 10 MB
+  paid).
+- That an Access application on a sub-path keeps applying while the main
+  application has a Bypass policy (Cloudflare documents the path precedence;
+  not tried on a live account).
