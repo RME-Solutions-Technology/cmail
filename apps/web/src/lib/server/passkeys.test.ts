@@ -664,8 +664,8 @@ describe('hooks: passkey sessions and the Access bridge', () => {
 
   it('a passkey session has a short fixed lifetime that use never extends', async () => {
     const row = fixture.db.sqlite.prepare(`SELECT (julianday(expires_at) - julianday('now')) * 24 AS hours FROM sessions WHERE id = ?`).get(passkeySessionId) as { hours: number };
-    expect(row.hours).toBeGreaterThan(7.9);
-    expect(row.hours).toBeLessThanOrEqual(8);
+    // SQLite 'now' and the JS clock that set expires_at differ by milliseconds.
+    expect(Math.abs(row.hours - 8)).toBeLessThan(0.01);
     fixture.db.sqlite.prepare(`UPDATE sessions SET expires_at = datetime('now', '+1 hour') WHERE id = ?`).run(passkeySessionId);
     const waitUntil = vi.fn();
     const url = new URL('/mail', ORIGIN);
