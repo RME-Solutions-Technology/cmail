@@ -78,9 +78,9 @@ flowchart LR
 | Step | Graph call | Why |
 |---|---|---|
 | a | `GET /users/{id}/messages?$filter=singleValueExtendedProperties/Any(ep: ep/id eq '<marker>' and ep/value eq '<cmail id>')&$select=id&$top=1` | Did an earlier attempt already create it (for example the run was cut off after Exchange accepted it)? Then it is recorded as copied, not created again. The filter covers the whole mailbox, so a copy the user has moved is still found. |
-| b | `GET /users/{id}/messages?$filter=internetMessageId eq '<Message-ID>'&$select=id&$expand=singleValueExtendedProperties($filter=id eq '<marker>')&$top=10` | Did Exchange receive this message itself (for example some mail still reached it)? Then it is skipped as `already_in_exchange`. Our own copies carry the marker and are ignored here, so a message someone sent to themselves is copied to both Sent and Inbox. Not done for Sent items. |
+| b | `GET /users/{id}/messages?$filter=internetMessageId eq '<Message-ID>'&$select=id,parentFolderId&$expand=singleValueExtendedProperties($filter=id eq '<marker>')&$top=10` (plus, once per mailbox and run, `GET /users/{id}/mailFolders/sentitems` and `/drafts` for their ids) | Did Exchange receive this message itself (for example some mail still reached it)? Then it is skipped as `already_in_exchange`. Our own copies (they carry the marker) and messages in the user's Sent Items or Drafts do not count: a message someone sent to themselves from Outlook is in their Sent Items but was never delivered to their Inbox. Every other folder counts, so mail an inbox rule moved is still recognised. Not done for Sent items. |
 | c | none | Build the message from D1 and R2. Over the size cap: skipped as `too_large`. |
-| d | `POST /users/{id}/mailFolders/{inbox\|archive\|sentitems}/messages` | Create the copy. **Draft canary:** if the answer says `isDraft: true`, the job halts at once (see below). |
+| d | `POST /users/{id}/mailFolders/{inbox\|archive\|sentitems}/messages` | Create the copy. It is **never retried in place**: a 503 or 504 can arrive after Exchange stored the copy, so the item is recorded as an attempt and the next attempt starts with the marker lookup (a). **Draft canary:** unless the answer says `isDraft: false`, the job halts at once (see below). |
 | e | `PATCH /users/{id}/messages/{id}` `{ "isRead": false }` | Only when the message was unread in cmail (see below). |
 
 The item is recorded only after the last call succeeds, and step (a) makes
@@ -90,9 +90,10 @@ any retry safe.
 
 The design depends on Exchange storing the copy as a received item, not a
 draft. Every create answer, and every copy found by its marker, is checked:
-if Exchange reports `isDraft: true`, that item is recorded as failed
-(`created_as_draft`, no retry), the job is set to **halted**, and nothing more
-is created. A draft is never counted as copied, so a later job that finds it
+unless Exchange reports `isDraft: false`, that item is recorded as failed
+(`created_as_draft`, or `draft_state_unknown` when the answer has no
+`isDraft`, which every create example on Microsoft Learn includes: it fails closed), no
+retry, the job is set to **halted**, and nothing more is created. A draft is never counted as copied, so a later job that finds it
 by its marker halts too instead of treating it as done. To recover: find the
 drafts in Outlook by the category "cmail standby copy", remove them (cmail
 never deletes anything in Exchange), find the cause (see
@@ -136,7 +137,8 @@ people do not get a notification storm for old mail.
 |---|---|
 | Received time | `PidTagMessageDeliveryTime` and `PidTagClientSubmitTime` = cmail `received_at` (cmail does not store the original Date header, so sent time = received time) |
 | Sender | `from` and `sender` (address and display name) |
-| To, Cc, Reply-To | `toRecipients`, `ccRecipients`, `replyTo` (Bcc is not known for received mail) |
+| To, Cc, Reply-To | `toRecipients`, `ccRecipients`, `replyTo` |
+| Bcc | `bccRecipients`, on **Sent** copies only. cmail stores Bcc only on the sender's own draft and sent copy (migration 0015); received copies never reveal it. |
 | Subject, importance | `subject`, `importance` |
 | Body | cmail's stored, sanitised HTML body (cmail never keeps the raw original) |
 | Attachments, inline images | `fileAttachment` with `contentBytes`; inline parts keep `isInline` and `contentId`, so `cid:` images still show |
@@ -180,7 +182,10 @@ fault.
   inbound mail with a Message-ID, `inbound-` plus 64 hex characters (72).
 - There is no foreign key to `messages`, so a message deleted in cmail later
   (retention, a manager) neither blocks anything nor erases the record.
-- One job runs at a time (unique index), and a lease stops overlapping cron
+- Only idempotent calls (lookups and the unread update) are retried in place
+  on a short 429/503/504; the create is not (see step d).
+- One job runs at a time (unique index), and a lease (cleared only by the
+  invocation that holds it) stops overlapping cron
   invocations from working it twice.
 
 ## Failures, throttling and bounded work

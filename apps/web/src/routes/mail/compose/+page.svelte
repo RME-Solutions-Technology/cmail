@@ -1102,7 +1102,9 @@
      placeholder and loading line follow it. */
   .body-field :global(.host .rich-text-surface) { min-height: max(240px, 45vh); padding: 18px 20px; }
   .body-field :global(.surface-wrap .placeholder) { top: 18px; left: 20px; }
-  .body-field :global(.surface-wrap .editor-state) { padding: 18px 20px; }
+  /* The loading line holds the editor's full height, so the signature,
+     attachments and Send row don't jump down when the editor arrives. */
+  .body-field :global(.surface-wrap .editor-state) { min-height: max(240px, 45vh); padding: 18px 20px; }
   .body-field textarea { min-height: max(240px, 45vh); border-color: transparent; padding: 18px 20px; }
   .body-field textarea:focus { border-bottom-color: var(--primary); }
   /* Quiet text tabs; the selected one is ink-coloured with a primary underline. */

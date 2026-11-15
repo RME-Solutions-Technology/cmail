@@ -339,9 +339,12 @@ Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `
 | `M365_SYNC_INTERVAL_MINUTES` | 60 | 1440 | Minutes between delta runs; values under 15 become 15 |
 | `M365_SYNC_MAX_PAUSE_PERCENT` | 20 | 100 | Mass-pause brake: hold a round that would pause at least 5 people and more than this percent of linked people |
 | `M365_EXTRA_MAILBOX_PLAN_IDS` | unset | — | Extra Exchange mailbox service plan ids (comma-separated GUIDs) to accept |
-| `MAIL_DOMAIN` | unset | — | Needed by the sync only; the same value as the web app's `MAIL_DOMAIN` |
+| `MAIL_DOMAIN` | unset | — | Needed by the sync and the standby address; the same value as the web app's `MAIL_DOMAIN` |
 | `M365_COPYBACK_CLIENT_ID` | unset | — | Optional [standby copy-back](copy-back.md): application (client) ID of the separate copy-back Entra app (uses `M365_TENANT_ID`) |
 | `M365_COPYBACK_CLIENT_SECRET` | unset | — | Worker secret (`wrangler secret put`) for the copy-back app; never a var |
+| `STANDBY_SUBDOMAIN_LABEL` | `standby` | — | Optional [standby address](standby-probe.md): the subdomain label, so `name@standby.<MAIL_DOMAIN>` |
+| `STANDBY_PROBE_LOCAL_PART` | `cmail-standby-probe` | — | Local part of the standby probe's dedicated system mailbox |
+| `STANDBY_PROBE_TIMEOUT_MINUTES` | 10 | 60 | Minutes a standby test may take before it fails; values under 2 become 2 |
 
 The three inbound hourly limits and the shared storage quota accept an exact numeric `0` to disable that one control. Invalid, negative, non-finite, or sub-one positive values don't disable protection — they fall back to the default. Positive decimals are floored, and values above the hard maximum are clamped. Keep at least one mailbox-wide control enabled in production.
 

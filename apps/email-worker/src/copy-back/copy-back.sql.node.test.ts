@@ -29,7 +29,16 @@ function fakeGraph() {
   const denied = new Set<string>();
   const overrides: Array<{ match: (call: Call) => boolean; reply: Reply }> = [];
   /** createDrafts: answer every create with isDraft true (Exchange ignored the flags). */
-  const options = { createDrafts: false, tokenReply: null as Reply | null };
+  const options = {
+    createDrafts: false,
+    /** Leave isDraft out of the create answer. */
+    omitIsDraft: false,
+    /** Store the copy, then answer with this status once (a 504 after the write). */
+    failAfterStore: 0,
+    tokenReply: null as Reply | null,
+  };
+  /** Message-IDs the user's own Sent Items already holds (sent from Outlook). */
+  const nativeSent = new Map<string, Set<string>>();
   /** Called after each Graph request (tests use it to act mid-tick). */
   let afterCall: ((call: Call) => void) | null = null;
   let ids = 0;
@@ -64,6 +73,8 @@ function fakeGraph() {
     if (denied.has(user)) return json({ status: 403, body: { error: { code: 'ErrorAccessDenied' } } });
     const items = mailboxes.get(user) ?? [];
     mailboxes.set(user, items);
+    const wellKnown = rest.match(/^mailFolders\/(sentitems|drafts)$/);
+    if (call.method === 'GET' && wellKnown) return json({ status: 200, body: { id: `f-${wellKnown[1]}` } });
     if (call.method === 'GET' && rest === 'messages') {
       const filter = parsed.searchParams.get('$filter') ?? '';
       const markerMatch = filter.match(/ep\/value eq '([^']*)'/);
@@ -76,8 +87,9 @@ function fakeGraph() {
         const mid = midMatch[1]!.replace(/''/g, "'");
         // Our copies come back with the expanded marker property; native mail without.
         const value = [
-          ...(native.get(user)?.has(mid) ? [{ id: 'native-1', singleValueExtendedProperties: [] }] : []),
-          ...items.filter((item) => item.mid === mid).map((item) => ({ id: item.id, singleValueExtendedProperties: [{ id: COPYBACK_MARKER_PROPERTY, value: item.marker }] })),
+          ...(native.get(user)?.has(mid) ? [{ id: 'native-1', parentFolderId: 'f-inbox', singleValueExtendedProperties: [] }] : []),
+          ...(nativeSent.get(user)?.has(mid) ? [{ id: 'native-sent', parentFolderId: 'f-sentitems', singleValueExtendedProperties: [] }] : []),
+          ...items.filter((item) => item.mid === mid).map((item) => ({ id: item.id, parentFolderId: `f-${item.folder}`, singleValueExtendedProperties: [{ id: COPYBACK_MARKER_PROPERTY, value: item.marker }] })),
         ];
         return json({ status: 200, body: { value } });
       }
@@ -97,7 +109,12 @@ function fakeGraph() {
         body,
       };
       items.push(stored);
-      return json({ status: 201, body: { id: stored.id, isDraft: options.createDrafts } });
+      if (options.failAfterStore) {
+        const status = options.failAfterStore;
+        options.failAfterStore = 0;
+        return json({ status, headers: { 'retry-after': '1' } });
+      }
+      return json({ status: 201, body: options.omitIsDraft ? { id: stored.id } : { id: stored.id, isDraft: options.createDrafts } });
     }
     const patch = rest.match(/^messages\/(.+)$/);
     if (call.method === 'PATCH' && patch) {
@@ -112,7 +129,7 @@ function fakeGraph() {
   const posts = () => calls.filter((call) => call.method === 'POST' && call.url.includes('/mailFolders/'));
   const queue = (match: (call: Call) => boolean, reply: Reply) => overrides.push({ match, reply });
   const onCall = (hook: ((call: Call) => void) | null) => { afterCall = hook; };
-  return { fetcher, calls, mailboxes, native, missing, denied, posts, queue, options, onCall };
+  return { fetcher, calls, mailboxes, native, nativeSent, missing, denied, posts, queue, options, onCall };
 }
 
 function fakeR2(objects: Map<string, Uint8Array>, broken: Set<string>, reads: string[]) {
@@ -659,5 +676,86 @@ describe('standby copy-back: review hardening', () => {
     expect(await t.tick({ budgets: { maxBytes: 2000 } })).toMatchObject({ skipped: 1 });
     expect(t.items()[0]).toMatchObject({ state: 'skipped', reason: 'too_large' });
     expect(t.reads.some((key) => key.startsWith('attachments/'))).toBe(false);
+  });
+});
+
+describe('standby copy-back: second review follow-ups', () => {
+  it('never retries a create in place: a 504 after Exchange stored the copy is resolved by the marker lookup, not a second create', async () => {
+    const t = setup();
+    await t.addMessage({ isRead: 1 });
+    t.startJob();
+    // Retry-After 1 s would normally be retried in place; for a create it must not be.
+    t.graph.options.failAfterStore = 504;
+    expect(await t.tick()).toMatchObject({ failed: 1, done: false });
+    expect(t.graph.posts()).toHaveLength(1);
+    expect(t.graph.mailboxes.get(ALICE)).toHaveLength(1);
+    expect(t.items()[0]).toMatchObject({ state: 'failed', reason: 'server_error', attempts: 1 });
+    t.advance(6 * MINUTE);
+    expect(await t.tick()).toMatchObject({ copied: 1, done: true });
+    expect(t.graph.posts()).toHaveLength(1);
+    expect(t.graph.mailboxes.get(ALICE)).toHaveLength(1);
+    expect(t.items()[0]).toMatchObject({ state: 'copied', reason: 'found_marker' });
+  });
+
+  it('still retries idempotent lookups in place on a short 503', async () => {
+    const t = setup();
+    await t.addMessage({ isRead: 1 });
+    t.startJob();
+    t.graph.queue((call) => call.method === 'GET' && call.url.includes('singleValueExtendedProperties%2FAny'), { status: 503, headers: { 'retry-after': '1' } });
+    expect(await t.tick()).toMatchObject({ copied: 1, failed: 0, done: true });
+  });
+
+  it('draft canary fails closed when the create answer does not say isDraft', async () => {
+    const t = setup();
+    await t.addMessage();
+    await t.addMessage();
+    const id = t.startJob();
+    t.graph.options.omitIsDraft = true;
+    expect(await t.tick()).toMatchObject({ status: 'halted', copied: 0 });
+    expect(t.graph.posts()).toHaveLength(1);
+    expect(t.job(id)).toMatchObject({ status: 'halted', last_error_code: 'draft_state_unknown' });
+    expect(t.items().filter((row) => row.state === 'failed')).toEqual([expect.objectContaining({ reason: 'draft_state_unknown' })]);
+  });
+
+  it('copies Bcc on a Sent copy only', async () => {
+    const t = setup();
+    const sent = await t.addMessage({ folder: 'sent', shape: 'uuid' });
+    t.sqlite.prepare(`UPDATE messages SET bcc_addresses = '["hidden@example.test"]', bcc_participants = '[{"address":"hidden@example.test","name":"Hidden"}]' WHERE id = ?`).run(sent);
+    await t.addMessage({ folder: 'inbox' });
+    t.startJob({ folders: 'inbox,sent' });
+    await t.tick();
+    const copies = t.graph.mailboxes.get(ALICE)!;
+    expect(copies.find((item) => item.folder === 'sentitems')!.body.bccRecipients).toEqual([{ emailAddress: { address: 'hidden@example.test', name: 'Hidden' } }]);
+    expect(copies.find((item) => item.folder === 'inbox')!.body).not.toHaveProperty('bccRecipients');
+  });
+
+  it("the user's own Sent Items copy does not make the Inbox copy look delivered; a real delivery does", async () => {
+    const t = setup();
+    const inSent = await t.addMessage({ mid: '<self.2@example.test>' });
+    t.graph.nativeSent.set(ALICE, new Set(['<self.2@example.test>']));
+    const delivered = await t.addMessage({ mid: '<seen.3@example.test>' });
+    t.graph.native.set(ALICE, new Set(['<seen.3@example.test>']));
+    t.startJob();
+    await t.tick();
+    expect(t.items().find((row) => row.message_id === inSent)).toMatchObject({ state: 'copied' });
+    expect(t.items().find((row) => row.message_id === delivered)).toMatchObject({ state: 'skipped', reason: 'already_in_exchange' });
+  });
+
+  it('clears only its own lease', async () => {
+    const t = setup();
+    await t.addMessage();
+    const id = t.startJob();
+    // While this run works, another invocation (after this lease expired) takes the job.
+    t.graph.onCall((call) => {
+      if (call.method === 'POST') t.sqlite.prepare('UPDATE standby_copyback_jobs SET lease_until = 4102444800 WHERE id = ?').run(id);
+    });
+    await t.tick();
+    expect(t.job(id)).toMatchObject({ lease_until: 4102444800 });
+    // Without interference the lease is released.
+    const t2 = setup();
+    await t2.addMessage();
+    const id2 = t2.startJob();
+    await t2.tick();
+    expect(t2.job(id2)).toMatchObject({ lease_until: 0 });
   });
 });
