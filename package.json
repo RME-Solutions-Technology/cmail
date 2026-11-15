@@ -37,10 +37,13 @@
     "check": "pnpm -r check",
     "test": "pnpm -r test",
     "test:image-runtime": "node scripts/verify-image-runtime.mjs",
+    "test:standby-scripts": "node --test \"scripts/standby/test/*.test.mjs\"",
+    "standby:switch": "node scripts/standby/switch.mjs",
+    "standby:switch-back": "node scripts/standby/switch-back.mjs",
     "test:mobile": "playwright test",
     "test:mobile:update": "playwright test --update-snapshots",
     "test:mobile:report": "playwright show-report playwright-report/mobile",
-    "validate": "pnpm secrets:scan && pnpm landing:check && pnpm config:check && pnpm lint && pnpm check && pnpm test && pnpm test:image-runtime && pnpm db:migrate:verify && pnpm build && pnpm audit --audit-level=low",
+    "validate": "pnpm secrets:scan && pnpm landing:check && pnpm config:check && pnpm lint && pnpm check && pnpm test && pnpm test:standby-scripts && pnpm test:image-runtime && pnpm db:migrate:verify && pnpm build && pnpm audit --audit-level=low",
     "release:check": "pnpm validate && pnpm secrets:history"
   },
   "devDependencies": {
