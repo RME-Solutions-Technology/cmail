@@ -7,3 +7,7 @@ INBOUND_SENDER_HASH_KEY=
 
 # Optional; required only when Web Push is configured for the Worker.
 VAPID_PRIVATE_KEY=
+
+# Optional; Microsoft 365 mailbox sync only (docs/m365-sync.md). Use a test
+# tenant's app secret locally, never a production one.
+M365_CLIENT_SECRET=

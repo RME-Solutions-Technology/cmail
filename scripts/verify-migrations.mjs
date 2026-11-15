@@ -369,7 +369,7 @@ try {
           'organization_units', 'organization_roles', 'organization_positions',
           'push_subscriptions', 'push_device_preferences', 'outbound_send_journal',
           'outbound_send_targets', 'outbound_send_attachments', 'compose_preferences',
-          'inbox_rules', 'delivery_events'
+          'inbox_rules', 'delivery_events', 'm365_sync_links', 'm365_sync_state'
         )) AS application_table_count,
       (SELECT COUNT(*) FROM sqlite_master
         WHERE type = 'index' AND name IN (
@@ -383,7 +383,8 @@ try {
           'idx_mailbox_reservations_draft_slots',
           'idx_inbox_rules_mailbox_position',
           'idx_delivery_events_trace', 'idx_delivery_events_provider',
-          'idx_trace_outbound_timestamp', 'idx_messages_outbound_time'
+          'idx_trace_outbound_timestamp', 'idx_messages_outbound_time',
+          'idx_m365_sync_links_seen'
         )) AS essential_index_count,
       (SELECT COUNT(*) FROM sqlite_master
         WHERE type = 'trigger' AND name IN (
@@ -414,6 +415,8 @@ try {
         )) AS outbound_journal_trigger_count,
       (SELECT COUNT(*) FROM sqlite_master
         WHERE type = 'trigger' AND name = 'trg_inbox_rules_limit') AS inbox_rule_trigger_count,
+      (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'trigger' AND name = 'trg_m365_sync_status_change') AS m365_sync_trigger_count,
       (SELECT COUNT(*) FROM retention_config
         WHERE (entity_type = 'deleted_messages' AND retention_days = 90)
            OR (entity_type = 'attachments' AND retention_days = 90)
@@ -481,9 +484,10 @@ try {
 
   assertEqual(Number(row.migration_count), expectedMigrations.length, 'Applied migration count');
   assertArrayEqual(appliedMigrations, expectedMigrations, 'Applied migration names');
-  assertEqual(Number(row.application_table_count), 30, 'Application table count');
-  assertEqual(Number(row.essential_index_count), 15, 'Essential index count');
+  assertEqual(Number(row.application_table_count), 32, 'Application table count');
+  assertEqual(Number(row.essential_index_count), 16, 'Essential index count');
   assertEqual(Number(row.inbox_rule_trigger_count), 1, 'Inbox rule limit-trigger count');
+  assertEqual(Number(row.m365_sync_trigger_count), 1, 'Microsoft 365 sync status-change trigger count');
   assertEqual(Number(row.organization_trigger_count), 2, 'Organisation cycle-trigger count');
   assertEqual(Number(row.inbound_guard_trigger_count), 5, 'Delivery reservation-trigger count');
   assertEqual(Number(row.outbound_journal_trigger_count), 11, 'Outbound journal-trigger count');

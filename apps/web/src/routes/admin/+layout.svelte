@@ -22,6 +22,7 @@
         { href: '/admin/users', label: 'People', description: 'Accounts and access', icon: 'people' },
         { href: '/admin/orgchart', label: 'Organisation', description: 'Units, roles and directory', icon: 'orgChart' },
         { href: '/admin/travel', label: 'Travel approvals', description: 'Temporary overseas sign-in', icon: 'globe', count: data.pendingTravelCount || undefined },
+        { href: '/admin/m365-sync', label: 'Microsoft 365 sync', description: 'Accounts from your tenant', icon: 'refresh' },
       ],
     },
     {

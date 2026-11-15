@@ -103,10 +103,36 @@ VAPID_SUBJECT = ""
 APP_NAME = "cmail"
 PUSH_ENDPOINT_HOSTS = ""
 
+# Optional Microsoft 365 mailbox sync (docs/m365-sync.md). Read-only toward
+# Microsoft. Nothing runs until a manager turns it on in Admin >
+# Microsoft 365 sync; until these are set, Admin shows "not configured".
+# The client secret is a Worker secret, never a var:
+#   wrangler secret put M365_CLIENT_SECRET --config apps/email-worker/wrangler.toml
+# Directory (tenant) ID and application (client) ID of the read-only Entra app.
+M365_TENANT_ID = ""
+M365_CLIENT_ID = ""
+# Optional group object IDs. Scope: only members (nested groups count) get
+# accounts. Shared: members are treated as shared mailboxes. Either one
+# needs the GroupMember.Read.All application permission.
+M365_SCOPE_GROUP_ID = ""
+M365_SHARED_GROUP_ID = ""
+# Minutes between delta runs (15 to 1440). A full reconciliation runs daily.
+M365_SYNC_INTERVAL_MINUTES = "60"
+# Mass-pause brake: a round that would pause at least 5 people and more than
+# this percent of linked people waits for a manager to approve it in Admin.
+M365_SYNC_MAX_PAUSE_PERCENT = "20"
+# Optional extra Exchange mailbox service plan ids (comma separated), for plans
+# newer than the built-in list in docs/m365-sync.md.
+M365_EXTRA_MAILBOX_PLAN_IDS = ""
+# The one mail domain this deployment hosts: the same value as the web app's
+# MAIL_DOMAIN. Only Microsoft 365 users whose primary address is on it sync.
+MAIL_DOMAIN = ""
+
 [triggers]
 # 17 3 * * *: retention (off unless RETENTION_JOBS_ENABLED).
 # 7 * * * *: refresh the local phishing-domain list for link checks (hourly).
-crons = ["17 3 * * *", "7 * * * *"]
+# */15 * * * *: Microsoft 365 sync (returns at once unless switched on in Admin).
+crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *"]
 
 # Email Routing — configure a catch-all in the Cloudflare dashboard
 # pointing all inbound mail at this worker.

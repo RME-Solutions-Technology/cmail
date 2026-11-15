@@ -31,6 +31,10 @@ For engineers and operators setting up a deployment, roughly in this order:
 7. [Running cmail](operations.md) — upgrade, back up, restore, roll back, monitor, and rotate secrets on a live deployment.
 8. [Upgrading and keeping your settings](upgrading.md) — where each setting lives, what an upgrade changes, upgrading a plain copy or a fork, and checking for new settings.
 
+To keep accounts in step with a Microsoft 365 tenant (read-only, off by
+default, with a manager switch and dry run), see
+[Microsoft 365 mailbox sync](m365-sync.md).
+
 For staff-portal links and optional provider-session reuse, see the
 [staff sign-in contract](staff-sign-in.md), including the Cloudflare Access
 identity boundary and live configuration checks.
