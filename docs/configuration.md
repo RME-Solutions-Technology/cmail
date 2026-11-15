@@ -330,6 +330,11 @@ Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `
 | `INBOUND_SENDER_HASH_KEY` | none | exactly 32 bytes | Required Worker secret, encoded as unpadded base64url, while sender limiting is enabled |
 | `SPAM_QUARANTINE_SCORE` | unset | — | Spam score at or above which a message is filed to Spam instead of Inbox; unset or non-numeric means never quarantine on score alone |
 | `RETENTION_JOBS_ENABLED` | `false` | — | Set to `true` only after reviewing retention policy |
+| `M365_TENANT_ID`, `M365_CLIENT_ID` | unset | — | Optional [Microsoft 365 sync](m365-sync.md): directory (tenant) ID and application (client) ID of the read-only Entra app |
+| `M365_CLIENT_SECRET` | unset | — | Worker secret (`wrangler secret put`) for that app; never a var |
+| `M365_SCOPE_GROUP_ID`, `M365_SHARED_GROUP_ID` | unset | — | Optional group object IDs: who gets an account, and which objects are shared mailboxes |
+| `M365_SYNC_INTERVAL_MINUTES` | 60 | 1440 | Minutes between delta runs; values under 15 become 15 |
+| `MAIL_DOMAIN` | unset | — | Needed by the sync only; the same value as the web app's `MAIL_DOMAIN` |
 
 The three inbound hourly limits and the shared storage quota accept an exact numeric `0` to disable that one control. Invalid, negative, non-finite, or sub-one positive values don't disable protection — they fall back to the default. Positive decimals are floored, and values above the hard maximum are clamped. Keep at least one mailbox-wide control enabled in production.
 

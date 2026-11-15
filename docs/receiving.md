@@ -103,6 +103,7 @@ Storage used is the raw size of each message, counted across all folders.
 |---|---|
 | `17 3 * * *` | Retention clean-up (old trace rows, sessions, rate-limit buckets and similar). Does nothing unless `RETENTION_JOBS_ENABLED="true"` |
 | `7 * * * *` | Refreshes the link blocklist (see [Reading mail safely](reading-mail-safely.md#link-checks)) |
+| `*/15 * * * *` | Optional [Microsoft 365 sync](m365-sync.md). Returns at once unless a manager turned it on in Admin |
 
 ## Tests
 

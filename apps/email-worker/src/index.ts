@@ -3,6 +3,7 @@
 // Outbound is handled directly by the web app (Cloudflare Email Service or Postmark) —
 // this worker is inbound-only.
 import { LINK_BLOCKLIST_CRON, refreshLinkBlocklist } from './link-blocklist-refresh';
+import { M365_SYNC_CRON, m365SyncConfigDiagnostic, runM365SyncTick, type M365SyncWorkerEnv } from './m365-sync/sync';
 import PostalMime from 'postal-mime';
 import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
@@ -50,7 +51,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv {
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
   EMAIL?: SendEmail;
   /**
@@ -778,6 +779,12 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/push-diagnostic' && (request.method === 'GET' || request.method === 'POST')) {
     return Response.json({ status: pushConfigurationDiagnostic(env) });
   }
+  // Read-only: whether this Worker has the Microsoft 365 sync settings, by
+  // setting name only. Admin shows "not configured" from this; it never
+  // returns a value, and the secret never leaves this Worker.
+  if (url.pathname === '/internal/m365-sync/config' && request.method === 'GET') {
+    return Response.json(m365SyncConfigDiagnostic(env));
+  }
   if (url.pathname !== '/internal/send' || request.method !== 'POST') {
     return new Response('Not found', { status: 404 });
   }
@@ -841,6 +848,18 @@ export default {
         else console.warn('Link blocklist refresh kept the previous copy', { reason: result.reason, count: result.count });
       }, (caught: unknown) => {
         console.error('Link blocklist refresh failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      return;
+    }
+    // Microsoft 365 mailbox sync: returns at once unless a manager has turned
+    // it on in Admin. Bounded and resumable; see docs/m365-sync.md.
+    if (controller.cron === M365_SYNC_CRON) {
+      ctx.waitUntil(runM365SyncTick(env).then((result) => {
+        // Outcome codes only, never addresses.
+        if (result.status === 'worked') console.log('Microsoft 365 sync ran', { round: result.round, mode: result.mode, finished: result.finished });
+        else if (result.status !== 'off' && result.status !== 'idle') console.warn('Microsoft 365 sync', { status: result.status });
+      }, (caught: unknown) => {
+        console.error('Microsoft 365 sync failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
       }));
       return;
     }
