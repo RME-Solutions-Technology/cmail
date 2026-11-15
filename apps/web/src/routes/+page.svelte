@@ -94,6 +94,10 @@
         <p class="otp-link"><a href="/auth/email">Sign in with an email code</a></p>
       {/if}
 
+      {#if data.passkeyEnabled}
+        <p class="otp-link"><a href="/auth/passkey" data-sveltekit-reload>Use a passkey</a></p>
+      {/if}
+
       {#if data.authProviders.length === 0}
         <p class="error">No sign-in method is ready. The operator should check APP_URL, SESSION_SECRET, and provider credentials.</p>
       {/if}

@@ -111,6 +111,7 @@
   const isList = $derived((page.route.id || '') === '/mail');
   const isMailSettings = $derived(page.url.pathname === '/mail/settings');
   const isConnectedApps = $derived(page.url.pathname === '/mail/connected-apps');
+  const isPasskeys = $derived(page.url.pathname === '/mail/passkeys');
   const isRules = $derived(page.url.pathname === '/mail/rules' || page.url.pathname.startsWith('/mail/rules/'));
 
   const permissionLabel = /** @type {Record<string, string>} */ ({
@@ -265,6 +266,16 @@
             <span class="nav-icon"><Icon name="key" size={16} /></span>
             <span class="nav-label">Connected AI apps</span>
           </a>
+          {#if d.passkeysEnabled}
+            <a
+              href="/mail/passkeys"
+              class="nav-item"
+              aria-current={isPasskeys ? 'page' : undefined}
+            >
+              <span class="nav-icon"><Icon name="shieldCheck" size={16} /></span>
+              <span class="nav-label">Passkeys</span>
+            </a>
+          {/if}
         </nav>
       </div>
     </div>

@@ -39,6 +39,11 @@ For staff-portal links and optional provider-session reuse, see the
 [staff sign-in contract](staff-sign-in.md), including the Cloudflare Access
 identity boundary and live configuration checks.
 
+For sign-in that works when Microsoft or Cloudflare Access is down (off by
+default, with a manager switch), see
+[Passkey break-glass sign-in](passkeys.md), including the one path to exclude
+from Access.
+
 ## How cmail works
 
 Technical guides for developers and operators, one feature at a time, with the code paths, data, limits and tests behind each.
