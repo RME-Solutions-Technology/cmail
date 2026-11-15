@@ -4,6 +4,10 @@ import { assertStrongSessionSecret, publicRuntimeConfig, sessionTtlMs } from '#l
 import { clearSessionCookie, getSessionTokenFromCookie, hashToken, shouldRenewSession, verifySessionToken } from '#lib/server/session.js';
 import { mcpMaintenanceStatements } from '#lib/server/mcp/maintenance.js';
 import { runtimePlatform } from '#lib/server/cloudflare-runtime.js';
+import { ACCESS_JWT_HEADER, accessMode, verifyAccessJwt, type AccessIdentity } from '#lib/server/access-jwt.js';
+import { accessSignInPathAllowed, confirmSessionAccessBinding, establishAccessSession } from '#lib/server/access-bridge.js';
+
+let loggedAccessMisconfiguration = false;
 
 function appendVary(headers: Headers, value: string): void {
   const values = new Set(
@@ -91,9 +95,29 @@ export const handle: Handle = async ({ event, resolve }) => {
     return secureResponse(denied, false, isHttps);
   }
 
+  // Cloudflare Access bridge. Off when ACCESS_TEAM_DOMAIN and ACCESS_AUD are
+  // both unset. Otherwise every session, cookie-based or new, needs a valid
+  // Access token on this request, and a broken configuration fails closed.
+  const access = env ? accessMode(env as unknown as Record<string, unknown>) : { mode: 'off' as const };
+  let accessIdentity: AccessIdentity | null = null;
+  if (access.mode === 'misconfigured') {
+    if (!loggedAccessMisconfiguration) {
+      loggedAccessMisconfiguration = true;
+      console.error('Access bridge misconfigured; all requests are signed out', { reason: access.reason });
+    }
+  } else if (access.mode === 'on') {
+    try {
+      accessIdentity = await verifyAccessJwt(event.request.headers.get(ACCESS_JWT_HEADER), access.config);
+    } catch {
+      accessIdentity = null;
+    }
+  }
+  const accessGatePassed = access.mode === 'off' || accessIdentity !== null;
+
   let clearInvalidCookie = false;
+  let accessSessionCookie: string | null = null;
   const token = getSessionTokenFromCookie(event.request.headers.get('cookie'));
-  if (env && token) {
+  if (env && token && accessGatePassed) {
     try {
       assertStrongSessionSecret(env.SESSION_SECRET);
       const verified = await verifySessionToken(token, env.SESSION_SECRET);
@@ -108,7 +132,19 @@ export const handle: Handle = async ({ event, resolve }) => {
           const user = await env.DB.prepare(
             `SELECT * FROM users WHERE id = ? AND status IN ('active', 'pending')`,
           ).bind(verified.userId).first<User>();
-          if (user) {
+          // Under Access, the session must belong to the person Access
+          // admitted. A session for someone else is revoked, not reused.
+          const sessionMatchesAccess = !user || !accessIdentity
+            || await confirmSessionAccessBinding(
+              env.DB,
+              user,
+              accessIdentity,
+              (event.request.headers.get('cf-connecting-ip') || '').slice(0, 64),
+            );
+          if (user && !sessionMatchesAccess) {
+            await env.DB.prepare('UPDATE sessions SET revoked = 1 WHERE id = ?').bind(session.id).run();
+          }
+          if (user && sessionMatchesAccess) {
             event.locals.user = user;
             event.locals.sessionId = session.id;
 
@@ -140,15 +176,43 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
+  if (
+    env && accessIdentity && access.mode === 'on' && !event.locals.user
+    && accessSignInPathAllowed(event.request.method, event.url.pathname)
+  ) {
+    try {
+      assertStrongSessionSecret(env.SESSION_SECRET);
+      const established = await establishAccessSession(
+        env as unknown as Record<string, unknown> & { DB: D1Database; SESSION_SECRET: string },
+        accessIdentity,
+        event.request,
+        { autoProvision: access.config.autoProvision, secureCookie: isHttps },
+      );
+      if (established) {
+        event.locals.user = established.user;
+        event.locals.sessionId = established.sessionId;
+        accessSessionCookie = established.cookie;
+        clearInvalidCookie = false;
+      }
+    } catch (error) {
+      console.error('Access sign-in failed', {
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+    }
+  }
+  const withSessionCookies = (response: Response): Response => {
+    if (accessSessionCookie) response.headers.append('Set-Cookie', accessSessionCookie);
+    else if (clearInvalidCookie) response.headers.append('Set-Cookie', clearSessionCookie(isHttps));
+    return response;
+  };
+
   if (isAdminRequestPath(event.url.pathname) && event.locals.user?.role !== 'manager') {
     const denied = event.locals.user
       ? new Response('Admin access required', { status: 403 })
       : new Response(null, { status: 303, headers: { Location: '/' } });
     // Admin authorization responses must never be shared between callers,
     // including the unauthenticated redirect response.
-    const response = secureResponse(denied, true, isHttps);
-    if (clearInvalidCookie) response.headers.append('Set-Cookie', clearSessionCookie(isHttps));
-    return response;
+    return withSessionCookies(secureResponse(denied, true, isHttps));
   }
 
   const protectedPath = event.url.pathname.startsWith('/mail')
@@ -166,7 +230,7 @@ export const handle: Handle = async ({ event, resolve }) => {
         const response = event.url.pathname.startsWith('/api/')
           ? Response.json({ error: 'policy_required' }, { status: 403 })
           : new Response(null, { status: 303, headers: { Location: '/policy' } });
-        return secureResponse(response, true, isHttps);
+        return withSessionCookies(secureResponse(response, true, isHttps));
       }
     }
   }
@@ -200,8 +264,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     response.headers.set('Referrer-Policy', 'strict-origin');
     appendVary(response.headers, 'Cookie');
   }
-  if (clearInvalidCookie) response.headers.append('Set-Cookie', clearSessionCookie(isHttps));
-  return response;
+  return withSessionCookies(response);
 };
 
 export const handleError: HandleServerError = ({ kind, error, event }) => {

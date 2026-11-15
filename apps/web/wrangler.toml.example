@@ -96,6 +96,19 @@ TURNSTILE_SITE_KEY = ""
 # ongoing 2FA/revocation guarantees. Default 168 (7 days); range 1-9600.
 OTP_SESSION_TTL_HOURS = "168"
 
+# Optional Cloudflare Access bridge: sign people in from the Access token so
+# there is no second sign-in screen. Off while both are unset. Once either is
+# set, every request needs a valid Access token for this application or it
+# gets no session (fail closed), so put the custom domain AND the direct
+# *.pages.dev address behind Access first. Apply migration 0021 before
+# setting these. See docs/staff-sign-in.md, "Cloudflare Access bridge".
+# ACCESS_TEAM_DOMAIN = "example.cloudflareaccess.com"
+# ACCESS_AUD = "<the Access application's AUD tag>"
+# "true" creates a standard account and personal mailbox for a verified
+# Access email on MAIL_DOMAIN that has no account yet. Managers are never
+# created this way.
+# ACCESS_AUTO_PROVISION = "false"
+
 # Inbound-only limits are mirrored here for one visible deployment manifest;
 # enforcement and INBOUND_SENDER_HASH_KEY belong only to the email Worker.
 INBOUND_MAILBOX_MESSAGES_PER_HOUR = "120"

@@ -55,22 +55,98 @@ or generic JWT/ID-token issuer validator in this flow: the provider namespace
 is fixed by server-selected endpoints and the configured OAuth application.
 Do not change the OAuth client registration as a shortcut to federation.
 
-Cloudflare Access is eligible as an additional edge gate, but its claims are
-not eligible to create a cmail session in this implementation. No Access JWT
-verifier or Access-to-cmail account binding exists. Access `sub` is an Access
-user identifier; Microsoft's `sub` is application-specific, so neither an
-Access subject nor a subject from another Microsoft application can be
-substituted for cmail's existing provider subject. A matching email is never
-authority to link accounts. See the [Access application-token reference](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/)
+Cloudflare Access can be an extra edge gate in front of any of these flows.
+With the optional Access bridge below turned on, it can also sign people in.
+Access `sub` is an Access user identifier; Microsoft's `sub` is
+application-specific, so neither an Access subject nor a subject from another
+Microsoft application is ever substituted for cmail's existing provider
+subject. The bridge stores the Access subject as its own identity,
+`user_identities('access', sub)`. See the [Access application-token reference](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/)
 and [Microsoft claim reference](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference).
 
-A future Access session bridge would require reviewed mail-application
-issuer/audience/JWKS configuration, cryptographic token validation and time
-checks, human identity eligibility, and explicit approved immutable account
-bindings. An email header, Access service token, or museum role cannot grant
-mail access or manager status. This change adds none of those trust paths.
-Invitation, bootstrap proof/nonce, callback state/PKCE, CSRF, country gates,
-session revocation, roles, and mailbox assignments remain in force.
+An email header, Access service token, or portal role cannot grant mail
+access or manager status. Invitation, bootstrap proof/nonce, callback
+state/PKCE, CSRF, country gates, session revocation, roles, and mailbox
+assignments remain in force.
+
+## Cloudflare Access bridge
+
+Optional, off by default. Set `ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`)
+and `ACCESS_AUD` (the Access application's AUD tag) to turn it on.
+
+**Token check.** On every request cmail reads `Cf-Access-Jwt-Assertion` and
+accepts it only if all of these hold:
+
+- the header names `alg` `RS256` (no `none`, no HMAC, no other algorithm)
+  and a `kid` found in `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`;
+- the RS256 signature verifies against that key;
+- `iss` is exactly `https://<team>.cloudflareaccess.com`;
+- `aud` contains `ACCESS_AUD`;
+- `exp` has not passed and `nbf` / `iat` are not in the future, each with
+  60 seconds of clock skew; a token with no `exp` is refused;
+- `type`, when present, is `app`, and the token carries a non-empty `sub` and
+  a valid `email`. Service tokens have neither, so they never open a mailbox.
+
+Keys are cached per isolate for an hour. An unknown `kid` refetches at most
+once every 30 seconds. If the certs endpoint is down, cached keys keep working
+for up to 24 hours; with no usable key, every token is refused.
+
+**Fail closed.** With the bridge on, a request without a valid token gets no
+session, even with a valid cmail cookie. A cookie session is used only when
+its account is bound to the token's `sub`. If the account has no Access
+binding yet and its email matches the token, the binding is made then (this is
+how a manager or an existing Google/Microsoft user links). Otherwise the
+session belongs to someone else: it is revoked and ignored. If only one of the
+two variables is set, or either is invalid, every request is signed out and
+the error is logged once per isolate.
+
+**Binding.** An Access identity opens a session (on an ordinary page `GET`,
+not `/bootstrap`, `/enroll/*`, `/auth/*`, `/mcp` or the OAuth machine
+endpoints) as follows:
+
+1. A returning visit is looked up by Access `sub` only. If the token's email no
+   longer matches the account, the binding stays and an
+   `auth.access_email_changed` audit entry is written.
+2. A first visit may bind to an existing account whose email equals the
+   verified token email (an invited or synced account). It is refused when the
+   account is paused or offboarded, already has a different Access `sub`, or
+   is a manager. Managers link by visiting once while signed in through their
+   existing provider.
+3. With `ACCESS_AUTO_PROVISION=true`, an email on `MAIL_DOMAIN` with no account
+   gets a standard account and a personal mailbox at that address. Emails on
+   other domains, and addresses already used by any mailbox, are refused.
+   Managers are never created this way.
+4. Nothing is bound or created before the first manager exists. The first
+   manager still uses `/bootstrap`.
+
+Each account holds at most one Access binding and one Access `sub` belongs to
+one account (migration `0021`). The country gate, session cap, policy
+acceptance and audit trail work as for OAuth sign-in. Sign-out also ends the
+Access session (`/cdn-cgi/access/logout`); otherwise Access would sign the
+user straight back in.
+
+An Access-bound account cannot later accept a Google, Microsoft or email
+invitation: the invitation reports an identity conflict, as for any account
+that already has a binding.
+
+**Rollout.**
+
+1. Apply migration `0021` (`pnpm db:migrate`).
+2. Create a self-hosted Access application for the cmail hostname. Put the
+   direct `*.pages.dev` hostname behind the same application (or block it), so
+   no request reaches cmail without Access.
+3. Add the policy: "emails ending in @domain" with your identity provider, or
+   an identity-provider group. cmail does not re-check groups: Access decides
+   who enters, cmail decides which mailbox they get.
+4. Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, and optionally
+   `ACCESS_AUTO_PROVISION`, then redeploy.
+5. Session length: the Access application session and `SESSION_TTL_HOURS`
+   both limit how long someone stays signed in. Both need a valid Access token
+   on each request.
+
+AI app (MCP) connections and other bearer-token clients do not carry an
+Access token. Keep them off, or give those paths their own Access policy;
+the bridge does not change how they authenticate.
 
 ## Live configuration still needs verification
 
@@ -78,16 +154,19 @@ session revocation, roles, and mailbox assignments remain in force.
   Register exactly `APP_URL` + `/auth/callback/google` and/or
   `/auth/callback/microsoft` on the corresponding existing OAuth application.
 - Verify the intended staff account already has its provider binding and
-  mailbox assignment. New users use the existing manager invitation flow;
-  no automatic provisioning, merging, or email-based linking is added.
+  mailbox assignment. New users use the existing manager invitation flow.
+  The OAuth flows add no automatic provisioning, merging, or email-based
+  linking; only the Access bridge, when configured, binds by verified email
+  on a first visit and can provision.
 - If Access protects mail, review its own application audience, issuer,
   allowed staff/IdP policy, MFA/session requirements, and protection of both
-  custom and direct Pages origins. Keep preview isolated. Access admission
-  alone does not establish cmail eligibility.
+  custom and direct Pages origins. Keep preview isolated. Without the bridge
+  variables, Access admission alone does not establish cmail eligibility.
 - Rehearse browser behavior with the same provider session, multiple accounts,
   signed-out providers, rejected consent, revoked/paused accounts, and pending
   policy acceptance. Provider session reuse depends on browser and IdP policy.
 
 No migration, new secret, provider registration change, or Access setting is
-required by the optional shortcut itself. Local tests do not verify live
+required by the optional shortcut itself. The Access bridge needs migration
+`0021` and the Access application described above. Local tests do not verify live
 configuration or authorize deployment.

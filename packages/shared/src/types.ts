@@ -9,6 +9,12 @@ export type UserStatus = 'pending' | 'active' | 'paused' | 'offboarded';
  * so OTP-only accounts simply leave auth_provider at ''.
  */
 export type AuthProvider = 'google' | 'microsoft' | 'email';
+/**
+ * Every value user_identities.provider accepts. 'access' is a Cloudflare
+ * Access `sub` bound by the Access bridge (migration 0021); it is never an
+ * OAuth provider, so it stays out of AuthProvider and users.auth_provider.
+ */
+export type IdentityProvider = AuthProvider | 'access';
 
 export interface User {
   id: string;
@@ -27,7 +33,7 @@ export interface User {
 
 /** Immutable OpenID Connect identity bound to one cmail user. */
 export interface UserIdentity {
-  provider: AuthProvider;
+  provider: IdentityProvider;
   subject: string;
   user_id: string;
   created_at: string;
@@ -188,6 +194,7 @@ export type AuditEventType =
   | 'user.travel_approved' | 'user.travel_denied' | 'user.travel_exception_revoked'
   | 'auth.sign_in' | 'auth.sign_in_denied' | 'auth.session_expired'
   | 'auth.identity_bound' | 'auth.bootstrap_completed' | 'auth.enrollment_issued'
+  | 'auth.access_email_changed'
   | 'policy.publish' | 'policy.sign' | 'policy.reset'
   | 'mailbox.create' | 'mailbox.delete' | 'mailbox.assign' | 'mailbox.unassign'
   | 'signature.update' | 'signature.lock'
@@ -312,4 +319,10 @@ export interface Env {
   // Bootstrap — first-run manager setup (both are temporary secrets/config)
   BOOTSTRAP_ADMIN_EMAIL?: string;
   BOOTSTRAP_ADMIN_TOKEN?: string;
+
+  // Optional Cloudflare Access bridge (docs/staff-sign-in.md). Off when both
+  // are unset; if either is set, a missing or invalid value fails closed.
+  ACCESS_TEAM_DOMAIN?: string;  // e.g. "example.cloudflareaccess.com"
+  ACCESS_AUD?: string;          // the Access application's AUD tag
+  ACCESS_AUTO_PROVISION?: string; // "true" creates accounts for MAIL_DOMAIN emails
 }
