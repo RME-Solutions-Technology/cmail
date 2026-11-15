@@ -35,7 +35,9 @@ To keep accounts in step with a Microsoft 365 tenant (read-only, off by
 default, with a manager switch and dry run), see
 [Microsoft 365 mailbox sync](m365-sync.md). After an Exchange outage, mail
 that arrived in cmail meanwhile can be copied into each person's Exchange
-mailbox: see [Copy standby mail back into Exchange](copy-back.md).
+mailbox: see [Copy standby mail back into Exchange](copy-back.md). To move
+a domain's incoming mail to cmail and back in one DNS change each, see
+[Switch mail to the cmail standby, and back](standby-switch.md).
 
 To give every mailbox a second address on a standby subdomain and test it
 daily (off by default), see

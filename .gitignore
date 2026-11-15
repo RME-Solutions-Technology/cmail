@@ -67,3 +67,6 @@ tmp/
 *.code-workspace
 .DS_Store
 Thumbs.db
+
+# Standby switch snapshots hold real domain DNS data (scripts/standby/).
+standby-snapshots/
