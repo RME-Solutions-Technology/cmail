@@ -62,6 +62,12 @@ export interface M365SyncEnv {
   M365_SYNC_MAX_PAUSE_PERCENT?: string | number;
   /** Extra Exchange mailbox service plan ids (comma separated GUIDs) to accept besides the built-in list. */
   M365_EXTRA_MAILBOX_PLAN_IDS?: string;
+  /**
+   * "true" to find shared mailboxes from Exchange Online's mailbox type
+   * (Graph mailboxSettings userPurpose). Needs the MailboxSettings.Read
+   * application permission and migration 0026. Default "false".
+   */
+  M365_DETECT_SHARED_MAILBOXES?: string | boolean;
 }
 
 export interface M365SyncConfig {
@@ -74,6 +80,8 @@ export interface M365SyncConfig {
   mailDomain: string;
   maxPausePercent: number;
   mailboxPlanIds: Set<string>;
+  /** Find shared mailboxes from Exchange's mailbox type (userPurpose), besides the shared group. */
+  detectSharedMailboxes: boolean;
 }
 
 /**
@@ -136,6 +144,10 @@ export function m365SyncConfig(env: M365SyncEnv): M365SyncConfigCheck {
   if (scope && shared && scope === shared) problems.push('M365_SCOPE_GROUP_ID and M365_SHARED_GROUP_ID must be different groups');
   const extraPlans = clean(env.M365_EXTRA_MAILBOX_PLAN_IDS).split(',').map((id) => id.trim()).filter(Boolean);
   if (extraPlans.some((id) => !isGuid(id))) problems.push('M365_EXTRA_MAILBOX_PLAN_IDS must be comma-separated service plan GUIDs');
+  const detect = typeof env.M365_DETECT_SHARED_MAILBOXES === 'boolean'
+    ? String(env.M365_DETECT_SHARED_MAILBOXES)
+    : clean(env.M365_DETECT_SHARED_MAILBOXES);
+  if (detect && detect !== 'true' && detect !== 'false') problems.push('M365_DETECT_SHARED_MAILBOXES must be "true" or "false"');
   if (!mailDomain) problems.push('MAIL_DOMAIN is not set on the email Worker');
   else if (!DOMAIN.test(mailDomain)) problems.push('MAIL_DOMAIN is not a valid domain');
 
@@ -157,6 +169,7 @@ export function m365SyncConfig(env: M365SyncEnv): M365SyncConfigCheck {
       mailDomain,
       maxPausePercent,
       mailboxPlanIds: new Set([...Object.keys(EXCHANGE_MAILBOX_PLANS), ...extraPlans]),
+      detectSharedMailboxes: detect === 'true',
     },
   };
 }
@@ -173,9 +186,13 @@ export const M365_COUNT_KEYS = [
   'paused',
   'resumed',
   'sharedCreated',
+  /** Objects classified as shared mailboxes this round (shared group or Exchange mailbox type), new or linked. */
+  'sharedFound',
   'conflicts',
   'unchanged',
   'ignored',
+  /** Objects left as they are this round because their Exchange mailbox type could not be read. */
+  'typeUnknown',
 ] as const;
 export type M365CountKey = (typeof M365_COUNT_KEYS)[number];
 export type M365Counts = Record<M365CountKey, number>;
@@ -196,7 +213,8 @@ export const M365_REPORT_LIMIT = 200;
 export interface M365PendingEntry {
   /** Entra object id. */
   id: string;
-  kind: 'person' | 'shared' | 'out';
+  /** 'skip': the mailbox type lookup failed; nothing about this object changes this round. */
+  kind: 'person' | 'shared' | 'out' | 'skip';
   address: string;
   displayName: string;
   reason: string;
@@ -208,6 +226,13 @@ export interface M365QueuedPause {
   address: string;
   reason: string;
 }
+
+/**
+ * Shared mailbox detection: consecutive full reconciliations in which a
+ * linked object's Exchange mailbox type could not be read before Admin shows
+ * an alert and an audit row is written (m365_sync.type_unreadable).
+ */
+export const M365_PURPOSE_FAILURE_ALERT = 3;
 
 /** Mass-pause brake: no live pause is applied while this many would be. */
 export const M365_BRAKE_MIN_PAUSES = 5;
@@ -270,6 +295,13 @@ export interface M365SyncState {
   lastError: { code: string; at: string } | null;
   backoffUntil: string | null;
   backoffStreak: number;
+  /** Whether the Worker has shared mailbox detection on (M365_DETECT_SHARED_MAILBOXES), as of its last configured run. */
+  sharedDetection: boolean | null;
+  /**
+   * Set when detection was switched on (again): the cached types were cleared
+   * and the next round must be a full reconciliation. Cleared when one finishes.
+   */
+  detectionReconcilePending: boolean;
 }
 
 export function emptyCounts(): M365Counts {
@@ -291,6 +323,8 @@ export function emptyM365SyncState(): M365SyncState {
     lastError: null,
     backoffUntil: null,
     backoffStreak: 0,
+    sharedDetection: null,
+    detectionReconcilePending: false,
   };
 }
 
@@ -320,6 +354,7 @@ export interface M365StatusView {
   lastReconcileAt: string | null;
   lastReconcileMode: M365RoundMode | null;
   deltaLinkAt: string | null;
+  sharedDetection: boolean | null;
   round: { id: string; kind: M365RoundKind; mode: M365RoundMode; phase: M365Round['phase']; startedAt: string; brake: M365Brake | null; heldPauses: M365QueuedPause[] } | null;
   lastRound: M365FinishedRound | null;
 }
@@ -334,6 +369,7 @@ export function m365StatusView(state: M365SyncState): M365StatusView {
     lastReconcileAt: state.lastReconcileAt,
     lastReconcileMode: state.lastReconcileMode,
     deltaLinkAt: state.deltaLinkAt,
+    sharedDetection: typeof state.sharedDetection === 'boolean' ? state.sharedDetection : null,
     round: round
       ? {
         id: round.id,

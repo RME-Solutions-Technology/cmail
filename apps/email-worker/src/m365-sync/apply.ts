@@ -11,8 +11,11 @@
 //   has touched since (the 0022 trigger clears the mark on any status change).
 // - Managers are never created, adopted, paused, resumed or edited, and an
 //   offboarded account is never edited.
-// - Shared mailboxes come only from the explicit shared-mailbox group, and
-//   are created or adopted, never disabled.
+// - Shared mailboxes come from the explicit shared-mailbox group and, with
+//   M365_DETECT_SHARED_MAILBOXES on, from Exchange's mailbox type. Both take
+//   the same path: created or adopted, nobody assigned, never disabled.
+// - An object whose mailbox type could not be read ('skip') is left exactly
+//   as it is: no create, update or pause, and it still counts as seen.
 // - Dry run reads the same data and reports the same decisions, but writes
 //   nothing except the link bookkeeping column `seen_round`.
 // Every change is one D1 batch with its audit row. Status changes are
@@ -62,6 +65,8 @@ export interface ApplyContext {
   newId: () => string;
   /** Wall clock, for the change marker written to users.updated_at. */
   now: () => number;
+  /** Shared mailbox detection on (M365_DETECT_SHARED_MAILBOXES): only changes report wording. */
+  sharedDetection?: boolean;
 }
 
 /** D1 allows at most 100 bound parameters per statement. */
@@ -347,6 +352,14 @@ async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRo
 }
 
 async function personNew(ctx: ApplyContext, entry: M365PendingEntry) {
+  if (entry.reason === 'mailbox_not_provisioned') {
+    // Detection on, delta round, Graph says "no Exchange Online mailbox":
+    // it may still be provisioning (and turn out to be a room or shared
+    // mailbox). Not created now; asked again when next returned, and the
+    // daily reconciliation decides for good.
+    record(ctx, 'ignored', { action: 'wait_for_mailbox', address: entry.address, reason: 'mailbox_not_provisioned' });
+    return;
+  }
   const existing = await userByEmail(ctx, entry.address);
   if (existing) {
     if (existing.role !== 'standard') return conflict(ctx, entry, 'manager_not_adopted');
@@ -411,7 +424,7 @@ async function sharedNew(ctx: ApplyContext, entry: M365PendingEntry) {
     return;
   }
   if (await userByEmail(ctx, entry.address)) return conflict(ctx, entry, 'address_is_an_account');
-  record(ctx, 'sharedCreated', { action: 'create_shared', address: entry.address, reason: 'in_shared_group' });
+  record(ctx, 'sharedCreated', { action: 'create_shared', address: entry.address, reason: entry.reason || 'in_shared_group' });
   if (!live(ctx)) return;
   const mailboxId = ctx.newId();
   const ok = await runBatch(ctx, [
@@ -431,8 +444,8 @@ async function sharedLinked(ctx: ApplyContext, entry: M365PendingEntry, link: Li
   if (entry.kind !== 'shared') {
     // Shared mailboxes are never disabled by the sync: that would bounce mail.
     if (link.source_state === 'in_scope') {
-      record(ctx, 'unchanged', { action: 'left_source_kept', address: entry.address, reason: entry.reason || 'not_in_shared_group' });
-      if (live(ctx)) await runBatch(ctx, [linkStateStatement(ctx.db, link.object_id, 'out_of_scope', entry.reason || 'not_in_shared_group')]);
+      record(ctx, 'unchanged', { action: 'left_source_kept', address: entry.address, reason: (entry.reason || (ctx.sharedDetection ? 'no_longer_shared' : 'not_in_shared_group')) });
+      if (live(ctx)) await runBatch(ctx, [linkStateStatement(ctx.db, link.object_id, 'out_of_scope', (entry.reason || (ctx.sharedDetection ? 'no_longer_shared' : 'not_in_shared_group')))]);
     } else {
       record(ctx, 'unchanged');
     }
@@ -467,11 +480,19 @@ export async function applyEntries(ctx: ApplyContext, entries: M365PendingEntry[
   const links = await loadLinks(ctx, entries.map((entry) => entry.id));
   for (const entry of entries) {
     const link = links.get(entry.id) ?? null;
+    if (entry.kind === 'skip') {
+      // The mailbox type is unknown this round: change nothing, and drop any
+      // pause this round queued for it earlier. Retried when next seen.
+      dequeuePause(ctx, entry.id);
+      record(ctx, 'typeUnknown', { action: 'type_unknown', address: entry.address, reason: entry.reason });
+      continue;
+    }
+    if (entry.kind === 'shared') ctx.round.counts.sharedFound = (ctx.round.counts.sharedFound ?? 0) + 1;
     if (link?.kind === 'shared') {
       await sharedLinked(ctx, entry, link);
     } else if (link) {
       if (entry.kind === 'person') await personIn(ctx, entry, link);
-      else if (entry.kind === 'shared') await personOut(ctx, entry, link, 'in_shared_group');
+      else if (entry.kind === 'shared') await personOut(ctx, entry, link, entry.reason || 'in_shared_group');
       else await personOut(ctx, entry, link, entry.reason);
     } else if (entry.kind === 'person') {
       await personNew(ctx, entry);

@@ -450,7 +450,12 @@ export async function runCopyBackTick(env: CopyBackWorkerEnv, deps: CopyBackDeps
     const streak = job.backoff_streak ?? 0;
     const seconds = Math.max(1, Math.min(MAX_BACKOFF_SECONDS, wait ?? 60 * 2 ** Math.min(streak, 6)));
     // Codes only: no response bodies, tokens or addresses.
-    console.error('Standby copy-back tick failed', { code, status: graphError?.status ?? 0 });
+    console.error('Standby copy-back tick failed', {
+      code,
+      status: graphError?.status ?? 0,
+      // Error class name only (e.g. TypeError), never a message.
+      error: graphError ? graphError.causeName ?? undefined : caught instanceof Error ? caught.name : 'UnknownError',
+    });
     await setJob(db, job.id, {
       last_result: graphError && (graphError.code === 'throttled' || graphError.code === 'network') ? 'backoff' : 'error',
       last_error_code: code,

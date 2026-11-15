@@ -4,6 +4,7 @@
 // private EMAIL_SERVICE binding) whether its settings are present, and reads
 // the status row the Worker writes.
 import {
+  M365_PURPOSE_FAILURE_ALERT,
   M365_SYNC_SETTING_APPROVED_ROUND,
   M365_SYNC_SETTING_DRY_RUN,
   M365_SYNC_SETTING_ENABLED,
@@ -31,6 +32,25 @@ export interface M365SyncOverview {
   status: M365StatusView | null;
   linkedPeople: number;
   linkedShared: number;
+  /**
+   * Shared mailbox detection: linked objects whose Exchange mailbox type could
+   * not be read in M365_PURPOSE_FAILURE_ALERT or more full reconciliations in
+   * a row (0 before migration 0026).
+   */
+  unreadableLinked: number;
+}
+
+/** Count for the Admin alert; 0 when migration 0026 is not applied. */
+async function unreadableLinkedCount(db: D1Database): Promise<number> {
+  try {
+    const row = await db.prepare(
+      `SELECT COUNT(*) AS n FROM m365_sync_mailbox_purpose p JOIN m365_sync_links l ON l.object_id = p.object_id
+       WHERE p.purpose = 'unknown' AND p.failed_reconciles >= ?`,
+    ).bind(M365_PURPOSE_FAILURE_ALERT).first<{ n: number }>();
+    return Number(row?.n ?? 0);
+  } catch {
+    return 0;
+  }
 }
 
 const CONFIG_URL = 'https://cmail-email-worker.internal/internal/m365-sync/config';
@@ -68,9 +88,10 @@ export async function loadM365SyncOverview(env: { DB: D1Database; EMAIL_SERVICE?
          FROM m365_sync_links`,
       ).first<{ people: number | null; shared: number | null }>(),
     ]);
-    return { toggle, config, installed: true, status: m365StatusView(status), linkedPeople: counts?.people ?? 0, linkedShared: counts?.shared ?? 0 };
+    const unreadableLinked = await unreadableLinkedCount(env.DB);
+    return { toggle, config, installed: true, status: m365StatusView(status), linkedPeople: counts?.people ?? 0, linkedShared: counts?.shared ?? 0, unreadableLinked };
   } catch {
-    return { toggle, config, installed: false, status: null, linkedPeople: 0, linkedShared: 0 };
+    return { toggle, config, installed: false, status: null, linkedPeople: 0, linkedShared: 0, unreadableLinked: 0 };
   }
 }
 

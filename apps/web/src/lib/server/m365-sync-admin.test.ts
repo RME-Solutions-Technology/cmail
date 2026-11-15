@@ -28,6 +28,29 @@ describe('Microsoft 365 sync admin', () => {
     expect(overview.installed).toBe(true);
   });
 
+  it('shows shared mailbox detection, linked shared mailboxes and the found/created counts, but no Graph link', async () => {
+    const { env, sqlite } = setup();
+    sqlite.prepare(`INSERT INTO mailboxes (id, address, type) VALUES ('m-team', 'team@example.test', 'shared')`).run();
+    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id) VALUES ('00000000-0000-0000-0000-000000000009', 'shared', 'm-team')`).run();
+    const counts = { created: 0, adopted: 0, updated: 0, paused: 0, resumed: 0, sharedCreated: 1, sharedFound: 1, conflicts: 0, unchanged: 0, ignored: 0, typeUnknown: 0 };
+    sqlite.prepare(`INSERT INTO m365_sync_state (id, state) VALUES (1, ?)`).run(JSON.stringify({
+      deltaLink: 'https://graph.microsoft.com/v1.0/users/delta?$deltatoken=secret-token',
+      sharedDetection: true,
+      lastRound: { kind: 'reconcile', mode: 'live', startedAt: '2026-11-15T00:00:00Z', finishedAt: '2026-11-15T00:01:00Z', counts, report: [], brake: null },
+    }));
+    let overview = await loadM365SyncOverview(env);
+    expect(overview.unreadableLinked).toBe(0);
+    // Its mailbox type has been unreadable in 3 full reconciliations in a row: Admin alerts.
+    sqlite.prepare(`INSERT INTO m365_sync_mailbox_purpose (object_id, purpose, checked_round, failed_reconciles) VALUES ('00000000-0000-0000-0000-000000000009', 'unknown', 'r', 3)`).run();
+    // An unlinked object never counts.
+    sqlite.prepare(`INSERT INTO m365_sync_mailbox_purpose (object_id, purpose, checked_round, failed_reconciles) VALUES ('00000000-0000-0000-0000-000000000010', 'unknown', 'r', 5)`).run();
+    overview = await loadM365SyncOverview(env);
+    expect(overview.unreadableLinked).toBe(1);
+    expect(overview.linkedShared).toBe(1);
+    expect(overview.status).toMatchObject({ sharedDetection: true, lastRound: { counts: { sharedFound: 1, sharedCreated: 1 } } });
+    expect(JSON.stringify(overview)).not.toContain('secret-token');
+  });
+
   it('reports unknown when there is no binding or the Worker fails', async () => {
     expect(await workerConfigStatus(undefined)).toEqual({ state: 'unknown' });
     expect(await workerConfigStatus({ fetch: async () => new Response('x', { status: 500 }) })).toEqual({ state: 'unknown' });
