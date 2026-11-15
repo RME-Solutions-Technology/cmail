@@ -43,6 +43,12 @@ export class GraphError extends Error {
     readonly code: GraphErrorCode,
     readonly status: number,
     readonly retryAfterSeconds: number | null = null,
+    /**
+     * For 'network': the underlying error's name only (for example
+     * 'TypeError', 'TimeoutError'), never its message, so logs stay free of
+     * URLs, tokens and addresses but the cause can still be told apart.
+     */
+    readonly causeName: string | null = null,
   ) {
     super(`Microsoft Graph ${code} (${status})`);
     this.name = 'GraphError';
@@ -187,7 +193,10 @@ export class GraphClient {
   requests = 0;
 
   constructor(private readonly options: GraphClientOptions) {
-    this.fetcher = options.fetcher ?? fetch;
+    // Never store the global fetch and call it as a method: on Cloudflare
+    // Workers `this.fetcher(...)` then throws "Illegal invocation". A wrapper
+    // calls it unbound.
+    this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = options.now ?? Date.now;
   }
@@ -195,9 +204,12 @@ export class GraphClient {
   private async send(url: string, init: RequestInit): Promise<Response> {
     this.requests += 1;
     try {
-      return await this.fetcher(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-    } catch {
-      throw new GraphError('network', 0);
+      // Called unbound, never as a method of this client (see the constructor).
+      const fetcher = this.fetcher;
+      return await fetcher(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    } catch (caught) {
+      const name = caught instanceof Error && /^[A-Za-z]{1,40}$/.test(caught.name) ? caught.name : 'UnknownError';
+      throw new GraphError('network', 0, null, name);
     }
   }
 

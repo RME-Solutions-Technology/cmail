@@ -106,7 +106,7 @@ function failureStatement(db: D1Database, id: string, round: M365Round): D1Prepa
   ).bind(id, round.id, reconcile);
 }
 
-/** One audit row per linked object, in the reconciliation where it reaches the alert threshold. */
+/** One audit row per linked object (deduplicated by target and round), in the reconciliation where it reaches the alert threshold. */
 function alertAuditStatement(db: D1Database, id: string, roundId: string): D1PreparedStatement {
   const detail = `Microsoft 365 sync: the Exchange mailbox type of a linked object could not be read in ${PURPOSE_FAILURE_ALERT} full reconciliations in a row (round ${roundId}); it is left unchanged until it can be read`;
   return db.prepare(
@@ -114,7 +114,8 @@ function alertAuditStatement(db: D1Database, id: string, roundId: string): D1Pre
      SELECT ?, datetime('now'), NULL, 'system', 'm365_sync.type_unreadable', COALESCE(l.user_id, l.mailbox_id), ?
      FROM m365_sync_links l JOIN ${TABLE} p ON p.object_id = l.object_id
      WHERE l.object_id = ? AND p.purpose = 'unknown' AND p.failed_reconciles = ? AND p.checked_round = ?
-       AND NOT EXISTS (SELECT 1 FROM audit_log WHERE event_type = 'm365_sync.type_unreadable' AND detail = ?)`,
+       AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.event_type = 'm365_sync.type_unreadable'
+         AND a.target = COALESCE(l.user_id, l.mailbox_id) AND a.detail = ?)`,
   ).bind(crypto.randomUUID(), detail.slice(0, 1000), id, PURPOSE_FAILURE_ALERT, roundId, detail.slice(0, 1000));
 }
 

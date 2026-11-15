@@ -455,7 +455,12 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
     }
     state.lastError = { code, at: iso(at) };
     // Codes only: no response bodies, tokens or addresses.
-    console.error('Microsoft 365 sync tick failed', { code, status: caught instanceof GraphError ? caught.status : 0 });
+    console.error('Microsoft 365 sync tick failed', {
+      code,
+      status: caught instanceof GraphError ? caught.status : 0,
+      // Error class name only (e.g. TypeError for a broken fetch), never a message.
+      error: caught instanceof GraphError ? caught.causeName ?? undefined : caught instanceof Error ? caught.name : 'UnknownError',
+    });
     try {
       await saveState(db, state);
     } catch {

@@ -566,6 +566,21 @@ describe('shared mailbox detection: repeated failures (review finding 3)', () =>
     expect(t.user('alex@example.test')?.status).toBe('paused');
   });
 
+  it('writes one audit row for each linked object that reaches 3 failures in the same round', async () => {
+    const t = await live([[person(1, 'alex'), person(2, 'blair')]]);
+    t.fake.purposes.set(oid(1), { status: 403 });
+    t.fake.purposes.set(oid(2), { status: 403 });
+    for (const token of ['tok-2', 'tok-3', 'tok-4']) {
+      t.fake.setReconcile([[person(1, 'alex'), person(2, 'blair')]], token);
+      t.syncNow();
+      t.advance(1000);
+      await t.tick();
+    }
+    expect(t.audits('m365_sync.type_unreadable')).toBe(2);
+    const targets = (t.sqlite.prepare(`SELECT target FROM audit_log WHERE event_type = 'm365_sync.type_unreadable' ORDER BY target`).all() as Array<{ target: string }>).map((row) => row.target);
+    expect(targets).toEqual([t.user('alex@example.test')!.id, t.user('blair@example.test')!.id].sort());
+  });
+
   it('a page read again after throttling does not count a reconciliation twice', async () => {
     const t = await live([[person(1, 'alex'), person(2, 'blair')]]);
     t.fake.purposes.set(oid(1), { status: 403 });

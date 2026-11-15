@@ -353,7 +353,7 @@ itself on its next run without changing anything.
 | Delta link expired, `410 Gone`, or a 40X with `syncStateNotFound`, `syncStateInvalid`, `resyncRequired` or a similar token error | Drops the link, runs a full reconciliation at once | Logged; next round is a reconciliation |
 | A round would pause too many people, or a reconciliation returns nothing | Holds the round; no pause is applied | `held`, with the list and Approve / Discard |
 | A manager pauses, reactivates or offboards someone while the sync runs | The manager's change wins; the sync's change is skipped | Report: `changed_concurrently` |
-| Network error or 5xx | Backs off 60 s, doubling to an hour | `backoff (network)` / `error` |
+| Network error or 5xx | Backs off 60 s, doubling to an hour. A network error logs the underlying error's name only (for example `TypeError`, `TimeoutError`), never its message | `backoff (network)` / `error` |
 | Response not as expected, or a page link not on `graph.microsoft.com/v1.0/` | Stops before using it (the token is never sent anywhere else) | `error (bad_response)` |
 | Worker stopped mid-run | The lease expires in 10 minutes; the next run resumes from the saved step | `running` |
 | A write clashes with a sign-in or a manager edit | That object is skipped and reported | Report: `write_conflict` |

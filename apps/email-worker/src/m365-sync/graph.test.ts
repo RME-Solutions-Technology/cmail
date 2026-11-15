@@ -233,3 +233,36 @@ describe('mailbox type lookups: per-batch budget', () => {
     expect(result.purposes.size).toBe(40);
   });
 });
+
+describe('fetch is never called as a method (Workers "Illegal invocation")', () => {
+  /** Behaves like the Workers runtime: fetch called with any `this` but undefined or globalThis throws. */
+  function strictFetch(fake = fakeGraph()) {
+    return function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      return fake.fetch(input, init);
+    } as typeof fetch;
+  }
+
+  it('calls an injected fetcher unbound', async () => {
+    const graph = new GraphClient({ tenantId: TENANT_ID, clientId: CLIENT_ID, clientSecret: 'test-secret', fetcher: strictFetch() });
+    await expect(graph.deltaPage(INITIAL_DELTA_URL)).rejects.toMatchObject({ code: 'http_error', status: 404 });
+  });
+
+  it('calls the global fetch unbound when no fetcher is given', async () => {
+    vi.stubGlobal('fetch', strictFetch());
+    try {
+      const graph = new GraphClient({ tenantId: TENANT_ID, clientId: CLIENT_ID, clientSecret: 'test-secret' });
+      await expect(graph.deltaPage(INITIAL_DELTA_URL)).rejects.toMatchObject({ code: 'http_error', status: 404 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the underlying error name (not its message) on a network error', async () => {
+    const fetcher = (async () => { throw new TypeError('Illegal invocation at https://graph.microsoft.com/secret'); }) as unknown as typeof fetch;
+    const graph = new GraphClient({ tenantId: TENANT_ID, clientId: CLIENT_ID, clientSecret: 'test-secret', fetcher });
+    const error = await failure(graph.deltaPage(INITIAL_DELTA_URL));
+    expect(error).toMatchObject({ code: 'network', causeName: 'TypeError' });
+    expect(error.message).not.toContain('secret');
+  });
+});
