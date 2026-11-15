@@ -37,6 +37,10 @@ default, with a manager switch and dry run), see
 that arrived in cmail meanwhile can be copied into each person's Exchange
 mailbox: see [Copy standby mail back into Exchange](copy-back.md).
 
+To give every mailbox a second address on a standby subdomain and test it
+daily (off by default), see
+[Standby test address and daily probe](standby-probe.md).
+
 For staff-portal links and optional provider-session reuse, see the
 [staff sign-in contract](staff-sign-in.md), including the Cloudflare Access
 identity boundary and live configuration checks.

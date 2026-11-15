@@ -660,12 +660,14 @@
   .host :global(.rich-text-surface blockquote) { margin: 0 0 0.6em; padding-left: 10px; border-left: 3px solid #d1d5db; color: #4b5563; }
   .host :global(.rich-text-surface a) { color: #0563c1; text-decoration: underline; }
   .placeholder { position: absolute; top: 12px; left: 14px; color: #6b6b6b; pointer-events: none; }
-  .editor-state { margin: 0; padding: 12px 14px; color: #6b7280; font-size: 13px; font-family: var(--font-base, inherit); }
+  /* Same height as the empty surface, so loading causes no layout shift. */
+  .editor-state { min-height: 240px; margin: 0; padding: 12px 14px; color: #6b7280; font-size: 13px; font-family: var(--font-base, inherit); }
   .is-disabled .toolbar { opacity: 0.58; }
   .is-disabled .surface-wrap { cursor: not-allowed; }
 
   @media (max-width: 768px) {
     .host :global(.rich-text-surface) { min-height: 200px; max-height: none; }
+    .editor-state { min-height: 200px; }
   }
   @media (pointer: coarse), (max-width: 860px) {
     .toolbar { gap: 2px; padding: 2px 4px; }

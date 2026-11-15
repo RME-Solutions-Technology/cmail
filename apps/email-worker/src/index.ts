@@ -5,6 +5,17 @@
 import { LINK_BLOCKLIST_CRON, refreshLinkBlocklist } from './link-blocklist-refresh';
 import { M365_SYNC_CRON, m365SyncConfigDiagnostic, runM365SyncTick, type M365SyncWorkerEnv } from './m365-sync/sync';
 import { copyBackConfigDiagnostic, runCopyBackTick, type CopyBackWorkerEnv } from './copy-back/run';
+import {
+  STANDBY_PROBE_CRON,
+  decideProbeDelivery,
+  recordProbeReceipt,
+  resolveStandbyMailbox,
+  runStandbyProbeNow,
+  runStandbyProbeTick,
+  standbyConfigDiagnostic,
+  type ProbeDecision,
+} from './standby/standby';
+import type { StandbyEnv } from '@cmail/shared/standby';
 import PostalMime from 'postal-mime';
 import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
@@ -52,7 +63,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv, StandbyEnv {
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
   EMAIL?: SendEmail;
   /**
@@ -790,6 +801,19 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/copy-back/config' && request.method === 'GET') {
     return Response.json(copyBackConfigDiagnostic(env));
   }
+  // Standby test address (docs/standby-probe.md): configuration by setting
+  // name, and "Run test now" from Admin. Both only over the private binding.
+  if (url.pathname === '/internal/standby/config' && request.method === 'GET') {
+    return Response.json(standbyConfigDiagnostic(env));
+  }
+  if (url.pathname === '/internal/standby/run' && request.method === 'POST') {
+    try {
+      return Response.json(await runStandbyProbeNow(env));
+    } catch (caught) {
+      console.error('Standby probe run failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      return Response.json({ status: 'error' }, { status: 503 });
+    }
+  }
   if (url.pathname !== '/internal/send' || request.method !== 'POST') {
     return new Response('Not found', { status: 404 });
   }
@@ -877,6 +901,19 @@ export default {
       }));
       return;
     }
+    // Standby probe: returns at once unless a manager turned the standby
+    // address on in Admin. See docs/standby-probe.md.
+    if (controller.cron === STANDBY_PROBE_CRON) {
+      ctx.waitUntil(runStandbyProbeTick(env).then((result) => {
+        // Outcome codes only, never addresses or tokens.
+        if (result.status === 'started') console.log('Standby probe sent');
+        else if (result.status === 'failed') console.warn('Standby probe failed', { reason: result.reason });
+        else if (result.status === 'not_configured') console.warn('Standby probe not configured');
+      }, (caught: unknown) => {
+        console.error('Standby probe tick failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      return;
+    }
     ctx.waitUntil(runRetention(env));
   },
 
@@ -920,16 +957,39 @@ export default {
     // at most one generic no-PII warning per colo/minute.
     await observeInboundRateLimitThreshold(env, sourceIp, senderAddress);
 
-    // Look up recipient mailbox.
-    const mailbox = await env.DB.prepare(
-      'SELECT id, status FROM mailboxes WHERE address = ? AND status = ?',
-    ).bind(recipientAddress, 'active').first<{ id: string; status: string }>();
+    // Look up recipient mailbox. The standby address (docs/standby-probe.md)
+    // is tried only when the exact address has no active mailbox; it resolves
+    // to an existing mailbox on MAIL_DOMAIN or to nothing.
+    let mailbox = await env.DB.prepare(
+      'SELECT id, status, address, type FROM mailboxes WHERE address = ? AND status = ?',
+    ).bind(recipientAddress, 'active').first<{ id: string; status: string; address?: string; type?: string }>();
+    let viaStandby = false;
+    if (!mailbox) {
+      mailbox = await resolveStandbyMailbox(env.DB, env, recipientAddress);
+      viaStandby = Boolean(mailbox);
+    }
 
     if (!mailbox) {
       message.setReject(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
       // Unknown-recipient spray must not create unbounded trace/audit data.
       return;
     }
+    // The address the mailbox is known by, for inbox rules ("my address").
+    const mailboxAddress = mailbox.address || recipientAddress;
+
+    // The standby probe's system mailbox takes only live probes that came in
+    // on the standby address; anything else for it is refused like an
+    // unknown address, and a duplicate or late probe is not stored again.
+    const probe: ProbeDecision = await decideProbeDelivery(env.DB, env, {
+      mailbox: { id: mailbox.id, status: mailbox.status, address: mailboxAddress, type: mailbox.type },
+      viaStandby,
+      headers: message.headers,
+    });
+    if (probe.action === 'reject') {
+      message.setReject(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE);
+      return;
+    }
+    if (probe.action === 'drop') return;
 
     const rawMessageIdHeader = (message.headers.get('message-id') || '').trim();
     if (rawMessageIdHeader.length > MAX_MESSAGE_ID_CHARS) {
@@ -1151,7 +1211,7 @@ export default {
     // Inbox rules only see mail the organisation filed to the Inbox: a
     // mailbox rule never pulls quarantined mail back out of Junk.
     const ruleOutcome = quarantined ? null : await inboundRuleOutcome(env.DB, mailbox.id, {
-      mailboxAddress: recipientAddress,
+      mailboxAddress,
       from: headerFrom,
       to: headerToAddresses,
       cc: ccAddresses,
@@ -1257,6 +1317,22 @@ export default {
       } else {
         if (recheckCompleted) await deleteR2Objects(env.STORAGE, newR2Keys);
         throw insertError;
+      }
+    }
+
+    if (probe.action === 'deliver') {
+      // The probe is stored: record the round trip. A failure here must not
+      // fail the delivery; the probe then times out and Admin shows it.
+      try {
+        await recordProbeReceipt(env.DB, {
+          runId: probe.runId,
+          startedAt: probe.startedAt,
+          messageId,
+          folder: ruleOutcome?.folder ?? placement.folder,
+          auth: { spf: auth.spf, dkim: auth.dkim, dmarc: auth.dmarc },
+        });
+      } catch {
+        console.error('Standby probe receipt could not be recorded');
       }
     }
 
