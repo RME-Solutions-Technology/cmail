@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/RME-Solutions-Technology/cmail/actions/workflows/ci.yml"><img src="https://github.com/RME-Solutions-Technology/cmail/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="https://github.com/RME-Solutions-Technology/cmail/actions/workflows/codeql.yml"><img src="https://github.com/RME-Solutions-Technology/cmail/actions/workflows/codeql.yml/badge.svg" alt="CodeQL status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2563eb.svg" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-2563eb.svg" alt="Apache License 2.0"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.17-339933.svg" alt="Node.js 22.17 or newer"></a>
   <a href="https://doi.org/10.5281/zenodo.23833567"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.23833567.svg" alt="DOI"></a>
 </p>
@@ -171,6 +171,6 @@ opinion — your organisation still owns compliance for its own deployment.
 
 ## License
 
-cmail is available under the [MIT License](LICENSE). If it helps your
+cmail is available under the [Apache License 2.0](LICENSE). If you use or redistribute cMail, the license requires you to keep the [NOTICE](NOTICE) and give credit to RME Solutions Technology. If it helps your
 organisation, consider contributing fixes, documentation, testing, or support
 back to the community.
