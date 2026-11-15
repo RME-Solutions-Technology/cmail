@@ -17,11 +17,15 @@
 -- The sync's own level change moves the ledger marker first, in the same
 -- batch, so its update keeps the row.
 --
--- A delete the sync did not make (removing = 0) also records the pair in
--- m365_perm_released: a manager took that access away, so the sync must not
--- give it back while Exchange still grants it. The sync clears the mark once
--- Exchange stops granting it (then a later grant is new again). The sync's
--- own removal sets removing = 1 first, in the same batch, so it leaves no mark.
+-- Whenever a manager takes a sync-made row over, the pair is also recorded in
+-- m365_perm_released, independent of the ledger: on a delete the sync did
+-- not make (removing = 0), and on an edit that hands the row to a manager.
+-- So a row a manager edited and later removed is never given back while
+-- Exchange still grants it either. The sync clears the mark only when no
+-- assignment exists and Exchange has stopped granting the access (a later
+-- grant is then new). The sync's own removal sets removing = 1 first, in the
+-- same batch, so it leaves no mark. Offboarding deletes assignments too, so
+-- it also counts as a manager removal.
 --
 -- m365_perm_state is a single row: switch-independent run state (last run,
 -- result, consecutive failures, the round in progress, a bounded report).
@@ -45,8 +49,8 @@ CREATE TABLE IF NOT EXISTS m365_perm_ledger (
   PRIMARY KEY (mailbox_id, user_id)
 );
 
--- Pairs whose sync-made access a manager removed. No foreign keys: rows are
--- written from a delete trigger, also during cascades; the sync prunes rows
+-- Pairs whose sync-made access a manager took over or removed. No foreign
+-- keys: rows are written from triggers, also during cascades; the sync prunes rows
 -- whose mailbox or account no longer exists.
 CREATE TABLE IF NOT EXISTS m365_perm_released (
   mailbox_id TEXT NOT NULL,
@@ -68,6 +72,12 @@ END;
 CREATE TRIGGER IF NOT EXISTS trg_m365_perm_assignment_update
 AFTER UPDATE ON mailbox_assignments
 BEGIN
+  INSERT OR IGNORE INTO m365_perm_released (mailbox_id, user_id)
+  SELECT OLD.mailbox_id, OLD.user_id
+  WHERE EXISTS (SELECT 1 FROM m365_perm_ledger
+    WHERE mailbox_id = OLD.mailbox_id AND user_id = OLD.user_id
+      AND (assigned_at_written IS NOT NEW.assigned_at OR NEW.assigned_by IS NOT NULL
+        OR NEW.mailbox_id IS NOT OLD.mailbox_id OR NEW.user_id IS NOT OLD.user_id));
   DELETE FROM m365_perm_ledger
   WHERE mailbox_id = OLD.mailbox_id AND user_id = OLD.user_id
     AND (assigned_at_written IS NOT NEW.assigned_at OR NEW.assigned_by IS NOT NULL

@@ -51,7 +51,7 @@ function Get-EXOMailboxPermission {
     'sales@example.test' {
       [pscustomobject]@{ User = 'NT AUTHORITY\SELF'; AccessRights = @('ReadPermission'); IsInherited = $false; Deny = $false }
       [pscustomobject]@{ User = 'alice@example.test'; AccessRights = @('FullAccess'); IsInherited = $false; Deny = $false }
-      [pscustomobject]@{ User = 'Sales Team'; AccessRights = @('FullAccess', 'ReadPermission'); IsInherited = $false; Deny = $false }
+      [pscustomobject]@{ User = 'Sales Team'; UserSid = 'S-1-5-21-1111111111-2222222222-3333333333-2001'; AccessRights = @('FullAccess', 'ReadPermission'); IsInherited = $false; Deny = $false }
       [pscustomobject]@{ User = 'S-1-5-21-1111111111-2222222222-3333333333-1001'; AccessRights = @('FullAccess'); IsInherited = $false; Deny = $false }
       [pscustomobject]@{ User = 'bob@example.test'; AccessRights = @('FullAccess'); IsInherited = $true; Deny = $false }
     }
@@ -64,7 +64,7 @@ function Get-EXOMailboxPermission {
       [pscustomobject]@{ User = 'meeting-room@example.test'; AccessRights = 'FullAccess'; IsInherited = $false; Deny = $false }
     }
     'support@example.test' {
-      [pscustomobject]@{ User = 'someone-unknown'; AccessRights = 'FullAccess'; IsInherited = $false; Deny = $false }
+      [pscustomobject]@{ User = 'Twin Name'; AccessRights = 'FullAccess'; IsInherited = $false; Deny = $false }
     }
   }
 }
@@ -92,7 +92,13 @@ function Get-EXORecipient {
   switch ($Identity) {
     'alice@example.test' { [pscustomobject]@{ ExternalDirectoryObjectId = $ids.alice; RecipientTypeDetails = 'UserMailbox' } }
     'bob@example.test' { [pscustomobject]@{ ExternalDirectoryObjectId = $ids.bob; RecipientTypeDetails = 'UserMailbox' } }
-    'Sales Team' { [pscustomobject]@{ ExternalDirectoryObjectId = $ids.group; RecipientTypeDetails = 'MailUniversalSecurityGroup' } }
+    # By SID: exactly one object.
+    'S-1-5-21-1111111111-2222222222-3333333333-2001' { [pscustomobject]@{ ExternalDirectoryObjectId = $ids.group; RecipientTypeDetails = 'MailUniversalSecurityGroup' } }
+    # By name: a collision (two objects). The collector must never pick one.
+    { $_ -in @('Sales Team', 'Twin Name') } {
+      [pscustomobject]@{ ExternalDirectoryObjectId = $ids.group; RecipientTypeDetails = 'MailUniversalSecurityGroup' }
+      [pscustomobject]@{ ExternalDirectoryObjectId = $ids.bob; RecipientTypeDetails = 'UserMailbox' }
+    }
     'meeting-room@example.test' { [pscustomobject]@{ ExternalDirectoryObjectId = $ids.room; RecipientTypeDetails = 'RoomMailbox' } }
     default { throw "Couldn't find object ""$Identity"" (simulated ManagementObjectNotFound)" }
   }
@@ -132,7 +138,9 @@ Assert-True ($aliceDesk.fullAccess -eq $false -and $aliceDesk.sendAs -eq $true) 
 Assert-True (@($desk.grants | Where-Object { $_.trustee -eq $ids.room }).Count -eq 0) 'room trustee skipped as otherKind'
 
 $support = $parsed.mailboxes | Where-Object { $_.id -eq $ids.shared3 }
-Assert-True ($support.complete -eq $false) 'unresolvable trustee marks the mailbox incomplete'
+Assert-True ($support.complete -eq $false -and @($support.grants).Count -eq 0) 'a name matching two objects is unresolved and marks the mailbox incomplete'
+Assert-True ($script:Calls -contains 'Get-EXORecipient:S-1-5-21-1111111111-2222222222-3333333333-2001') 'a trustee with a SID is resolved by SID'
+Assert-True (-not ($script:Calls -contains 'Get-EXORecipient:Sales Team')) 'a trustee with a SID is never resolved by name'
 $legal = $parsed.mailboxes | Where-Object { $_.id -eq $ids.shared4 }
 Assert-True ($legal.complete -eq $false -and @($legal.grants).Count -eq 0) 'a Deny entry freezes the mailbox: no grants, incomplete'
 Assert-True (($parsed.errors | Where-Object { $_.code -eq 'deny_entries' }).count -eq 1) 'deny entries counted'

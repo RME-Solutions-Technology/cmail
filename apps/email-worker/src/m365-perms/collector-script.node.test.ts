@@ -12,8 +12,13 @@ import { parseSnapshot } from './snapshot';
 
 const DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../container/m365-perms');
 const SCRIPT = readFileSync(join(DIR, 'collect.ps1'), 'utf8');
-const pwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8' });
-const hasPwsh = pwsh.status === 0 && Number(pwsh.stdout.trim()) >= 7;
+// collect.ps1 needs PowerShell 7.6 or later (#Requires). CI also runs the
+// harness in its own job with PowerShell 7.6.10 installed (ci.yml), so it is
+// never silently skipped there.
+const pwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '"$($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"'], { encoding: 'utf8' });
+const [major, minor] = (pwsh.status === 0 ? pwsh.stdout.trim() : '0.0').split('.').map(Number);
+const hasPwsh = major > 7 || (major === 7 && minor >= 6);
+if (!hasPwsh) console.warn('collect.ps1 harness skipped here: PowerShell 7.6 or later is not installed (the CI collector job runs it)');
 
 describe('collect.ps1 is read-only', () => {
   it('allow-lists only Get-*, Connect- and Disconnect- commands', () => {

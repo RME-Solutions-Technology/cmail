@@ -64,7 +64,7 @@ email Worker, cron */15
   ├─ due (daily) or "Sync access now" → POST /begin to the collector DO
   │     M365PermsCollector (Durable Object, collector.ts)
   │       alarm → start container (image built from container/m365-perms/Dockerfile,
-  │               instance "basic", internet on, certificate NOT in the start env)
+  │               instance "standard-1", internet on, certificate NOT in the start env)
   │             → exec pwsh collect.ps1 with the certificate in that process's env only
   │             → read /tmp/cmail-out/result.json (≤ 8 MiB) or error.json
   │             → store the snapshot in Durable Object storage, destroy the container
@@ -83,7 +83,8 @@ addresses or names.
 **Large tenants.** The collector reads each shared mailbox with two cmdlet
 calls (about 1 to 2 seconds each, unverified). It stops taking new mailboxes
 after 10 minutes, writes what it has with `complete: false` and a cursor, and
-the next run continues from there. Removals only ever apply to mailboxes a
+the next cron run (15 minutes later, not the next day) continues from there
+until the pass is complete; then the normal interval applies again. Removals only ever apply to mailboxes a
 run fully read, so a partial run never removes anything elsewhere. For more
 than about 300 shared mailboxes, lower `M365_PERMS_INTERVAL_HOURS` (minimum 6)
 so a full pass finishes sooner.
@@ -112,10 +113,19 @@ folders, archive, delete). The rule is **never more than Exchange grants**.
 | A shared mailbox the Microsoft 365 sync has not linked yet | skipped until linked | `mailboxNotLinked` |
 
 Mapping is by Entra object id only (Exchange `ExternalDirectoryObjectId`, the
-same id the Microsoft 365 sync links on), never by address or name.
+same id the Microsoft 365 sync links on), never by address or name. The
+collector resolves each trustee with `Get-EXORecipient`: by its SID when the
+permission entry carries one (`UserSid`, `TrusteeSidString`), otherwise by the
+identity string Exchange returned (a UPN or the unique object Name; Exchange
+identity lookup does not match display names). It needs exactly one match;
+a name that matches two objects is unresolved and the mailbox is left as it
+is (no additions or removals there).
 Mail-enabled security groups are expanded with Microsoft Graph
 `GET /groups/{id}/transitiveMembers/microsoft.graph.user`
 ([list transitive members](https://learn.microsoft.com/en-us/graph/api/group-list-transitivemembers)),
+with `$count=true` and `ConsistencyLevel: eventual`, because an OData cast on
+directory objects is an advanced query
+([advanced queries](https://learn.microsoft.com/en-us/graph/aad-advanced-queries)),
 using the Microsoft 365 sync's own read-only app (`GroupMember.Read.All`).
 Without that app, or if a group cannot be read, mailboxes granting that group
 count as not fully read (no removals there).
@@ -138,10 +148,14 @@ count as not fully read (no removals there).
    if Exchange no longer grants it. Exchange granting more than a manager set
    is reported as `manager_kept`, never applied. Re-saving a sync-made row in
    Admin > Mailboxes at the same level also hands it to the manager.
-   **A manager's removal sticks:** deleting a sync-made assignment records the
-   pair in `m365_perm_released`, and the sync does not give it back while
-   Exchange still grants it (`manager_removed`). Once Exchange stops granting
-   it, the mark is cleared, so a later new grant in Exchange counts again.
+   **A manager's removal sticks:** deleting a sync-made assignment, or
+   editing it (which hands it to the manager), records the pair in
+   `m365_perm_released`, independent of the ledger. The sync never gives that
+   access back while Exchange still grants it (`manager_removed`), also when
+   the manager first edited the row and removed it later. The mark is cleared
+   only when no assignment exists and Exchange has stopped granting it, so a
+   later new grant in Exchange counts again. **Offboarding** deletes a
+   person's assignments too, so it counts as a manager removal in the same way.
 4. **Guarded writes.** Each change is one D1 batch with its audit row
    (`mailbox.assigned`, `mailbox.permission_changed`, `mailbox.unassigned`,
    actor `system`). Every statement re-checks what the diff read, so a
@@ -227,21 +241,30 @@ Containers need the **Workers Paid** plan (USD 5 a month), which includes
 billing is per 10 ms while the container runs
 ([Containers pricing](https://developers.cloudflare.com/containers/platform/pricing/)).
 
-The collector uses the `basic` instance (1/4 vCPU, 1 GiB, 4 GB disk) for one
-run a day, up to about 13 minutes at worst:
+The collector uses the `standard-1` instance (1/2 vCPU, 4 GiB, 8 GB disk).
+With the `durable_object` scheduling policy, `start()` accepts `lite`,
+`standard-1` to `standard-4` or a custom size, not `basic`
+([scheduling policies](https://developers.cloudflare.com/containers/configuration/scheduling-policy/),
+[instance types](https://developers.cloudflare.com/containers/platform/limits/#instance-types)).
+`lite` (256 MiB) is too small for PowerShell 7 with the Exchange module, so
+`standard-1` is the smallest named size that fits (the module's memory use
+is not published; estimate). One run a day, up to about 13 minutes at worst:
 
-| Resource | Worst case a month (30 runs × 13 min) | Included | Extra cost |
+| Resource | Worst case a month (30 runs × 13 min = 6.5 h) | Included | Extra |
 |---|---|---|---|
-| Memory | 1 GiB × 6.5 h = 6.5 GiB-h | 25 GiB-h | 0 |
-| CPU (active only) | ≤ 0.25 vCPU × 390 min = 98 vCPU-min | 375 | 0 |
-| Disk | 4 GB × 6.5 h = 26 GB-h | 200 GB-h | 0 |
+| Memory | 4 GiB × 6.5 h = 26 GiB-h | 25 GiB-h | 1 GiB-h ≈ USD 0.01 |
+| CPU (active only) | ≤ 0.5 vCPU × 390 min = 195 vCPU-min | 375 | 0 |
+| Disk | 8 GB × 6.5 h = 52 GB-h | 200 GB-h | 0 |
 | Egress | well under 1 GB | 500 GB+ | 0 |
 
-So **no cost beyond Workers Paid** at a daily cadence (estimate). At the
-6-hour minimum the worst case is four times that, still inside the included
-amounts. Durable Object and D1 use is a handful of requests a day. Image
-storage in Cloudflare's registry was not found priced separately (unverified).
-
+So **about USD 0.01 a month beyond Workers Paid** at a daily cadence in the
+worst case, and nothing extra for typical runs of a few minutes (estimate,
+unverified timings). At the 6-hour minimum the worst case is four times the
+usage, about USD 1.20 a month extra. A tenant too large for one run continues
+on the next 15-minute cron until the pass is complete, so each extra run adds
+up to 13 minutes. Durable Object and D1 use is a handful of requests a day.
+Image storage in Cloudflare's registry was not found priced separately
+(unverified).
 ## Setup
 
 Do this in a **test tenant first**. Steps 1 to 4 are in Microsoft 365, 5 to
@@ -283,6 +306,10 @@ uses. Connect as an Exchange administrator (delegated) first:
 
 ```powershell
 Connect-ExchangeOnline -UserPrincipalName admin@<tenant>.onmicrosoft.com
+
+# 0. Custom roles need organization customization enabled once per tenant.
+#    It is a one-time, tenant-wide switch; skip if it says it is already on.
+if ((Get-OrganizationConfig).IsDehydrated) { Enable-OrganizationCustomization }
 
 # a. See which built-in roles hold each cmdlet in YOUR tenant (do not assume).
 $needed = 'Get-Mailbox','Get-MailboxPermission','Get-RecipientPermission','Get-Recipient'
@@ -338,6 +365,9 @@ $m = Get-EXOMailbox -RecipientTypeDetails SharedMailbox -ResultSize 1
 Get-EXOMailboxPermission -Identity $m.PrimarySmtpAddress
 Get-EXORecipientPermission -Identity $m.PrimarySmtpAddress -AccessRights SendAs
 Get-EXORecipient -Identity $m.PrimarySmtpAddress | Select-Object ExternalDirectoryObjectId, RecipientTypeDetails
+# The collector resolves trustees by SID: check one resolves.
+$p = Get-EXOMailboxPermission -Identity $m.PrimarySmtpAddress | Where-Object { $_.UserSid -like 'S-1-5-21-*' } | Select-Object -First 1
+if ($p) { Get-EXORecipient -Identity $p.UserSid | Select-Object ExternalDirectoryObjectId, RecipientTypeDetails }
 # Must FAIL (not recognised, or access denied): proves the role cannot write.
 Add-MailboxPermission -Identity $m.PrimarySmtpAddress -User nobody@example.test -AccessRights FullAccess -WhatIf
 Disconnect-ExchangeOnline -Confirm:$false
@@ -403,9 +433,11 @@ report), read the report. When it matches Exchange, **Turn dry run off**.
 - **Collector harness** (no tenant): `pwsh -File apps/email-worker/container/m365-perms/collect.Tests.ps1`
   runs `collect.ps1` against mocked Exchange cmdlets (system, orphaned,
   inherited, deny, group, room and unresolvable trustees, a failed query, the
-  deadline and the cursor) and checks that a write cmdlet is refused. The
-  Worker test suite runs it too when `pwsh` is installed, and validates its
-  output with the Worker's own validator.
+  deadline and the cursor, SID resolution and a name collision) and checks
+  that a write cmdlet is refused. CI runs it in its own job with PowerShell
+  7.6.10 installed; the Worker test suite also runs it when PowerShell 7.6+
+  is present (otherwise it logs that it was skipped) and validates its output
+  with the Worker's own validator.
 - **Image build** (no tenant): `docker build apps/email-worker/container/m365-perms`.
 - **Test tenant dress rehearsal** before any client: steps 1 to 8, dry run,
   then live with one shared mailbox; add and remove Full Access and Send As in
@@ -424,9 +456,23 @@ report), read the report. When it matches Exchange, **Turn dry run off**.
   redeploy the email Worker; with the binding gone the feature reports
   "not configured" and does nothing.
 - **Migration 0028** is additive. Its tables can stay; dropping them is not
-  needed for a rollback.
+  needed for a rollback. If you do remove it, drop the two triggers
+  (`trg_m365_perm_assignment_delete`, `trg_m365_perm_assignment_update`)
+  **before** the tables: a trigger left pointing at a dropped table makes
+  every later change to `mailbox_assignments` fail.
 - **Entra:** remove the app's certificate or the app itself; remove the
   service principal from the role group (`Remove-RoleGroupMember`).
+
+## Network egress
+
+The container starts with internet access on (`enableInternet: true`): it must
+reach `login.microsoftonline.com` and `outlook.office365.com`. Cloudflare
+documents routing a container's outbound HTTP(S) through a Worker
+(`interceptOutboundHttps`, used in the Sandbox docs to allow only some hosts),
+but an allow-list for plain HTTPS to Microsoft through that path was not
+verified, so it is not used yet. The script only talks to Exchange Online
+through the module, holds no data beyond one snapshot, and the image carries
+no secret. Restricting egress to Microsoft hosts is a planned hardening step.
 
 ## Not verified yet
 
@@ -437,6 +483,10 @@ report), read the report. When it matches Exchange, **Turn dry run off**.
 - The container on Cloudflare: build, start with `enableInternet`, `exec`,
   reading the result file, the 15-minute alarm limit, and that Workers Paid
   covers it as estimated.
+- `Get-EXORecipient -Identity <SID>` resolving a trustee SID (check it in
+  setup step 4 with a `UserSid` value from `Get-EXOMailboxPermission`; if it
+  does not resolve, every such mailbox stays incomplete and nothing changes).
+- The `standard-1` size being enough memory for PowerShell 7 + the module.
 - `X509CertificateLoader.LoadPkcs12` with `EphemeralKeySet` for the
   certificate inside the container (Linux, .NET 10).
 - D1 behaviour of `changes()` inside a batch for the removal audit row

@@ -31,6 +31,14 @@ export const COLLECT_DEADLINE_SECONDS = 10 * 60;
 export const COLLECT_KILL_MS = 13 * 60 * 1000;
 /** A run still marked running after this long is treated as failed. */
 export const COLLECT_STALE_MS = 20 * 60 * 1000;
+/**
+ * Instance size. With the durable_object scheduling policy start() accepts
+ * lite, standard-1..4 or a custom object, not 'basic'
+ * (https://developers.cloudflare.com/containers/configuration/scheduling-policy/).
+ * lite (256 MiB) is too small for PowerShell 7 + ExchangeOnlineManagement;
+ * standard-1 is the smallest named size above it: 1/2 vCPU, 4 GiB, 8 GB.
+ */
+export const COLLECTOR_INSTANCE = 'standard-1';
 const CHUNK_CHARS = 1_000_000;
 const OUT_DIR = '/tmp/cmail-out';
 const SCRIPT = '/opt/cmail/collect.ps1';
@@ -67,6 +75,11 @@ export function scriptEnv(env: M365PermsEnv, cursor: string): Record<string, str
     CMAIL_DEADLINE_SECONDS: String(COLLECT_DEADLINE_SECONDS),
     CMAIL_OUT_DIR: OUT_DIR,
     HOME: '/tmp',
+    // exec() gets only PATH from the container start, so the image's opt-outs
+    // are passed again here.
+    POWERSHELL_TELEMETRY_OPTOUT: '1',
+    POWERSHELL_UPDATECHECK: 'Off',
+    DOTNET_CLI_TELEMETRY_OPTOUT: '1',
   };
 }
 
@@ -116,7 +129,7 @@ export async function runCollector(container: CollectorContainer | undefined, en
     // Internet access is needed for login.microsoftonline.com and
     // outlook.office365.com. The image holds no secret; the certificate is
     // passed to the one exec'd process below, never to the container start.
-    container.start({ image, instance: 'basic', enableInternet: true, entrypoint: ['sleep', '1200'] });
+    container.start({ image, instance: COLLECTOR_INSTANCE, enableInternet: true, entrypoint: ['sleep', '1200'] });
     await container.setInactivityTimeout(COLLECT_STALE_MS);
     const proc = await container.exec(
       ['pwsh', '-NoLogo', '-NoProfile', '-NonInteractive', '-File', SCRIPT],

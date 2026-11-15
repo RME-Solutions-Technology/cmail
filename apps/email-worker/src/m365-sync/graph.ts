@@ -254,7 +254,7 @@ export class GraphClient {
    * create): a 503/504 can arrive after the server already stored the
    * result, so the caller must look before trying again.
    */
-  protected async graphJson(url: string, init: { method: 'GET' | 'POST' | 'PATCH'; body?: string; retryInPlace?: boolean }): Promise<unknown> {
+  protected async graphJson(url: string, init: { method: 'GET' | 'POST' | 'PATCH'; body?: string; retryInPlace?: boolean; headers?: Record<string, string> }): Promise<unknown> {
     if (!isGraphUrl(url)) throw new GraphError('bad_response', 0);
     for (let attempt = 0; ; attempt += 1) {
       const token = await this.accessToken();
@@ -264,6 +264,7 @@ export class GraphClient {
           Authorization: `Bearer ${token}`,
           Accept: 'application/json',
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+          ...init.headers,
         },
         body: init.body,
       });

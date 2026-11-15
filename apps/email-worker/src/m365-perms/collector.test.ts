@@ -41,11 +41,11 @@ describe('collector container run', () => {
   it('starts the image with internet, runs the script with the certificate in that process only, and always destroys the container', async () => {
     const fake = fakeContainer({ exit: 0, files: { '/tmp/cmail-out/result.json': '{"ok":1}' } });
     expect(await runCollector(fake.container, env, '')).toEqual({ ok: true, snapshot: '{"ok":1}' });
-    expect(fake.starts).toEqual([{ image: 'registry.example.test/collector@sha256:00', instance: 'basic', enableInternet: true, entrypoint: ['sleep', '1200'] }]);
+    expect(fake.starts).toEqual([{ image: 'registry.example.test/collector@sha256:00', instance: 'standard-1', enableInternet: true, entrypoint: ['sleep', '1200'] }]);
     expect(JSON.stringify(fake.starts)).not.toContain('cGZ4');
     const run = fake.log.find((entry) => entry.cmd[0] === 'pwsh')!;
     expect(run.cmd).toEqual(['pwsh', '-NoLogo', '-NoProfile', '-NonInteractive', '-File', '/opt/cmail/collect.ps1']);
-    expect(run.env).toMatchObject({ CMAIL_EXO_CERT_PFX_B64: 'cGZ4', CMAIL_DEADLINE_SECONDS: String(COLLECT_DEADLINE_SECONDS) });
+    expect(run.env).toMatchObject({ CMAIL_EXO_CERT_PFX_B64: 'cGZ4', CMAIL_DEADLINE_SECONDS: String(COLLECT_DEADLINE_SECONDS), POWERSHELL_TELEMETRY_OPTOUT: '1', DOTNET_CLI_TELEMETRY_OPTOUT: '1' });
     expect(fake.destroyed()).toBeGreaterThanOrEqual(1);
   });
 

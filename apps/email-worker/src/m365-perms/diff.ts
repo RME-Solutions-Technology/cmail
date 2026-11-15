@@ -224,7 +224,8 @@ export function computeDiff(input: DiffInput): DiffResult {
   for (const k of input.released) {
     const [mailboxId, userId] = k.split('|');
     const mailbox = inSnapshot.get(mailboxId);
-    if (!mailbox?.covered) continue;
+    // Kept while the manager's row exists, or while Exchange still grants it.
+    if (!mailbox?.covered || input.assignments.has(k)) continue;
     const want = wanted.get(k);
     if (want && levelFor(want.rights, input.fullAccessImpliesSend)) continue;
     unblocks.push({ type: 'unblock', mailboxId, userId, mailbox: mailbox.address, user: persons.get(userId)?.email ?? '' });

@@ -59,6 +59,8 @@ const COLLECT_TIMEOUT_MS = 25 * 60 * 1000;
 const HELD_ROUND_MAX_AGE_MS = 30 * HOUR_MS;
 const ROUND_MAX_AGE_MS = 24 * HOUR_MS;
 const MAX_BACKOFF_MS = 24 * HOUR_MS;
+/** Smallest gap between runs that continue an unfinished pass. */
+const CONTINUE_GAP_MS = 10 * 60 * 1000;
 
 export interface M365PermsWorkerEnv extends M365PermsEnv, M365SyncEnv {
   DB: D1Database;
@@ -221,7 +223,10 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         await saveState(db, state);
         return { status: 'backoff' };
       }
-      const due = requested || age(startedAt, state.lastStartedAt) >= config.intervalHours * HOUR_MS;
+      // A pass a run could not finish (the collector left a cursor) continues
+      // on the next cron run, not after the full interval.
+      const continuing = Boolean(state.cursor) && age(startedAt, state.lastStartedAt) >= CONTINUE_GAP_MS;
+      const due = requested || continuing || age(startedAt, state.lastStartedAt) >= config.intervalHours * HOUR_MS;
       if (requested) state.handledRequestAt = toggle.requestedAt;
       if (!due) {
         state.lastResult = state.consecutiveFailures ? 'error' : 'ok';

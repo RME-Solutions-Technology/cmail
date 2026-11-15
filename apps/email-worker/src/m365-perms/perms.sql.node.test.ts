@@ -112,7 +112,7 @@ function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; 
     return hash.digest('hex');
   };
   const state = () => loadM365PermsState(d1);
-  return { d1, sqlite, collector, graph, tick, round, snapshotAt, assignments, ledger, audits, managerAssign, dbHash, state, setting, linkShared, advance: (ms: number) => { clock += ms; } };
+  return { d1, sqlite, collector, graph, tick, round, snapshotAt, assignments, ledger, audits, managerAssign, dbHash, state, setting, linkShared, advance: (ms: number) => { clock += ms; }, clock: () => clock };
 }
 
 describe('Mailbox access sync: switch off', () => {
@@ -268,6 +268,29 @@ describe('Mailbox access sync: manager assignments are never touched', () => {
     expect(t.assignments()).toHaveLength(1);
   });
 
+  it('never gives back a row a manager first edited and later removed', async () => {
+    const t = setup();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    t.managerAssign('sm1', 'u1', 'read');
+    expect(t.ledger()).toEqual([]);
+    t.sqlite.prepare(`DELETE FROM mailbox_assignments WHERE mailbox_id = 'sm1' AND user_id = 'u1'`).run();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    expect(t.assignments()).toEqual([]);
+    expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM m365_perm_released').get()).toEqual({ n: 1 });
+  });
+
+  it('keeps the release mark while the manager row exists, even when Exchange stops granting', async () => {
+    const t = setup();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    t.managerAssign('sm1', 'u1', 'read');
+    await t.round(t.snapshotAt([mailbox(1, [])]));
+    expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM m365_perm_released').get()).toEqual({ n: 1 });
+    t.sqlite.prepare(`DELETE FROM mailbox_assignments WHERE mailbox_id = 'sm1' AND user_id = 'u1'`).run();
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    expect(t.assignments()).toEqual([]);
+  });
+
   it('a manager re-saving a sync-made row at the same level takes it over', async () => {
     const t = setup();
     await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
@@ -392,6 +415,22 @@ describe('Mailbox access sync: failures never remove access', () => {
     const state = await t.state();
     expect(state.lastRound!.counts.mailboxNotCovered).toBe(2);
     expect(state.cursor).toBe(MBX(1));
+  });
+
+  it('continues an unfinished pass on the next cron run instead of waiting a day', async () => {
+    const t = await withAccess();
+    // A partial run: the collector stopped at mailbox 1 and left a cursor.
+    await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])], { complete: false, mailboxCount: 2, nextCursor: MBX(1) }));
+    expect((await t.state()).cursor).toBe(MBX(1));
+    t.collector.setOutcome(t.snapshotAt([mailbox(2, [grant(PERSON(2), true, true)])], { complete: false, mailboxCount: 2, nextCursor: '', collectedAt: new Date(t.clock() + 20 * 60 * 1000).toISOString() }));
+    t.advance(15 * 60 * 1000);
+    expect(await t.tick()).toEqual({ status: 'collecting' });
+    t.advance(15 * 60 * 1000);
+    await t.tick();
+    expect((await t.state()).cursor).toBe('');
+    // With no cursor left, the next run waits for the interval again.
+    t.advance(15 * 60 * 1000);
+    expect(await t.tick()).toEqual({ status: 'idle' });
   });
 
   it('keeps grants given through a group that could not be expanded', async () => {

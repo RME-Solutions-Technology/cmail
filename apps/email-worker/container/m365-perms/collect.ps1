@@ -101,15 +101,31 @@ function Get-TrusteeSkip {
   return $null
 }
 
+# The trustee's security identifier, when the permission entry carries one
+# (UserSid on mailbox permissions, TrusteeSidString on recipient permissions).
+function Get-TrusteeSid {
+  param([object]$Entry, [string]$Property)
+  $prop = $Entry.PSObject.Properties[$Property]
+  if ($prop -and "$($prop.Value)" -match '^S-1-5-21-[0-9-]+$') { return "$($prop.Value)" }
+  return ''
+}
+
+# Resolves a trustee to its Entra object id. By SID when the entry has one;
+# otherwise by the identity string Exchange returned (a UPN or the unique
+# object Name; Exchange identity lookup never matches display names). Exactly
+# one match is required: anything else is unresolved, which marks the mailbox
+# incomplete, so nothing is ever granted or removed on an ambiguous name.
 function Resolve-Trustee {
   param(
     [Parameter(Mandatory)][string]$Name,
+    [string]$Sid = '',
     [Parameter(Mandatory)][hashtable]$Cache
   )
-  if ($Cache.ContainsKey($Name)) { return $Cache[$Name] }
+  $identity = if ($Sid) { $Sid } else { $Name }
+  if ($Cache.ContainsKey($identity)) { return $Cache[$identity] }
   $result = $null
   try {
-    $found = @(Invoke-Exo -Name 'Get-EXORecipient' -Parameters @{ Identity = $Name; ErrorAction = 'Stop' })
+    $found = @(Invoke-Exo -Name 'Get-EXORecipient' -Parameters @{ Identity = $identity; ErrorAction = 'Stop' })
     if ($found.Count -eq 1) {
       $recipient = $found[0]
       $id = "$($recipient.ExternalDirectoryObjectId)".ToLowerInvariant()
@@ -132,7 +148,7 @@ function Resolve-Trustee {
     if ($code -eq 'throttled') { throw [CollectorException]::new('throttled') }
     $result = @{ Skip = 'unresolved' }
   }
-  $Cache[$Name] = $result
+  $Cache[$identity] = $result
   return $result
 }
 
@@ -199,7 +215,7 @@ function Get-PermissionSnapshot {
         $name = "$($entry.User)"
         $skip = Get-TrusteeSkip $name
         if ($skip) { $skipped[$skip]++; if ($skip -eq 'unresolved') { $complete = $false }; continue }
-        $trustee = Resolve-Trustee -Name $name -Cache $cache
+        $trustee = Resolve-Trustee -Name $name -Sid (Get-TrusteeSid $entry 'UserSid') -Cache $cache
         if ($trustee.ContainsKey('Skip')) { $skipped[$trustee.Skip]++; if ($trustee.Skip -eq 'unresolved') { $complete = $false }; continue }
         $current = $rights[$trustee.Id] ?? @{ Kind = $trustee.Kind; FullAccess = $false; SendAs = $false }
         $current.FullAccess = $true
@@ -221,7 +237,7 @@ function Get-PermissionSnapshot {
         $name = "$($entry.Trustee)"
         $skip = Get-TrusteeSkip $name
         if ($skip) { $skipped[$skip]++; if ($skip -eq 'unresolved') { $complete = $false }; continue }
-        $trustee = Resolve-Trustee -Name $name -Cache $cache
+        $trustee = Resolve-Trustee -Name $name -Sid (Get-TrusteeSid $entry 'TrusteeSidString') -Cache $cache
         if ($trustee.ContainsKey('Skip')) { $skipped[$trustee.Skip]++; if ($trustee.Skip -eq 'unresolved') { $complete = $false }; continue }
         $current = $rights[$trustee.Id] ?? @{ Kind = $trustee.Kind; FullAccess = $false; SendAs = $false }
         $current.SendAs = $true
@@ -305,6 +321,11 @@ function Invoke-Collector {
     } catch {
       throw [CollectorException]::new('certificate_unreadable')
     }
+    # The certificate is in memory now: drop the copies in the environment.
+    Remove-Item -Path Env:CMAIL_EXO_CERT_PFX_B64, Env:CMAIL_EXO_CERT_PASSWORD -ErrorAction SilentlyContinue
+    $pfx = $null
+    $password = $null
+    $bytes = $null
     if (-not $certificate.HasPrivateKey) { throw [CollectorException]::new('certificate_unreadable') }
 
     try {
