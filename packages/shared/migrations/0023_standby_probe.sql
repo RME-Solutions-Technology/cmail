@@ -19,7 +19,10 @@
 -- messages that a row here recorded, in the probe mailbox, after 7 days.
 --
 -- Upgrade note: additive only (two new tables). Apply with the normal
--- `pnpm db:migrate`. No existing row changes.
+-- `pnpm db:migrate`. No existing row changes. Databases that already have
+-- 0024 applied pick this file up too: `wrangler d1 migrations apply` applies
+-- every file not listed in d1_migrations, by name (checked locally with
+-- 0001-0022 and 0024 applied first). It does not depend on 0024.
 
 CREATE TABLE IF NOT EXISTS standby_probe_runs (
   id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 64),

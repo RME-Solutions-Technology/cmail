@@ -370,6 +370,7 @@ try {
           'push_subscriptions', 'push_device_preferences', 'outbound_send_journal',
           'outbound_send_targets', 'outbound_send_attachments', 'compose_preferences',
           'inbox_rules', 'delivery_events', 'm365_sync_links', 'm365_sync_state',
+          'standby_copyback_jobs', 'standby_copyback_items',
           'standby_probe_runs', 'standby_probe_state'
         )) AS application_table_count,
       (SELECT COUNT(*) FROM sqlite_master
@@ -418,6 +419,11 @@ try {
         WHERE type = 'trigger' AND name = 'trg_inbox_rules_limit') AS inbox_rule_trigger_count,
       (SELECT COUNT(*) FROM sqlite_master
         WHERE type = 'trigger' AND name = 'trg_m365_sync_status_change') AS m365_sync_trigger_count,
+      (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'trigger' AND name IN (
+          'trg_standby_copyback_copied_final', 'trg_standby_copyback_no_rekey',
+          'trg_standby_copyback_copied_kept', 'trg_standby_copyback_insert_guard'
+        )) AS copyback_trigger_count,
       (SELECT COUNT(*) FROM retention_config
         WHERE (entity_type = 'deleted_messages' AND retention_days = 90)
            OR (entity_type = 'attachments' AND retention_days = 90)
@@ -485,10 +491,11 @@ try {
 
   assertEqual(Number(row.migration_count), expectedMigrations.length, 'Applied migration count');
   assertArrayEqual(appliedMigrations, expectedMigrations, 'Applied migration names');
-  assertEqual(Number(row.application_table_count), 34, 'Application table count');
+  assertEqual(Number(row.application_table_count), 36, 'Application table count');
   assertEqual(Number(row.essential_index_count), 17, 'Essential index count');
   assertEqual(Number(row.inbox_rule_trigger_count), 1, 'Inbox rule limit-trigger count');
   assertEqual(Number(row.m365_sync_trigger_count), 1, 'Microsoft 365 sync status-change trigger count');
+  assertEqual(Number(row.copyback_trigger_count), 4, 'Standby copy-back item guard trigger count');
   assertEqual(Number(row.organization_trigger_count), 2, 'Organisation cycle-trigger count');
   assertEqual(Number(row.inbound_guard_trigger_count), 5, 'Delivery reservation-trigger count');
   assertEqual(Number(row.outbound_journal_trigger_count), 11, 'Outbound journal-trigger count');
@@ -1066,7 +1073,7 @@ try {
   const migrationLabel = expectedMigrations.length === 1 ? 'migration' : 'migrations';
   console.log(
     `Fresh D1 migration verified: ${expectedMigrations.length} ${migrationLabel}, ` +
-      '34 application tables, required indexes, atomic delivery guards, triggers, and defaults.',
+      '36 application tables, required indexes, atomic delivery guards, triggers, and defaults.',
   );
 } finally {
   rmSync(persistenceDirectory, {

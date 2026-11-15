@@ -33,7 +33,9 @@ For engineers and operators setting up a deployment, roughly in this order:
 
 To keep accounts in step with a Microsoft 365 tenant (read-only, off by
 default, with a manager switch and dry run), see
-[Microsoft 365 mailbox sync](m365-sync.md).
+[Microsoft 365 mailbox sync](m365-sync.md). After an Exchange outage, mail
+that arrived in cmail meanwhile can be copied into each person's Exchange
+mailbox: see [Copy standby mail back into Exchange](copy-back.md).
 
 To give every mailbox a second address on a standby subdomain and test it
 daily (off by default), see

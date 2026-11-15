@@ -128,6 +128,15 @@ M365_EXTRA_MAILBOX_PLAN_IDS = ""
 # MAIL_DOMAIN. Only Microsoft 365 users whose primary address is on it sync.
 MAIL_DOMAIN = ""
 
+# Optional standby copy-back into Exchange Online (docs/copy-back.md). Uses a
+# SEPARATE Entra app from the sync, whose Mail.ReadWrite is granted only
+# through Exchange RBAC for Applications, scoped to a group (never consented
+# tenant-wide in Entra). Nothing runs until a manager turns it on in Admin >
+# Copy back to Exchange and starts a job after a dry run. Shares M365_TENANT_ID.
+# The client secret is a Worker secret, never a var:
+#   wrangler secret put M365_COPYBACK_CLIENT_SECRET --config apps/email-worker/wrangler.toml
+M365_COPYBACK_CLIENT_ID = ""
+
 # Optional standby test address and daily probe (docs/standby-probe.md).
 # Nothing is delivered on the standby subdomain and no test runs until a
 # manager turns it on in Admin > Standby test. Needs MAIL_DOMAIN above, the
@@ -143,7 +152,8 @@ STANDBY_PROBE_TIMEOUT_MINUTES = "10"
 [triggers]
 # 17 3 * * *: retention (off unless RETENTION_JOBS_ENABLED).
 # 7 * * * *: refresh the local phishing-domain list for link checks (hourly).
-# */15 * * * *: Microsoft 365 sync (returns at once unless switched on in Admin).
+# */15 * * * *: Microsoft 365 sync and standby copy-back (each returns at once
+# unless switched on in Admin).
 # */10 * * * *: standby probe (returns at once unless switched on in Admin).
 crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *", "*/10 * * * *"]
 
