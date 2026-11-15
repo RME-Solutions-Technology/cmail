@@ -147,7 +147,7 @@
         Simple email management for small, distributed organisations.
       </span>
       <span class="product-meta">
-        <a href="/help/standards">Standards &amp; assurance</a> · MIT open source
+        <a href="/help/standards">Standards &amp; assurance</a> · Apache-2.0 open source
       </span>
     </div>
   {/snippet}

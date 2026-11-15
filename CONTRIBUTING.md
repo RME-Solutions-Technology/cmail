@@ -135,6 +135,6 @@ If a secret or private record enters Git, stop. Revoke or rotate it first, then 
 
 ## License
 
-By contributing, you agree your contribution is licensed under the repository's [MIT License](LICENSE).
+By contributing, you agree your contribution is licensed under the repository's [Apache License 2.0](LICENSE).
 
 For support and question routing, see [SUPPORT.md](SUPPORT.md).
