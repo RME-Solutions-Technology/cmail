@@ -231,6 +231,23 @@ describe('registration', () => {
     expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'email.failed' AND detail LIKE 'Manager notification undeliverable%'`)).toBe(1);
   });
 
+  it('passkey notices use their own manager budget, not the shared one', async () => {
+    // Shared budget already spent (for example by travel requests).
+    fixture.db.sqlite.prepare('INSERT INTO rate_limits (key, count, expires_at) VALUES (?, 999, ?)')
+      .run(`mgr_notify:global:${Math.floor(Math.floor(Date.now() / 1000) / 3600)}`, Math.floor(Date.now() / 1000) + 3600);
+    await register('user-alice', await SoftAuthenticator.create());
+    expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'security.rate_limit' AND detail LIKE 'Manager notification suppressed%'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) AS n FROM rate_limits WHERE key LIKE 'mgr_notify_passkey:global:%'`)).toBe(1);
+  });
+
+  it('rate-limits passkey removals per person', async () => {
+    const { sessionId } = await ordinarySession('user-alice');
+    for (let attempt = 0; attempt < RATE_LIMITS.removePerUser.limit; attempt += 1) {
+      await removeOwnPasskey(env, userRow('user-alice'), sessionId, 'x'.repeat(22), '');
+    }
+    expect(await removeOwnPasskey(env, userRow('user-alice'), sessionId, 'x'.repeat(22), '')).toMatchObject({ ok: false, status: 429 });
+  });
+
   it('measures request bodies in bytes', () => {
     expect(bodyTooLarge('a'.repeat(10), 10)).toBe(false);
     expect(bodyTooLarge('é'.repeat(6), 10)).toBe(true);
@@ -497,6 +514,10 @@ describe('routes when switched off', () => {
     await expect(registerOptionsRoute(routeEvent('/api/passkeys/register/options', 'POST', '{}', alice, sessionId))).rejects.toMatchObject({ status: 404 });
     await expect(registerVerifyRoute(routeEvent('/api/passkeys/register/verify', 'POST', '{}', alice, sessionId))).rejects.toMatchObject({ status: 404 });
     await expect(settingsPageLoad(routeEvent('/mail/passkeys', 'GET', undefined, alice, sessionId))).rejects.toMatchObject({ status: 404 });
+    // 404 before 401: signed out, the endpoints still do not exist.
+    await expect(registerOptionsRoute(routeEvent('/api/passkeys/register/options', 'POST', '{}'))).rejects.toMatchObject({ status: 404 });
+    await expect(registerVerifyRoute(routeEvent('/api/passkeys/register/verify', 'POST', '{}'))).rejects.toMatchObject({ status: 404 });
+    await expect(settingsPageLoad(routeEvent('/mail/passkeys'))).rejects.toMatchObject({ status: 404 });
   });
 
   it('serves the page with a strict CSP when on', async () => {
@@ -663,9 +684,17 @@ describe('hooks: passkey sessions and the Access bridge', () => {
   });
 
   it('a passkey session has a short fixed lifetime that use never extends', async () => {
-    const row = fixture.db.sqlite.prepare(`SELECT (julianday(expires_at) - julianday('now')) * 24 AS hours FROM sessions WHERE id = ?`).get(passkeySessionId) as { hours: number };
-    // SQLite 'now' and the JS clock that set expires_at differ by milliseconds.
-    expect(Math.abs(row.hours - 8)).toBeLessThan(0.01);
+    // Stored in datetime() text format and compared as text, exactly as the
+    // hook does: live now, gone by 8 hours and a second from now.
+    const row = fixture.db.sqlite.prepare(
+      `SELECT expires_at,
+              expires_at > datetime('now') AS live_now,
+              expires_at > datetime('now', '+8 hours', '-5 seconds') AS live_before_8h,
+              expires_at > datetime('now', '+8 hours', '+1 second') AS live_after_8h
+       FROM sessions WHERE id = ?`,
+    ).get(passkeySessionId) as { expires_at: string; live_now: number; live_before_8h: number; live_after_8h: number };
+    expect(row.expires_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect([row.live_now, row.live_before_8h, row.live_after_8h]).toEqual([1, 1, 0]);
     fixture.db.sqlite.prepare(`UPDATE sessions SET expires_at = datetime('now', '+1 hour') WHERE id = ?`).run(passkeySessionId);
     const waitUntil = vi.fn();
     const url = new URL('/mail', ORIGIN);
@@ -680,6 +709,18 @@ describe('hooks: passkey sessions and the Access bridge', () => {
     random.mockRestore();
     expect(event.locals.user?.id).toBe('user-alice');
     expect(waitUntil).not.toHaveBeenCalled();
+  });
+
+  it('a passkey session ends at its real expiry boundary, not later the same day', async () => {
+    fixture.db.sqlite.prepare(`UPDATE sessions SET expires_at = datetime('now', '+2 seconds') WHERE id = ?`).run(passkeySessionId);
+    expect((await invokeHooks({}, { cookie: passkeyCookie })).locals.user?.id).toBe('user-alice');
+    fixture.db.sqlite.prepare(`UPDATE sessions SET expires_at = datetime('now', '-1 second') WHERE id = ?`).run(passkeySessionId);
+    expect((await invokeHooks({}, { cookie: passkeyCookie })).locals.user).toBeNull();
+  });
+
+  it('a passkey session is refused for a pending account (active only)', async () => {
+    fixture.db.sqlite.exec(`UPDATE users SET status = 'pending' WHERE id = 'user-alice'`);
+    expect((await invokeHooks({}, { cookie: passkeyCookie })).locals.user).toBeNull();
   });
 
   it('/auth/passkey never opens a session from an Access token', () => {

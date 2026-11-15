@@ -24,6 +24,10 @@ import { MCP_AUTHORIZE_COOKIE, MCP_RESUME_PATH, mcpAuthorizeCookieOptions } from
 import { classifyRedirectUri, redirectDisplay } from '#lib/server/mcp/redirect-uri.js';
 import { consumeRateLimit } from '#lib/server/rate-limit.js';
 
+/** Passkey (break-glass) sessions cannot approve AI app grants: a grant would outlive them. */
+const PASSKEY_SESSION_CONSENT_MESSAGE =
+  'You signed in with a passkey (break-glass sign-in). Connecting an AI app needs the normal sign-in. Sign in the normal way, then start again from your AI app.';
+
 type View =
   | { view: 'error'; message: string }
   | { view: 'signin'; clientName: string }
@@ -86,6 +90,10 @@ export const load: PageServerLoad = async ({ url, locals, platform, cookies, req
   }
   if (!locals.user || locals.user.status !== 'active') {
     return { view: 'signin', clientName: pending.client.client_name } satisfies View;
+  }
+  if (locals.passkeySession) {
+    // A grant would outlive the short break-glass passkey session.
+    return { view: 'error', message: PASSKEY_SESSION_CONSENT_MESSAGE } satisfies View;
   }
   if (!(await hasSignedLatestPolicy(env.DB, locals.user.id))) throw redirect(303, '/policy');
 
@@ -158,6 +166,7 @@ export const actions: Actions = {
     }
 
     if (!locals.user || locals.user.status !== 'active') return fail(401, { error: 'Sign in again to continue.' });
+    if (locals.passkeySession) return fail(403, { error: PASSKEY_SESSION_CONSENT_MESSAGE });
     if (!(await hasSignedLatestPolicy(env.DB, locals.user.id))) throw redirect(303, '/policy');
 
     const outcome = await answerAuthorizationRequest(env.DB, issuer, requestId, locals.user, {

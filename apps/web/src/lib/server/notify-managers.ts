@@ -25,14 +25,23 @@ export interface ManagerNotification {
  * detects the outbound provider, and audits `email.failed` the same way on
  * misconfiguration or delivery failure.
  */
-export async function notifyManagers(env: Env, message: ManagerNotification): Promise<{ recipients: number }> {
+export async function notifyManagers(
+  env: Env,
+  message: ManagerNotification,
+  /**
+   * A separate budget for a class of notice that must not compete with the
+   * shared one (for example passkey security notices, which a flood of
+   * travel requests must never crowd out). Default: the shared budget.
+   */
+  budget: { scope: string; limit: number } = { scope: 'mgr_notify', limit: GLOBAL_LIMIT },
+): Promise<{ recipients: number }> {
   const db = env.DB;
 
-  const limit = await consumeRateLimit(db, 'mgr_notify', 'global', GLOBAL_LIMIT, GLOBAL_WINDOW_SECONDS);
+  const limit = await consumeRateLimit(db, budget.scope, 'global', budget.limit, GLOBAL_WINDOW_SECONDS);
   if (!limit.allowed) {
     await audit(db, {
       event_type: 'security.rate_limit',
-      detail: 'Manager notification suppressed by the global rate limit',
+      detail: `Manager notification suppressed by the ${budget.scope === 'mgr_notify' ? 'global' : budget.scope} rate limit`,
     });
     return { recipients: 0 };
   }

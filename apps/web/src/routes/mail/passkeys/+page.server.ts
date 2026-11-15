@@ -12,10 +12,10 @@ import {
 type PasskeyEnv = Record<string, unknown> & { DB: D1Database };
 
 export const load: PageServerLoad = async ({ locals, platform, url, setHeaders }) => {
-  if (!locals.user) throw redirect(303, '/');
   const env = platform?.env as unknown as PasskeyEnv | undefined;
-  // Hidden entirely while the manager switch is off.
+  // Hidden entirely while the manager switch is off (404 before sign-in).
   if (!env || !await passkeyRouteContext(env, url)) throw error(404, 'Not found');
+  if (!locals.user) throw redirect(303, '/');
   setHeaders({ 'Cache-Control': 'private, no-store' });
   const [passkeys, addRefusal, removeRefusal] = await Promise.all([
     listPasskeys(env.DB, locals.user.id),

@@ -154,7 +154,10 @@ export const handle: Handle = async ({ event, resolve }) => {
           let user = await env.DB.prepare(
             `SELECT * FROM users WHERE id = ? AND status IN ('active', 'pending')`,
           ).bind(verified.userId).first<User>();
-          if (user && passkeyCredentialId && event.url.origin !== relyingParty(env as unknown as Record<string, unknown>)?.origin) {
+          if (user && passkeyCredentialId && user.status !== 'active') {
+            // Passkey sessions are for active accounts only (not pending).
+            user = null;
+          } else if (user && passkeyCredentialId && event.url.origin !== relyingParty(env as unknown as Record<string, unknown>)?.origin) {
             // Passkey sessions are bound to the relying party's origin
             // (APP_URL): a replayed cookie on *.pages.dev or another
             // hostname gets nothing. The session itself is left alone.

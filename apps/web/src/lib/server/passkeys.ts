@@ -42,18 +42,19 @@
 //   REGISTRATION_FRESH_MINUTES, so an old or stolen cookie cannot plant one.
 // - A passkey session is marked by sessions.passkey_credential_id. Removing
 //   the passkey or turning the feature off ends those sessions.
-import {
-  generateAuthenticationOptions,
-  generateRegistrationOptions,
-  verifyAuthenticationResponse,
-  verifyRegistrationResponse,
-  type AuthenticationResponseJSON,
-  type PublicKeyCredentialCreationOptionsJSON,
-  type PublicKeyCredentialRequestOptionsJSON,
-  type RegistrationResponseJSON,
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type { Env, User } from '@cmail/shared/types';
+
+// The WebAuthn library is loaded only when a passkey ceremony runs. This
+// module is also imported by hooks.server.ts (for the session check), so a
+// static import would put the library on every request's cold start.
+const loadWebAuthn = () => import('@simplewebauthn/server');
+const loadBase64Url = async () => (await import('@simplewebauthn/server/helpers')).isoBase64URL;
 import { audit } from './db';
 import { maxSessionsPerUser, passkeySessionTtlMs } from './config';
 import { loadOrgSettings } from './org-settings';
@@ -88,7 +89,14 @@ export const RATE_LIMITS = {
   verifyFailuresPerIp: { limit: 10, windowSeconds: 10 * 60 },
   verifyPerCredential: { limit: 20, windowSeconds: 60 * 60 },
   registerPerUser: { limit: 10, windowSeconds: 60 * 60 },
+  removePerUser: { limit: 10, windowSeconds: 60 * 60 },
 } as const;
+/**
+ * Passkey security notices to managers have their own hourly budget, so a
+ * flood of other manager notices (travel requests) can never hide them, and
+ * they cannot crowd those out either.
+ */
+export const PASSKEY_NOTICE_BUDGET = { scope: 'mgr_notify_passkey', limit: 60 };
 /** Unknown passkey ids are counted, and audited only at these counts per hour. */
 const UNKNOWN_CREDENTIAL_AUDIT_AT = new Set([1, 10, 100, 1000, 10000]);
 
@@ -186,7 +194,7 @@ async function passkeyNotice(
 ): Promise<void> {
   const html = notice.text.split('\n\n').map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join('');
   const tasks: Promise<unknown>[] = [
-    notifyManagers(env as unknown as Env, { subject: notice.subject, text: notice.text, html }),
+    notifyManagers(env as unknown as Env, { subject: notice.subject, text: notice.text, html }, PASSKEY_NOTICE_BUDGET),
   ];
   if (notice.user) tasks.push(sendUserNotice(env, notice.user, { subject: notice.subject, text: notice.text, html }));
   const all = Promise.all(tasks.map((task) => task.catch((error: unknown) => {
@@ -401,6 +409,7 @@ export async function startRegistration(
   }
   // Reuse the account's handle so an authenticator keeps one entry per
   // account; the first passkey gets 32 fresh random bytes.
+  const [{ generateRegistrationOptions }, isoBase64URL] = await Promise.all([loadWebAuthn(), loadBase64Url()]);
   const userHandle = await existingUserHandle(db, user.id)
     ?? isoBase64URL.fromBuffer(crypto.getRandomValues(new Uint8Array(32)));
 
@@ -472,6 +481,7 @@ export async function finishRegistration(
   if (!pending?.userHandle) return { ok: false, status: 400, error: 'That request expired. Try again.' };
   if (!isCredentialShape(input.response)) return { ok: false, status: 400, error: "The passkey response wasn't valid. Try again." };
 
+  const [{ verifyRegistrationResponse }, isoBase64URL] = await Promise.all([loadWebAuthn(), loadBase64Url()]);
   let verification;
   try {
     verification = await verifyRegistrationResponse({
@@ -581,6 +591,9 @@ export async function removeOwnPasskey(
   if (typeof credentialId !== 'string' || credentialId.length > MAX_CREDENTIAL_ID_LENGTH) {
     return { ok: false, status: 400, error: 'Unknown passkey.' };
   }
+  // Each removal emails the managers; cap them so one account cannot flood.
+  const limit = await consumeRateLimit(db, 'passkey_remove', user.id, RATE_LIMITS.removePerUser.limit, RATE_LIMITS.removePerUser.windowSeconds);
+  if (!limit.allowed) return { ok: false, status: 429, error: 'Too many changes. Wait a while and try again.' };
   const removed = await db.prepare(
     'DELETE FROM passkey_credentials WHERE id = ? AND user_id = ? RETURNING device_name',
   ).bind(credentialId, user.id).first<{ device_name: string }>();
@@ -617,6 +630,7 @@ export async function startAuthentication(env: EnvLike, rp: RelyingParty, reques
   const addressKey = rateLimitAddressKey(clientIpOf(request));
   const perAddress = await consumeRateLimit(db, 'passkey_options_ip', addressKey, RATE_LIMITS.optionsPerIp.limit, RATE_LIMITS.optionsPerIp.windowSeconds);
   if (!perAddress.allowed) return { ok: false, status: 429, message: RATE_LIMITED_MESSAGE };
+  const { generateAuthenticationOptions } = await loadWebAuthn();
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
     userVerification: 'required',
@@ -707,6 +721,7 @@ export async function finishAuthentication(
   // (stored counter passed as 0: it then never rejects on the counter). The
   // counter is compared below, only once the signature is known to be valid,
   // so a forged response can never raise the copied-passkey alarm.
+  const [{ verifyAuthenticationResponse }, isoBase64URL] = await Promise.all([loadWebAuthn(), loadBase64Url()]);
   let verification;
   try {
     verification = await verifyAuthenticationResponse({
@@ -802,11 +817,15 @@ export async function finishAuthentication(
   ]);
 
   const ttlMs = passkeySessionTtlMs(env);
-  const { token, hash, expiresAt, sessionId } = await createSessionToken(user.id, env.SESSION_SECRET, ttlMs);
+  const { token, hash, sessionId } = await createSessionToken(user.id, env.SESSION_SECRET, ttlMs);
+  // expires_at is written by SQLite's datetime() ('YYYY-MM-DD HH:MM:SS'),
+  // the same text format hooks.server.ts compares it with, so the fixed
+  // lifetime ends exactly on time. (An ISO 'T...Z' value would compare as
+  // later than any same-day datetime('now') text and live until midnight.)
   await db.prepare(
     `INSERT INTO sessions (id, user_id, token_hash, issued_at, expires_at, ip_address, revoked, passkey_credential_id)
-     VALUES (?, ?, ?, datetime('now'), ?, ?, 0, ?)`,
-  ).bind(sessionId, user.id, hash, expiresAt.toISOString(), clientIp, credential.id).run();
+     VALUES (?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'), ?, 0, ?)`,
+  ).bind(sessionId, user.id, hash, Math.round(ttlMs / 1000), clientIp, credential.id).run();
   // Same eviction rule as every other sign-in: keep the latest-expiring.
   await db.prepare(
     `UPDATE sessions SET revoked = 1

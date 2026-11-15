@@ -95,10 +95,18 @@ active manager is emailed.
 **Notices.** The person and every active manager are emailed when a passkey is
 added or removed; the managers are emailed when a manager signs in with a
 passkey, when a counter rollback is seen, and when the switch is turned on or
-off. With no outbound provider or system From address nothing is skipped
+off. These notices have their own manager-email budget (60 an hour), separate
+from the shared one travel requests use, so neither can crowd out the other;
+removals are limited to 10 per person per hour. With no outbound provider or
+system From address nothing is skipped
 silently: each missed notice is audited as `email.failed`, and Admin >
 Passkey sign-in shows a warning and the newest-passkeys list to review by
 hand.
+
+**What a passkey session cannot do:** add or remove passkeys, or approve a
+new AI app (MCP) connection at `/oauth/authorize`, because that grant would
+outlive the short break-glass session. It works only for active accounts
+(not pending ones).
 
 **A passkey session ends** after `PASSKEY_SESSION_TTL_HOURS` whatever
 happens, and earlier when the person signs out, when the passkey is removed

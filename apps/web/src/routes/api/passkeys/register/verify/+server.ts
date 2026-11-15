@@ -6,10 +6,11 @@ import { bodyTooLarge, finishRegistration, passkeyRouteContext } from '#lib/serv
 const MAX_BODY_BYTES = 32 * 1024;
 
 export const POST: RequestHandler = async ({ platform, url, locals, request }) => {
-  if (!locals.user) return json({ error: 'Authentication required' }, { status: 401 });
+  // 404 first: while the switch is off the endpoint does not exist for anyone.
   const typedEnv = platform?.env as unknown as (Record<string, unknown> & { DB: D1Database }) | undefined;
   const rp = await passkeyRouteContext(typedEnv, url);
   if (!typedEnv || !rp) throw error(404, 'Not found');
+  if (!locals.user) return json({ error: 'Authentication required' }, { status: 401 });
   const raw = await request.text();
   if (bodyTooLarge(raw, MAX_BODY_BYTES)) return json({ error: 'Request too large' }, { status: 413 });
   let body: unknown;

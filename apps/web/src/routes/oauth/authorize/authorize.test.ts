@@ -77,6 +77,18 @@ describe('/oauth/authorize page', () => {
       .toEqual([['mb-alice', true], ['mb-desk', false]]);
   });
 
+  it('refuses consent from a passkey (break-glass) session: no grant can outlive it', async () => {
+    const fixture = createFixture();
+    const cookies = cookieJar();
+    await start(fixture, cookies, null);
+    const passkeyLocals = { user: await userRow(fixture, 'user-alice'), sessionId: 's-passkey', passkeySession: true };
+    expect((await resume(fixture, cookies, passkeyLocals)).value).toMatchObject({ view: 'error' });
+    const requestId = cookies.get(MCP_AUTHORIZE_COOKIE)!;
+    const answer = await decide(fixture, cookies, passkeyLocals, [['request_id', requestId], ['decision', 'approve'], ['scope', 'mail.read'], ['mailbox', 'mb-alice']]);
+    expect(answer.value).toMatchObject({ status: 403 });
+    expect(fixture.db.sqlite.prepare('SELECT COUNT(*) AS n FROM mcp_grants').get()).toEqual({ n: 0 });
+  });
+
   it('sends a user with an unsigned policy to /policy first', async () => {
     const fixture = createFixture();
     fixture.db.sqlite.exec("INSERT INTO ict_policy_versions (id, version_label, body_text) VALUES ('p1', 'v1', 'Rules')");
