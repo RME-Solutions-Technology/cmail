@@ -1,7 +1,9 @@
-// Minimal, read-only Microsoft Graph client for the Microsoft 365 mailbox
-// sync. It does three things only: get an app-only token (client
-// credentials), GET a users/delta page, and POST a JSON $batch of
-// checkMemberGroups calls. It never sends a write to Microsoft.
+// Minimal Microsoft Graph client for the Microsoft 365 mailbox sync. It does
+// three things only: get an app-only token (client credentials), GET a
+// users/delta page, and POST a JSON $batch of checkMemberGroups calls. It
+// never sends a write to Microsoft. The standby copy-back client
+// (../copy-back/graph.ts) extends it with its own, separately consented app
+// and reuses the same token, URL, size, timeout and throttling rules.
 //
 // Safety rules:
 // - Only https://graph.microsoft.com/v1.0/ URLs are ever fetched with the
@@ -196,7 +198,7 @@ export class GraphClient {
   }
 
   /** One Graph call with in-place retry for short throttling waits. */
-  private async graphJson(url: string, init: { method: 'GET' | 'POST'; body?: string }): Promise<unknown> {
+  protected async graphJson(url: string, init: { method: 'GET' | 'POST' | 'PATCH'; body?: string }): Promise<unknown> {
     if (!isGraphUrl(url)) throw new GraphError('bad_response', 0);
     for (let attempt = 0; ; attempt += 1) {
       const token = await this.accessToken();

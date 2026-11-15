@@ -4,6 +4,7 @@
 // this worker is inbound-only.
 import { LINK_BLOCKLIST_CRON, refreshLinkBlocklist } from './link-blocklist-refresh';
 import { M365_SYNC_CRON, m365SyncConfigDiagnostic, runM365SyncTick, type M365SyncWorkerEnv } from './m365-sync/sync';
+import { copyBackConfigDiagnostic, runCopyBackTick, type CopyBackWorkerEnv } from './copy-back/run';
 import PostalMime from 'postal-mime';
 import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
@@ -51,7 +52,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv {
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
   EMAIL?: SendEmail;
   /**
@@ -785,6 +786,10 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/m365-sync/config' && request.method === 'GET') {
     return Response.json(m365SyncConfigDiagnostic(env));
   }
+  // Read-only, same rules: whether the copy-back app settings are present.
+  if (url.pathname === '/internal/copy-back/config' && request.method === 'GET') {
+    return Response.json(copyBackConfigDiagnostic(env));
+  }
   if (url.pathname !== '/internal/send' || request.method !== 'POST') {
     return new Response('Not found', { status: 404 });
   }
@@ -860,6 +865,15 @@ export default {
         else if (result.status !== 'off' && result.status !== 'idle') console.warn('Microsoft 365 sync', { status: result.status });
       }, (caught: unknown) => {
         console.error('Microsoft 365 sync failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      // Standby copy-back into Exchange shares this schedule: returns at once
+      // unless switched on and a manager started a job. See docs/copy-back.md.
+      ctx.waitUntil(runCopyBackTick(env).then((result) => {
+        // Counts and codes only, never addresses or content.
+        if (result.status === 'worked') console.log('Standby copy-back ran', { copied: result.copied, skipped: result.skipped, failed: result.failed, done: result.done });
+        else if (result.status !== 'off' && result.status !== 'idle') console.warn('Standby copy-back', { status: result.status });
+      }, (caught: unknown) => {
+        console.error('Standby copy-back failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
       }));
       return;
     }
