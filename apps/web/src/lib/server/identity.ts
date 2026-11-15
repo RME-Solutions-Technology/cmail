@@ -1,4 +1,4 @@
-import type { AuthProvider, User, UserStatus } from '@cmail/shared/types';
+import type { AuthProvider, IdentityProvider, User, UserStatus } from '@cmail/shared/types';
 import type { OAuthUserInfo } from './auth';
 import { normalizeEmail } from './validation';
 
@@ -16,7 +16,7 @@ export interface EnrollmentRecord {
   status: UserStatus;
   expires_at: number;
   consumed_at: string | null;
-  bound_provider: AuthProvider | null;
+  bound_provider: IdentityProvider | null;
 }
 export type EnrollmentFailure =
   | 'enrollment_required'
@@ -82,10 +82,16 @@ export async function findEnrollment(
   const tokenHash = await hashEnrollmentToken(rawToken);
   return db.prepare(
     `SELECT token.id AS enrollment_id, token.user_id, token.expires_at, token.consumed_at,
-            u.email, u.role, u.status, identity.provider AS bound_provider
+            u.email, u.role, u.status,
+            -- Since migration 0021 an account can hold a sign-in identity and
+            -- an Access identity. Pick one deterministically, preferring the
+            -- sign-in identity; any bound identity still blocks enrolment.
+            (SELECT identity.provider FROM user_identities identity
+             WHERE identity.user_id = u.id
+             ORDER BY CASE WHEN identity.provider = 'access' THEN 1 ELSE 0 END, identity.provider
+             LIMIT 1) AS bound_provider
      FROM enrollment_tokens token
      INNER JOIN users u ON u.id = token.user_id
-     LEFT JOIN user_identities identity ON identity.user_id = u.id
      WHERE token.token_hash = ?`,
   ).bind(tokenHash).first<EnrollmentRecord>();
 }

@@ -75,6 +75,18 @@ Codes are 8 random digits, HMAC-hashed at rest with `SESSION_SECRET` (never stor
 
 The manager role always requires an OAuth identity: inviting an unresolvable address still lets a manager pick the standard or manager role, but promoting an email-OTP-only account to manager is refused, and — belt and suspenders — the verify step itself will never grant a session to a manager account whose only identity is an email code, auditing `auth.otp.manager_blocked` if that combination is ever seen. An OTP-issued session is also capped to `OTP_SESSION_TTL_HOURS` regardless of the configured `SESSION_TTL_HOURS`, since this identity carries none of an OAuth account's ongoing 2FA or revocation guarantees.
 
+## Cloudflare Access bridge (optional)
+
+Signs people in from the Cloudflare Access token, so a deployment behind Access has no second sign-in screen. Off unless configured. Rules, binding and rollout: [Staff portal sign-in contract](staff-sign-in.md#cloudflare-access-bridge).
+
+| Variable | Required | Secret | Description |
+|---|---:|---:|---|
+| `ACCESS_TEAM_DOMAIN` | No | No | Zero Trust team domain, `<team>.cloudflareaccess.com`. Sets the expected issuer and the certs URL |
+| `ACCESS_AUD` | No | No | The Access application's Application Audience (AUD) tag |
+| `ACCESS_AUTO_PROVISION` | No | No | `true` creates a standard account and personal mailbox for a verified Access email on `MAIL_DOMAIN`. Any other value: the account must already exist |
+
+The bridge is off only when `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` are both unset. If either is set, a missing or invalid value fails closed: every request is treated as signed out. Apply migration `0021` before setting them.
+
 ## Optional Web Push
 
 Browser new-mail notifications stay off unless all three VAPID (keys that authenticate your server to push services) values are valid and present. The deployed app needs HTTPS (localhost is fine for local development). Generate one pair from the repository root:

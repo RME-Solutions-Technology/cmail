@@ -27,7 +27,7 @@ const MANAGED_STATUSES: readonly UserStatus[] = ['active', 'paused', 'offboarded
 const FILTER_STATUSES: readonly UserStatus[] = ['pending', 'active', 'paused', 'offboarded'];
 const FILTER_PROVIDERS = ['google', 'microsoft', 'none'] as const;
 
-type ManagedUser = User & { identity_bound: number };
+type ManagedUser = User & { identity_bound: number; access_bound: number };
 
 type InviteDeliveryResult =
   | { ok: true; provider: string }
@@ -241,7 +241,11 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
     `SELECT u.*,
             CASE WHEN EXISTS (
               SELECT 1 FROM user_identities identity WHERE identity.user_id = u.id
-            ) THEN 1 ELSE 0 END AS identity_bound
+            ) THEN 1 ELSE 0 END AS identity_bound,
+            EXISTS (
+              SELECT 1 FROM user_identities access_identity
+              WHERE access_identity.user_id = u.id AND access_identity.provider = 'access'
+            ) AS access_bound
      FROM users u ${where}
      ORDER BY u.created_at DESC, u.id DESC LIMIT ? OFFSET ?`,
   );
@@ -523,6 +527,57 @@ export const actions: Actions = {
     };
   },
 
+  // Clears an account's Cloudflare Access binding, for example after the
+  // person was removed from and re-added to the identity provider and now
+  // has a new Access sub. Their next Access visit binds again under the
+  // normal rules. Sessions are revoked so no old Access session lingers.
+  resetAccess: async ({ request, platform, locals }) => {
+    const env = platform?.env;
+    if (!env) return fail(503, { error: 'Service unavailable' });
+    if (!isManager(locals)) return fail(403, { error: 'Manager role required' });
+
+    const data = await request.formData();
+    const userId = formId(data.get('user_id'));
+    if (!userId) return fail(400, { error: 'Invalid Access reset request' });
+    if (userId === locals.user!.id) {
+      return fail(409, { error: 'You cannot reset your own Access link' });
+    }
+
+    const linked = await env.DB.prepare(
+      `SELECT 1 AS linked FROM user_identities WHERE provider = 'access' AND user_id = ?`,
+    ).bind(userId).first<{ linked: number }>();
+    if (!linked) return fail(404, { error: 'That account has no Access link' });
+
+    let removed: number;
+    try {
+      // Sessions are revoked only while the Access link still exists, so a
+      // concurrent reset cannot sign someone out without removing a link.
+      const results = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE sessions SET revoked = 1
+           WHERE user_id = ? AND revoked = 0
+             AND EXISTS (SELECT 1 FROM user_identities WHERE provider = 'access' AND user_id = ?)`,
+        ).bind(userId, userId),
+        env.DB.prepare(
+          `DELETE FROM user_identities WHERE provider = 'access' AND user_id = ?`,
+        ).bind(userId),
+      ]);
+      removed = results[1]?.meta.changes ?? 0;
+    } catch (error) {
+      logAdminFailure('access reset', error);
+      return fail(500, { error: 'The Access link could not be reset' });
+    }
+    if (!removed) return fail(404, { error: 'That account has no Access link' });
+
+    await audit(env.DB, {
+      event_type: 'auth.identity_reset',
+      actor_id: locals.user!.id,
+      actor_role: 'manager',
+      target: userId,
+      detail: 'Removed the Cloudflare Access binding and revoked sessions',
+    });
+    return { success: 'Access link reset. The next Access sign-in binds again.' };
+  },
   updateRole: async ({ request, platform, locals }) => {
     const env = platform?.env;
     if (!env) return fail(503, { error: 'Service unavailable' });
