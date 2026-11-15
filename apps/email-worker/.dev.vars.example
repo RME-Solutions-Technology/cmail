@@ -11,3 +11,7 @@ VAPID_PRIVATE_KEY=
 # Optional; Microsoft 365 mailbox sync only (docs/m365-sync.md). Use a test
 # tenant's app secret locally, never a production one.
 M365_CLIENT_SECRET=
+
+# Optional; standby copy-back only (docs/copy-back.md). A test tenant's secret
+# for the separate copy-back app, never a production one.
+M365_COPYBACK_CLIENT_SECRET=

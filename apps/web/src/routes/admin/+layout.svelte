@@ -32,6 +32,7 @@
         { href: '/admin/signatures', label: 'Signatures', description: 'Personal and organisation', icon: 'compose' },
         { href: '/admin/trace', label: 'Mail trace', description: 'Delivery diagnostics', icon: 'activity' },
         { href: '/admin/quarantine', label: 'Quarantine', description: 'Spam review and sender rules', icon: 'junk' },
+        { href: '/admin/copy-back', label: 'Copy back to Exchange', description: 'After a standby outage', icon: 'outbound' },
       ],
     },
     {
