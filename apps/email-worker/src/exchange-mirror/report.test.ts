@@ -108,8 +108,9 @@ describe('journal report trust', () => {
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="k header.d=tenant"', 'mx.example.test').dkimPassDomains).toEqual([]);
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="k header.d=example.test"', 'mx.example.test').dkimPassDomains).toEqual([]);
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="ok; fine" header.d=example.test', 'mx.example.test').dkimPassDomains).toEqual(['example.test']);
-    // An unclosed quote drops that result rather than half-reading it.
-    expect(parseAuthenticationResults('mx.example.test; dkim=pass reason="open header.d=example.test', 'mx.example.test').dkim).toBeNull();
+    // An unclosed quote ends that resinfo: its leading verdict stays, nothing after the quote is read.
+    expect(parseAuthenticationResults('mx.example.test; dkim=pass reason="open header.d=example.test', 'mx.example.test').dkim).toBe('pass');
+    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass reason="open header.d=example.test', 'mx.example.test').dkimPassDomains).toEqual([]);
     // An invalid header.from is invalid, not absent, and fails the DMARC path.
     expect(parseAuthenticationIdentities('mx.example.test; dmarc=pass header.from=evil.example_', 'mx.example.test').dmarcHeaderFrom).toBe('invalid');
     const from = { key: 'from', value: 'Microsoft Outlook <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@example.test>' };
