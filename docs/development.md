@@ -393,7 +393,7 @@ In short:
    `[Unreleased]` above it.
 2. Bump `version` to match in the root `package.json` and in each of
    `apps/web`, `apps/email-worker`, `apps/backup-worker` and `packages/shared`
-   (all are 0.9.0-beta.1 today), and in `CITATION.cff` (`version` and
+   (all are 0.9.0-beta.2 today), and in `CITATION.cff` (`version` and
    `date-released`). `.zenodo.json` has no version field; check its title,
    description and keywords are still accurate.
 3. Run `pnpm release:check` and complete the manual staging checks.
