@@ -10,33 +10,45 @@
 // - Only the outer report's own headers are read here, never the attached
 //   original's: the original carries headers stamped for its sender.
 //
+// THE SECURITY BOUNDARY IS THE TOKEN in the journal address (layer 1).
+// Everything below raises the bar for someone who has the address; none of
+// it alone proves a report came from our tenant.
+//
 // Layers, all required (fail closed):
 // 1. It arrived at the configured journal address, whose local part holds a
-//    random token (checked by the caller before anything is read).
-// 2. It carries the X-MS-Journal-Report header Exchange puts on every
-//    journal report.
-// 3. Tenant: the outer report's X-MS-Exchange-CrossTenant-Id headers. EOP
-//    stamps this header with the id of the tenant a message is attributed
-//    to; a report can carry more than one instance (for example the
-//    original sender's tenant and ours), so the report is ours when OUR id
-//    is among them. With M365_TENANT_ID set, a report that carries this
-//    header only with other tenants' ids is refused. (X-MS-Exchange-
-//    Organization-* headers are removed by the header firewall when a
-//    message leaves an Exchange organization, so they are not relied on:
-//    https://learn.microsoft.com/en-us/exchange/header-firewall-exchange-2013-help)
+//    random token (checked by the caller before anything is read). If the
+//    token leaks, rotate it (docs/exchange-mirror.md, "Rotating the journal
+//    token").
+// 2. It carries the X-MS-Journal-Report header. Any sender can add it.
+// 3. Tenant: the outer report's X-MS-Exchange-CrossTenant-Id headers. A
+//    report can carry more than one (seen live: the original sender's tenant
+//    and ours), so the report passes when OUR id is among them, and a report
+//    with only other tenants' ids is refused. This header is
+//    ATTACKER-SETTABLE: anyone sending to the journal address can write our
+//    tenant id into it. It filters honest mistakes (another tenant's journal
+//    rule pointed here); it is not proof. X-MS-Exchange-Organization-*
+//    headers are removed by the header firewall when a message leaves an
+//    Exchange organization, so they are not used either:
+//    https://learn.microsoft.com/en-us/exchange/header-firewall-exchange-2013-help
 // 4. Unless M365_JOURNAL_REQUIRE_AUTH is "false", Cloudflare Email Routing's
 //    own Authentication-Results record (the first one, from
 //    INBOUND_AUTHSERV_ID;
 //    https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results)
 //    shows either
 //    a. a DKIM pass whose signing domain (header.d) is in
-//       M365_JOURNAL_SENDER_DOMAINS (the tenant's own DKIM), whatever the
-//       From says; or
-//    b. an SPF pass for the envelope MAIL FROM whose domain is
-//       M365_JOURNAL_NDR_DOMAIN, AND this tenant's id on the report. SPF
-//       alone is not enough: Exchange Online's sending IPs are shared by
-//       every tenant, so the tenant id ties it to ours.
-//    With "false", only 1-3 apply and our tenant id must be on the report.
+//       M365_JOURNAL_SENDER_DOMAINS, whatever the From says. Limit: DKIM
+//       proves only that the domain signed SOME message; a message the
+//       tenant signed can be replayed to the journal address by whoever has
+//       the token. Or
+//    b. an SPF pass recorded for the envelope MAIL FROM (smtp.mailfrom in
+//       that record; the SMTP envelope must agree) whose domain is
+//       M365_JOURNAL_NDR_DOMAIN, plus our tenant id on the report. This
+//       holds only if Exchange Online refuses to let other tenants send with
+//       a MAIL FROM on our NDR domain, which Microsoft does not document
+//       (unverified); its sending IPs are shared by every tenant, and the
+//       tenant id header (3) is attacker-settable.
+//    With "false", only 1-3 apply and our tenant id must be on the report:
+//    then the token is the only real protection.
 import { parseAuthenticationIdentities, parseAuthenticationResults } from '../authentication-results';
 import type { ExchangeMirrorConfig } from '@cmail/shared/exchange-mirror';
 
@@ -154,10 +166,11 @@ export function verifyJournalReport(
   // b. SPF for the configured NDR domain, plus our tenant id. The domain the
   //    SPF verdict is about must also be the envelope's, when both are known.
   if (config.ndrDomain && identities.spf === 'pass' && ourTenant) {
+    // The domain must be the one Cloudflare's record says SPF was checked
+    // for: no fallback to the envelope (the verdict is about the record's).
     const recorded = identities.spfMailFromDomain;
     const envelope = envelopeDomain(envelopeFrom);
-    const domain = recorded === 'invalid' ? null : recorded ?? envelope;
-    if (domain === config.ndrDomain && (envelope === null || envelope === domain)) return { ok: true };
+    if (recorded === config.ndrDomain && (envelope === null || envelope === recorded)) return { ok: true };
   }
   return { ok: false, reason: 'auth_failed' };
 }

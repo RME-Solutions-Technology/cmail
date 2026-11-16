@@ -141,6 +141,14 @@ a day, the daily count is always exact). It never reaches a mailbox.
 > ([Configure journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/configure-journaling)).
 > Watch the "Last journal report" time in Admin.
 
+> **The token is the security boundary.** Only the random token in the
+> journal address keeps strangers out. Every other check below raises the bar
+> for someone who has the address, but none proves on its own that a report
+> came from your tenant: the journal and tenant headers can be written by
+> any sender, and the SPF and DKIM checks have the limits stated below. Keep
+> the address secret and [rotate the token](#rotating-the-journal-token) if
+> it may have leaked.
+
 0. **Size first.** Before anything is read, the report must be no larger
    than `MAX_INBOUND_BYTES` plus 1 MiB of envelope room (and at most
    Cloudflare's 25 MiB). Larger reports are refused (`too_large`) unread.
@@ -151,7 +159,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
 2. **The manager switch is on** (Admin > Exchange mirror). Off: the address
    is treated like any unknown address (refused), nothing is parsed.
 3. **It is a journal report:** it carries the `X-MS-Journal-Report` header
-   that Exchange adds to every journal report.
+   that Exchange adds to every journal report. Any sender can add it too.
 4. **Our tenant:** only the OUTER report's own headers are read, never the
    attached original's. With `M365_TENANT_ID` set, the report is ours when
    our id is among its `X-MS-Exchange-CrossTenant-Id` headers; a report can
@@ -164,6 +172,9 @@ a day, the daily count is always exact). It never reaches a mailbox.
    organization ([header firewall](https://learn.microsoft.com/en-us/exchange/header-firewall-exchange-2013-help)),
    so they are not used. With check 5 on, a report with no tenant header at
    all is decided by check 5a; check 5b and check 5 off need our id.
+   **This header is attacker-settable:** anyone sending to the journal
+   address can write your tenant id into it. It catches honest mistakes
+   (another tenant's journal rule pointed here), not attacks.
 5. **Authenticated as the tenant** (unless `M365_JOURNAL_REQUIRE_AUTH =
    "false"`): Cloudflare Email Routing's own `Authentication-Results` record
    (the first one, whose identifier is `INBOUND_AUTHSERV_ID`, normally
@@ -171,14 +182,24 @@ a day, the daily count is always exact). It never reaches a mailbox.
    [Cloudflare](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results))
    shows either:
    - **a.** a **DKIM pass** whose signing domain (`header.d`) is in
-     `M365_JOURNAL_SENDER_DOMAINS` (the tenant's own DKIM, for example its
-     custom domain or `<tenant>.onmicrosoft.com`), whatever the From says; or
-   - **b.** an **SPF pass** for the envelope MAIL FROM whose domain is
-     `M365_JOURNAL_NDR_DOMAIN` (the domain of the "undeliverable journal
-     reports" address, which live reports use as their MAIL FROM; the SPF
-     record of that domain must include `spf.protection.outlook.com`), **and**
-     our tenant id on the report. SPF alone would not do: Exchange Online's
-     sending servers are shared by every tenant.
+     `M365_JOURNAL_SENDER_DOMAINS`, whatever the From says. Set it to exactly
+     the domain(s) the diagnostic shows real journal reports are signed with
+     (for example `<tenant>.onmicrosoft.com`), and nothing else. **Replay
+     limit:** a DKIM pass proves the domain signed *some* message, not this
+     report; anyone with the token can resend any message that domain signed
+     (a newsletter, a reply) to the journal address. **Do not leave the
+     default (`MAIL_DOMAIN`)** once you know what reports carry: cmail's own
+     Cloudflare Email Sending also signs as `MAIL_DOMAIN`, so every message
+     cmail sends would pass. Or
+   - **b.** an **SPF pass** that Cloudflare's record says was checked for the
+     envelope MAIL FROM (`smtp.mailfrom`; the SMTP envelope must agree; no
+     fallback to the envelope alone) whose domain is `M365_JOURNAL_NDR_DOMAIN`,
+     **and** your tenant id on the report. This is only as strong as
+     Exchange Online's enforcement that no other tenant can send with a
+     MAIL FROM on your NDR domain, which Microsoft does not document
+     (**unverified**): its sending servers are shared by every tenant, and the
+     tenant id header can be forged. Use a dedicated domain for the
+     undeliverable-reports address, see `M365_JOURNAL_NDR_DOMAIN` in Setup.
 
    **DMARC on the From is not used.** A live journal report's From is the
    ORIGINAL message's sender, who is often outside the tenant, so DMARC on it
@@ -325,8 +346,8 @@ changes a live system needs the owner's yes.
    |---|---|
    | `M365_JOURNAL_ADDRESS` | `journal-<32+ random lower-case hex>@<journal domain>`. Store it as a secret: `wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml` |
    | `M365_TENANT_ID` | The directory (tenant) ID (shared with the sync). Turns on the tenant check. |
-   | `M365_JOURNAL_SENDER_DOMAINS` | Domains whose DKIM signature on a report proves the tenant (check 5a): the tenant's custom domain(s) with DKIM enabled and its `<tenant>.onmicrosoft.com` domain. Default: `MAIL_DOMAIN`. |
-   | `M365_JOURNAL_NDR_DOMAIN` | The domain of the "undeliverable journal reports" address (check 5b). Its SPF record must include `spf.protection.outlook.com`. Optional. |
+   | `M365_JOURNAL_SENDER_DOMAINS` | Domains whose DKIM signature on a report is accepted (check 5a). Set it to exactly what the diagnostic shows real reports are signed with, typically `<tenant>.onmicrosoft.com`. The default, `MAIL_DOMAIN`, also matches cmail's own outgoing DKIM: replace it once you know. |
+   | `M365_JOURNAL_NDR_DOMAIN` | The domain of the "undeliverable journal reports" address (check 5b). Use a **dedicated** domain or subdomain used for nothing else (for example `journal-ndr.example.com`), whose SPF record lists only `include:spf.protection.outlook.com` plus the include Cloudflare Email Routing needs to receive its NDRs (`include:_spf.mx.cloudflare.net`), so no other system can pass SPF for it. Optional. |
    | `INBOUND_AUTHSERV_ID` | `mx.cloudflare.net` |
    | `MAIL_DOMAIN` | As for the web app. |
    | `MAX_INBOUND_BYTES` | Optional: raise toward 26214400 (25 MiB) to mirror large messages; see [Size limits](#size-limits). |
@@ -430,11 +451,22 @@ Each refused report's audit row (`exchange_mirror.report_rejected`, at most
 50 a day) carries a safe diagnostic: from the OUTER report only, the names
 and values of its `X-MS-Exchange-CrossTenant-*`,
 `X-MS-Exchange-Organization-*`, `X-MS-Journal-Report` and
-`Authentication-Results` headers with every email address cut to its domain
-(`user@example.com` becomes `@example.com`), the `d=` and `s=` of each
+`Authentication-Results` headers reduced to safe values (see below), the `d=` and `s=` of each
 `DKIM-Signature`, and how many headers with those names the attached
 original has (a count only). Never a subject, an address, a body or any
 other header; at most 30 headers and 3,000 characters.
+
+Exactly which headers: an allowlist of names (`X-MS-Journal-Report`,
+`X-MS-Exchange-CrossTenant-Id`, `-Network-Message-Id`, `-AuthAs`,
+`-AuthSource`, `-FromEntityHeader`, `-MailboxType`, `-OriginalArrivalTime`,
+`X-MS-Exchange-Organization-Network-Message-Id`, `-AuthAs`, `-AuthSource`,
+`-SCL`, `Authentication-Results`, `DKIM-Signature`). A value is kept only if
+it has that header's expected shape (a GUID, a date, or a short token of
+letters, digits, `.`, `_` and `-`); otherwise only its length is shown. For
+`Authentication-Results` only the authserv-id, each method and verdict, and
+the domain of `header.d`, `header.i`, `header.from` and `smtp.mailfrom` are
+kept: comments, quoted text (so quoted local parts and display names), local
+parts, reasons and IP addresses never are.
 5. Optional: Admin > Exchange mirror > **Turn alias import on** (needs the
    Microsoft 365 sync on and out of dry run).
 
@@ -483,8 +515,30 @@ hold counts and reason codes only; the trace line also has the subject and
 From of a filed message, as for any delivery. A refused report's content is
 never stored. The journal address is a secret: anyone who has it and can pass
 the checks above could add mail to mailboxes, so keep it in Worker secrets
-and Exchange only, and change the token if it leaks (new address in Exchange
-and Cloudflare first, then the Worker).
+and Exchange only, and rotate the token if it may have leaked.
+
+## Rotating the journal token
+
+Do this if the journal address may have leaked (a screenshot, a ticket, a
+former admin), or once a year. No mail is lost: Exchange queues reports while
+the old address refuses them, and retries.
+
+1. Generate a new token: `openssl rand -hex 16`. The new address is
+   `journal-<new token>@<journal domain>`.
+2. Cloudflare: add a routing rule for the new address (Send to the cmail
+   email Worker). Keep the old rule for now.
+3. Worker: `wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml`
+   with the new address. From now on the old address is refused like any
+   unknown address.
+4. Exchange: point the rule at the new address:
+   `Set-JournalRule -Identity "cmail mirror" -JournalEmailAddress journal-<new token>@<journal domain>`
+   ([Set-JournalRule](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-journalrule)).
+   Do it within minutes of step 3: reports sent to the old address in
+   between are refused, go to the undeliverable-reports mailbox, and can be
+   resent from there with Outlook's **Send Again**
+   ([Configure journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/configure-journaling)).
+5. Check Admin > Exchange mirror shows a new last report time.
+6. Cloudflare: delete the old address's routing rule.
 
 ## Rollback
 
@@ -513,6 +567,9 @@ real tenant:
   DMARC on the From cannot prove the tenant, and the first design refused
   every report with authentication on. A report from another Microsoft 365
   organisation's sender carried more than one tenant id.
+- **Exchange Online MAIL FROM enforcement (check 5b).** Whether Exchange
+  Online stops other tenants from sending with a MAIL FROM on your NDR
+  domain is not documented by Microsoft. Check 5b relies on it.
 - **DKIM of journal reports.** Whether Exchange Online DKIM-signs journal
   reports, and with which domain, is still not known; a Microsoft Q&A thread
   reports them unsigned

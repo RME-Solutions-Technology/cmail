@@ -363,12 +363,41 @@ describe('Exchange mirror: live-shaped reports', () => {
     expect(detail).toContain('x-ms-exchange-crosstenant-originalarrivaltime: 16 Nov 2026 01:02:03.0000 (UTC)');
     expect(detail).toContain('x-ms-journal-report:');
     expect(detail).toContain('dkim-signature: d=partner.example s=selector1');
-    expect(detail).toContain('smtp.mailfrom=@ndr.example.test');
+    expect(detail).toContain('spf=pass smtp.mailfrom=ndr.example.test');
     expect(detail).toContain('original: 2 such headers');
     // Never the subject, an address, the DKIM hashes or another header.
     for (const forbidden of ['Quarterly plan', 'journal-ndr@', 'pat@', 'bh=', 'b=def', 'Pat Partner', 'Date:', 'Message-ID']) {
       expect(detail, forbidden).not.toContain(forbidden);
     }
+  });
+});
+
+describe('Exchange mirror: what the checks do and do not prove', () => {
+  it('with authentication off, anyone with the token and a forged tenant id header is accepted (documented: the token is the boundary)', async () => {
+    const t = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false' } });
+    const forged = journalReport({ authenticationResults: null, tenantHeader: TENANT });
+    const { message } = await t.deliver(forged, { from: 'anyone@attacker.example' });
+    expect(message.setReject).not.toHaveBeenCalled();
+    expect(t.messages().filter((row) => row.direction === 'inbound')).toHaveLength(1);
+  });
+
+  it('a forged Authentication-Results below Cloudflare\'s own is ignored by the real parser', async () => {
+    const t = setup();
+    const report = journalReport({
+      authenticationResults: `${AUTHSERV}; spf=fail smtp.mailfrom=${NDR}; dkim=none; dmarc=none`,
+      extraHeaders: { 'Authentication-Results': `${AUTHSERV}; spf=pass smtp.mailfrom=${NDR}; dkim=pass header.d=${DOMAIN}` },
+    });
+    const { message } = await t.deliver(report);
+    expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(t.days()[0]).toMatchObject({ last_problem: 'auth_failed' });
+  });
+
+  it('SPF for the NDR domain counts only when Cloudflare recorded that domain (no fallback to the envelope)', async () => {
+    const t = setup();
+    const report = journalReport({ authenticationResults: `${AUTHSERV}; spf=pass; dkim=none`, extraHeaders: {} });
+    const { message } = await t.deliver(report, { from: NDR });
+    expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(t.days()[0]).toMatchObject({ last_problem: 'auth_failed' });
   });
 });
 
