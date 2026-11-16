@@ -8,6 +8,7 @@ import {
   classifyFocus,
   focusDomainCandidates,
   focusHeaderSignals,
+  focusScansNeeded,
   isAutomatedSender,
   isFocusClass,
   isFocusReason,
@@ -23,9 +24,11 @@ const base: FocusFacts = {
   sender: 'pat@partner.example.org',
   mailDomain: 'example.test',
   signals: NONE,
+  senderAuthenticated: true,
   addressOverride: null,
   domainOverride: null,
   correspondent: false,
+  sharedMailbox: false,
   recentFromSender: 0,
 };
 const classify = (patch: Partial<FocusFacts>) => classifyFocus({ ...base, ...patch });
@@ -106,6 +109,19 @@ describe('classifyFocus: each signal', () => {
   it('correspondent', () => {
     assert.deepEqual(classify({ correspondent: true, sender: 'noreply@partner.example.org' }), { focusClass: 'focused', reason: 'correspondent' });
   });
+  it('a correspondent beats List-Id / List-Unsubscribe and Precedence, but not Auto-Submitted', () => {
+    assert.deepEqual(classify({ correspondent: true, signals: { ...NONE, mailingList: true, bulkPrecedence: true } }), { focusClass: 'focused', reason: 'correspondent' });
+    assert.deepEqual(classify({ correspondent: true, signals: { ...NONE, autoSubmitted: true } }), { focusClass: 'other', reason: 'auto_submitted' });
+  });
+  it('an unauthenticated (possibly forged) From is never a correspondent or internal', () => {
+    assert.deepEqual(classify({ senderAuthenticated: false, correspondent: true, signals: { ...NONE, mailingList: true } }), { focusClass: 'other', reason: 'mailing_list' });
+    assert.deepEqual(classify({ senderAuthenticated: false, correspondent: true }), { focusClass: 'focused', reason: 'default' });
+    assert.deepEqual(classify({ senderAuthenticated: false, sender: 'noreply@example.test' }), { focusClass: 'other', reason: 'automated_sender' });
+    assert.deepEqual(classify({ senderAuthenticated: false, sender: 'ceo@example.test' }), { focusClass: 'focused', reason: 'default' });
+  });
+  it('a shared mailbox never uses the frequent-sender signal', () => {
+    assert.deepEqual(classify({ sharedMailbox: true, recentFromSender: 500 }), { focusClass: 'focused', reason: 'default' });
+  });
   it('internal sender (same MAIL_DOMAIN, exactly)', () => {
     assert.deepEqual(classify({ sender: 'noreply@example.test' }), { focusClass: 'focused', reason: 'internal' });
     assert.deepEqual(classify({ sender: 'noreply@sub.example.test' }), { focusClass: 'other', reason: 'automated_sender' });
@@ -135,15 +151,15 @@ describe('classifyFocus: precedence', () => {
     assert.equal(classify({ ...everything, addressOverride: 'other', domainOverride: 'focused' }).reason, 'sender_override');
     assert.equal(classify({ ...everything, domainOverride: 'other' }).reason, 'domain_override');
   });
-  it('then delivery report, Auto-Submitted, list, Precedence', () => {
+  it('then delivery report, Auto-Submitted, correspondent, list, Precedence', () => {
     assert.equal(classify(everything).reason, 'delivery_report');
     const s = everything.signals!;
     assert.equal(classify({ ...everything, signals: { ...s, deliveryReport: false } }).reason, 'auto_submitted');
-    assert.equal(classify({ ...everything, signals: { ...s, deliveryReport: false, autoSubmitted: false } }).reason, 'mailing_list');
-    assert.equal(classify({ ...everything, signals: { ...NONE, bulkPrecedence: true } }).reason, 'bulk_precedence');
+    assert.equal(classify({ ...everything, signals: { ...s, deliveryReport: false, autoSubmitted: false } }).reason, 'correspondent');
+    assert.equal(classify({ ...everything, correspondent: false, signals: { ...s, deliveryReport: false, autoSubmitted: false } }).reason, 'mailing_list');
+    assert.equal(classify({ ...everything, correspondent: false, signals: { ...NONE, bulkPrecedence: true } }).reason, 'bulk_precedence');
   });
-  it('then correspondent, internal, automated, frequent', () => {
-    assert.equal(classify({ ...everything, signals: NONE }).reason, 'correspondent');
+  it('then internal, automated, frequent', () => {
     assert.equal(classify({ ...everything, signals: NONE, correspondent: false }).reason, 'internal');
     assert.equal(classify({ ...everything, signals: NONE, correspondent: false, sender: 'noreply@partner.example.org' }).reason, 'automated_sender');
     assert.equal(classify({ ...everything, signals: NONE, correspondent: false, sender: 'pat@partner.example.org' }).reason, 'frequent_sender');
@@ -155,6 +171,26 @@ describe('classifyFocus: precedence', () => {
       assert.ok(isFocusReason(reason));
     }
     assert.equal(isFocusReason('made_up'), false);
+  });
+});
+
+describe('focusScansNeeded: skip scans a header or the sender already decides', () => {
+  const base = { sender: 'pat@partner.example.org', mailDomain: 'example.test', signals: NONE, senderAuthenticated: true };
+  it('runs both scans when nothing else decides', () => {
+    assert.deepEqual(focusScansNeeded(base), { correspondent: true, frequent: true });
+  });
+  it('never scans Sent for an unauthenticated sender', () => {
+    assert.equal(focusScansNeeded({ ...base, senderAuthenticated: false }).correspondent, false);
+  });
+  it('skips both after a delivery report or Auto-Submitted, and the count after list headers', () => {
+    assert.deepEqual(focusScansNeeded({ ...base, signals: { ...NONE, autoSubmitted: true } }), { correspondent: false, frequent: false });
+    assert.deepEqual(focusScansNeeded({ ...base, signals: { ...NONE, deliveryReport: true } }), { correspondent: false, frequent: false });
+    assert.deepEqual(focusScansNeeded({ ...base, signals: { ...NONE, mailingList: true } }), { correspondent: true, frequent: false });
+  });
+  it('skips the count for automated-looking and authenticated internal senders', () => {
+    assert.equal(focusScansNeeded({ ...base, sender: 'noreply@partner.example.org' }).frequent, false);
+    assert.equal(focusScansNeeded({ ...base, sender: 'pat@example.test' }).frequent, false);
+    assert.equal(focusScansNeeded({ ...base, sender: 'pat@example.test', senderAuthenticated: false }).frequent, true);
   });
 });
 

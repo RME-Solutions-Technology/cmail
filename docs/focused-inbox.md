@@ -56,9 +56,9 @@ There are two switches.
 
 - With the organisation switch **off**, nothing about the Inbox changes: the
   list runs exactly the same query, there are no tabs, the Mail settings page
-  has no Focused Inbox section, and delivery stores nothing new. The only
-  addition is one small read of the switch (one `org_settings` row) on each
-  Inbox page load and each delivery.
+  has no Focused Inbox section, and delivery stores nothing new. What it
+  still costs (a few small settings reads and one index write per Inbox
+  change) is listed under [What it costs](#what-it-costs-on-and-off).
 - The per-mailbox setting belongs to the **mailbox**, not the person. For a
   personal mailbox that is its owner; for a shared mailbox, everyone with Full
   access changes the same setting, and everyone assigned to it (any level)
@@ -88,13 +88,30 @@ decides, in this order:
 | 2 | The mailbox has an entry for the sender's domain (or a parent domain: `example.org` covers `news.example.org`) | the entry's tab | `domain_override` |
 | 3 | The message is a delivery status report (`Content-Type: multipart/report; report-type=delivery-status`, [RFC 3464](https://www.rfc-editor.org/rfc/rfc3464)): a bounce about mail you sent | Focused | `delivery_report` |
 | 4 | `Auto-Submitted` with any value but `no` ([RFC 3834](https://www.rfc-editor.org/rfc/rfc3834)): out-of-office and other machine replies | Other | `auto_submitted` |
-| 5 | `List-Id` ([RFC 2919](https://www.rfc-editor.org/rfc/rfc2919)) or `List-Unsubscribe` ([RFC 2369](https://www.rfc-editor.org/rfc/rfc2369)) | Other | `mailing_list` |
-| 6 | `Precedence: bulk`, `list` or `junk` (widely used, not a standard) | Other | `bulk_precedence` |
-| 7 | This mailbox has sent mail to the sender (To, Cc or Bcc of its newest 2,000 Sent messages) | Focused | `correspondent` |
-| 8 | The sender's domain is exactly `MAIL_DOMAIN` (or, for mail from another cmail mailbox, that mailbox's domain) | Focused | `internal` |
+| 5 | **Authenticated** sender this mailbox has sent mail to (To, Cc or Bcc of its newest 2,000 Sent messages), even if the message has list headers | Focused | `correspondent` |
+| 6 | `List-Id` ([RFC 2919](https://www.rfc-editor.org/rfc/rfc2919)) or `List-Unsubscribe` ([RFC 2369](https://www.rfc-editor.org/rfc/rfc2369)) | Other | `mailing_list` |
+| 7 | `Precedence: bulk`, `list` or `junk` (widely used, not a standard) | Other | `bulk_precedence` |
+| 8 | **Authenticated** sender whose domain is exactly `MAIL_DOMAIN` (or, for mail from another cmail mailbox, that mailbox's domain) | Focused | `internal` |
 | 9 | The sender address looks automated: the part before `@`, without `+tag` and `. _ -`, starts with `noreply` or `donotreply`, or is `notification(s)`, `newsletter(s)`, `news`, `marketing` or `mailer` | Other | `automated_sender` |
-| 10 | 20 or more of this mailbox's newest 500 Inbox messages are from this exact address, and it has never been written to | Other | `frequent_sender` |
+| 10 | Personal mailboxes only: 20 or more of the mailbox's newest 500 Inbox messages are from this exact address, and it has never been written to | Other | `frequent_sender` |
 | 11 | Anything else | Focused | `default` |
+
+**Authenticated** means the From address is proven:
+
+- normal inbound mail: a DMARC `pass` in the Authentication-Results record of
+  the trusted boundary (`INBOUND_AUTHSERV_ID`, see
+  [Receiving](receiving.md)). Without `INBOUND_AUTHSERV_ID`, or without a
+  DMARC pass, signals 5 and 8 are never used;
+- the Exchange mirror: the original carries
+  `X-MS-Exchange-CrossTenant-AuthAs: Internal` and this tenant's id on every
+  instance (an authenticated submission by a user of this tenant, the same
+  proof the mirror's Sent copy uses). Internet mail on the mirror is treated
+  as unauthenticated;
+- mail between cmail mailboxes: always (a signed-in user sent it).
+
+So a forged From never earns a place in Focused as a "correspondent" or
+"colleague", and the message view never says "The sender is in your
+organisation" for an unproven sender.
 
 Focused is the safe default: a person in Other costs more than a newsletter
 in Focused, so every Other signal is specific, and a person's own entries
@@ -106,16 +123,17 @@ Notes on the signals:
   inbound path, and from the original message inside a journal report on the
   [Exchange mirror](exchange-mirror.md). Only the message's own (first)
   `Content-Type` counts for signal 3.
-- **"Internal"** trusts the From domain, which a sender can forge. That only
-  decides Focused versus Other (both are the Inbox), and every Other signal
-  except 9 and 10 still comes first. Spoofing protection is DMARC's job, not
-  this feature's.
+- **Shared mailboxes** skip signal 10: their replies usually go out from
+  people's personal mailboxes, so "never written to" says nothing there.
+- **Scans are skipped when they cannot change the answer**: the Sent scan
+  only runs for an authenticated sender not already decided by signal 3 or
+  4; the frequency count only when no header, automated-looking address or
+  internal match decides first.
 - **Contacts.** cMail has no address book: its recipient suggestions
   (`mailbox_contacts`) include every sender that ever wrote in, so they are
-  not used. Signal 7 (people you have written to) stands in for "is a
+  not used. Signal 5 (people you have written to) stands in for "is a
   contact", as Outlook does with correspondence history.
-- **Shared mailboxes** are sorted with their own history and entries, like
-  any mailbox.
+- **Shared mailboxes** are sorted with their own history and entries.
 - The **standby test address** and cmail's own notices (bounce notices, which
   are written straight to the Inbox) are not sorted and show under Focused.
 
@@ -164,10 +182,11 @@ messages are sorted once, in the background:
   mail that arrived while it was off. The state
   (`running`, `done` with a count, or `failed`) shows in Mail > Settings; a
   failed run has a **Try again** button.
-- cmail does not keep raw headers of stored mail, so signals 3 to 6 cannot be
-  used here. Old newsletters are caught only by the person's entries, signal
-  9 (automated-looking address) or signal 10 (frequent sender). New mail gets
-  all signals.
+- cmail does not keep raw headers or authentication results of stored mail,
+  so signals 3, 4, 6 and 7 cannot be used here, and signals 5 and 8 only for
+  mail that came from another cmail mailbox. Old newsletters are caught only
+  by the person's entries, signal 9 (automated-looking address) or signal 10
+  (frequent sender). New mail gets all signals.
 
 ## What does not change
 
@@ -192,15 +211,36 @@ messages are sorted once, in the background:
 Logs carry no addresses, subjects or content. Audit details carry counts and
 kinds only.
 
-Each delivery to an Inbox does one indexed lookup when the switch is on: the
-mailbox's entries, whether the sender appears in its newest 2,000 Sent
-messages, and how often the sender appears in its newest 500 Inbox messages.
-With either switch off, the same single statement returns after reading the
-two settings rows (SQLite evaluates a `CASE` branch only when it is taken:
-["Both forms of the CASE expression use lazy, or short-circuit, evaluation"](https://www.sqlite.org/lang_expr.html#the_case_expression)).
-On the Exchange mirror, the organisation switch is read once per report,
-and each Inbox copy then counts one more subrequest against
-`M365_JOURNAL_SUBREQUEST_BUDGET`.
+### What it costs, on and off
+
+With the organisation switch **off** (nothing is cached; each request reads
+the switch afresh, so turning it off takes effect at once):
+
+- each Inbox list load: one `org_settings` read;
+- each open of a received Inbox message: one small read (the switch and the
+  mailbox's setting) before showing the Move line;
+- Mail settings and Admin settings: one read each;
+- each delivery to an Inbox (normal inbound and mail between cmail
+  mailboxes): one lookup statement, which returns after reading the two
+  settings rows (SQLite evaluates a `CASE` branch only when it is taken:
+  ["Both forms of the CASE expression use lazy, or short-circuit, evaluation"](https://www.sqlite.org/lang_expr.html#the_case_expression));
+- each Exchange mirror report filed to an Inbox: one switch read;
+- every Inbox insert and every move into or out of the Inbox also updates
+  the partial index `idx_messages_inbox_focus` (one extra index write),
+  because the migration creates it whether or not the feature is used.
+
+With the switch **on**, each Inbox delivery's lookup also reads the
+mailbox's entries and, when needed, scans its newest 2,000 Sent messages
+and counts the sender in its newest 500 Inbox messages; the decision is one
+extra `UPDATE` in the same D1 batch as the message row. On the Exchange
+mirror each Inbox copy then counts one more subrequest against
+`M365_JOURNAL_SUBREQUEST_BUDGET`. If the lookup fails (for example, the
+migration is not applied), the message is delivered with no tab and one line
+is logged per isolate.
+
+The switch read is not cached between requests: a per-request cache saves
+nothing (each request reads it once), and an isolate-level cache would keep
+showing tabs for a while after a manager turns the feature off.
 
 ## Upgrade
 
@@ -208,8 +248,9 @@ Migration `0031_focused_inbox.sql`: additive only. Two nullable columns on
 `messages`, one partial index (`idx_messages_inbox_focus`, Inbox rows only),
 two new tables and one trigger. No existing row changes. Apply with the
 normal `pnpm db:migrate` before (or together with) deploying the web app and
-the email Worker. Building the index reads the `messages` table once; on a
-large database, run it outside busy hours.
+the email Worker. SQLite checks each `ADD COLUMN ... CHECK` against every
+existing row, and building the index reads the table again: three passes
+over `messages`. On a large database, run it outside busy hours.
 
 Code deployed before the migration is safe: with the tables missing, the
 switch reads as off and nothing new is written.
@@ -219,7 +260,11 @@ switch reads as off and nothing new is written.
 - The signals are rules, not a learning model. A sender who writes often but
   is not automated (signal 10) can land in Other until someone moves them
   with "always move"; a newsletter from an address you once wrote to stays in
-  Focused unless it carries list headers.
+  Focused (signal 5 beats list headers) unless you move it with "always move".
+- Signals 5 and 8 need a proven From. Where the boundary records no DMARC
+  result (`INBOUND_AUTHSERV_ID` unset, or Cloudflare adds no
+  Authentication-Results), they never apply and such mail is sorted by the
+  other signals only.
 - Mail sorted while sorting was on keeps its tab after the setting is turned
   off and on again; only unsorted mail is sorted by the one-off run.
 - The background sort covers 1,000 messages per mailbox; older mail stays

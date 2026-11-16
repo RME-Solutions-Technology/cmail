@@ -389,7 +389,9 @@
   </header>
 
   {#if focus}
-    <div class="focus-tabs" role="tablist" aria-label="Inbox views" tabindex="-1" onkeydown={focusTabKeydown}>
+    <!-- Arrow keys reach this from the focused tab; the tablist itself is never a tab stop. -->
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div class="focus-tabs" role="tablist" aria-label="Inbox views" onkeydown={focusTabKeydown}>
       {#each focusTabs as tab (tab.view)}
         {@const selected = focus.view === tab.view}
         {@const unread = focus.unread[tab.view]}

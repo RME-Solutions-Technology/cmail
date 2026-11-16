@@ -37,9 +37,9 @@ export const FOCUS_REASONS = [
   'domain_override',
   'delivery_report',
   'auto_submitted',
+  'correspondent',
   'mailing_list',
   'bulk_precedence',
-  'correspondent',
   'internal',
   'automated_sender',
   'frequent_sender',
@@ -217,12 +217,22 @@ export interface FocusFacts {
   mailDomain: string;
   /** null when headers were not available (internal delivery, one-off sort). */
   signals: FocusHeaderSignals | null;
+  /**
+   * The From address is proven: a DMARC pass recorded by the trusted boundary
+   * (INBOUND_AUTHSERV_ID), an Exchange-authenticated internal submission on
+   * the mirror, or a cmail mailbox sending internally. Only then may the
+   * sender count as a correspondent or as internal: a forged From must not
+   * buy a place in Focused.
+   */
+  senderAuthenticated: boolean;
   /** This mailbox's override for the exact sender address. */
   addressOverride: FocusClass | null;
   /** This mailbox's override for the sender's domain (most specific match). */
   domainOverride: FocusClass | null;
   /** This mailbox has sent mail to the sender (in its newest CORRESPONDENT_SCAN_SENT Sent messages). */
   correspondent: boolean;
+  /** A shared mailbox: its replies go out from personal mailboxes, so "never written to" says nothing. */
+  sharedMailbox: boolean;
   /** Messages from this exact sender among the mailbox's newest FREQUENT_SCAN_INBOX Inbox messages. */
   recentFromSender: number;
 }
@@ -236,12 +246,15 @@ export interface FocusDecision {
  * First matching signal wins:
  *  1. the person's own choices (address beats domain);
  *  2. a delivery report about mail they sent stays in Focused;
- *  3. machine-sent and list mail goes to Other (Auto-Submitted, List-Id or
- *     List-Unsubscribe, Precedence bulk/list/junk);
- *  4. people they write to, and colleagues, stay in Focused;
- *  5. automated-looking senders, then senders who write very often without
- *     ever being written to, go to Other;
- *  6. everything else stays in Focused.
+ *  3. an automatic reply (Auto-Submitted) goes to Other;
+ *  4. an authenticated sender this mailbox has written to stays in Focused,
+ *     even when their mail carries list headers;
+ *  5. list and bulk mail goes to Other (List-Id or List-Unsubscribe,
+ *     Precedence bulk/list/junk);
+ *  6. an authenticated colleague (same MAIL_DOMAIN) stays in Focused;
+ *  7. automated-looking senders, then (personal mailboxes only) senders who
+ *     write very often without ever being written to, go to Other;
+ *  8. everything else stays in Focused.
  * Focused is the safe default: a wrong Other costs more than a wrong Focused.
  */
 export function classifyFocus(facts: FocusFacts): FocusDecision {
@@ -250,13 +263,37 @@ export function classifyFocus(facts: FocusFacts): FocusDecision {
   const signals = facts.signals;
   if (signals?.deliveryReport) return { focusClass: 'focused', reason: 'delivery_report' };
   if (signals?.autoSubmitted) return { focusClass: 'other', reason: 'auto_submitted' };
+  if (facts.senderAuthenticated && facts.correspondent) return { focusClass: 'focused', reason: 'correspondent' };
   if (signals?.mailingList) return { focusClass: 'other', reason: 'mailing_list' };
   if (signals?.bulkPrecedence) return { focusClass: 'other', reason: 'bulk_precedence' };
-  if (facts.correspondent) return { focusClass: 'focused', reason: 'correspondent' };
-  if (facts.mailDomain && senderDomain(facts.sender) === facts.mailDomain) return { focusClass: 'focused', reason: 'internal' };
+  if (facts.senderAuthenticated && facts.mailDomain && senderDomain(facts.sender) === facts.mailDomain) {
+    return { focusClass: 'focused', reason: 'internal' };
+  }
   if (isAutomatedSender(facts.sender)) return { focusClass: 'other', reason: 'automated_sender' };
-  if (facts.recentFromSender >= FREQUENT_SENDER_THRESHOLD) return { focusClass: 'other', reason: 'frequent_sender' };
+  if (!facts.sharedMailbox && facts.recentFromSender >= FREQUENT_SENDER_THRESHOLD) return { focusClass: 'other', reason: 'frequent_sender' };
   return { focusClass: 'focused', reason: 'default' };
+}
+
+/**
+ * Which per-mailbox scans can still change the answer once the headers and
+ * the sender are known: the Sent scan only for an authenticated sender not
+ * already decided by a delivery report or Auto-Submitted; the frequency count
+ * only when no header, no automated-looking address and no internal match
+ * decides first.
+ */
+export function focusScansNeeded(input: {
+  sender: string;
+  mailDomain: string;
+  signals: FocusHeaderSignals | null;
+  senderAuthenticated: boolean;
+}): { correspondent: boolean; frequent: boolean } {
+  const s = input.signals;
+  const headerDecides = Boolean(s && (s.deliveryReport || s.autoSubmitted || s.mailingList || s.bulkPrecedence));
+  const internal = input.senderAuthenticated && Boolean(input.mailDomain) && senderDomain(input.sender) === input.mailDomain;
+  return {
+    correspondent: input.senderAuthenticated && !(s && (s.deliveryReport || s.autoSubmitted)),
+    frequent: !headerDecides && !internal && !isAutomatedSender(input.sender),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +305,10 @@ const jsonOrEmpty = (column: string) => `CASE WHEN json_valid(${column}) THEN ${
 /**
  * One statement: is sorting on for this mailbox, and (only when it is) the
  * per-mailbox facts about this sender. SQLite evaluates a CASE branch only
- * when it is taken, so with either switch off this reads two small rows.
+ * when it is taken, so with either switch off this reads two small rows, and
+ * a scan the headers already made pointless (?5, ?6 = 0) is skipped.
  * ?1 mailbox id, ?2 sender address, ?3 JSON array of domain candidates,
- * ?4 the org_settings key.
+ * ?4 the org_settings key, ?5 run the Sent scan, ?6 run the frequency count.
  */
 export const FOCUS_LOOKUP_SQL = `
 WITH cfg AS (
@@ -290,7 +328,8 @@ SELECT
     WHERE mailbox_id = ?1 AND kind = 'domain' AND pattern IN (SELECT value FROM json_each(?3))
     ORDER BY length(pattern) DESC LIMIT 1
   ) END AS domain_class,
-  CASE WHEN cfg.active THEN EXISTS (
+  CASE WHEN cfg.active THEN (SELECT type = 'shared' FROM mailboxes WHERE id = ?1) ELSE 0 END AS shared_mailbox,
+  CASE WHEN cfg.active AND ?5 THEN EXISTS (
     SELECT 1 FROM (
       SELECT to_addresses, cc_addresses, bcc_addresses FROM messages
       WHERE mailbox_id = ?1 AND folder = 'sent'
@@ -300,7 +339,7 @@ SELECT
        OR EXISTS (SELECT 1 FROM json_each(${jsonOrEmpty('sent.cc_addresses')}) WHERE lower(value) = ?2)
        OR EXISTS (SELECT 1 FROM json_each(${jsonOrEmpty('sent.bcc_addresses')}) WHERE lower(value) = ?2)
   ) ELSE 0 END AS correspondent,
-  CASE WHEN cfg.active THEN (
+  CASE WHEN cfg.active AND ?6 AND COALESCE((SELECT type FROM mailboxes WHERE id = ?1), '') <> 'shared' THEN (
     SELECT COUNT(*) FROM (
       SELECT from_address FROM messages
       WHERE mailbox_id = ?1 AND folder = 'inbox' AND direction = 'inbound'
@@ -314,6 +353,7 @@ interface FocusLookupRow {
   active: number | null;
   address_class: string | null;
   domain_class: string | null;
+  shared_mailbox: number | null;
   correspondent: number | null;
   recent_from_sender: number | null;
 }
@@ -326,7 +366,12 @@ export interface DeliveryFocusInput {
   mailDomain?: string | null;
   /** Parsed header list, or null when the path has none. */
   headers: readonly HeaderLike[] | null | undefined;
+  /** See FocusFacts.senderAuthenticated. Unproven senders are never correspondents or internal. */
+  senderAuthenticated: boolean;
 }
+
+/** One log line per isolate when the lookup fails (for example, migration 0031 not applied). */
+let lookupFailureLogged = false;
 
 /**
  * The class for a message about to be filed in a mailbox's Inbox, or null
@@ -339,22 +384,38 @@ export async function decideFocusAtDelivery(db: D1Database, input: DeliveryFocus
   try {
     const sender = normalizeFocusAddress(input.sender);
     if (!sender || !input.mailboxId) return null;
+    const mailDomain = (input.mailDomain || '').trim().toLowerCase();
+    const signals = focusHeaderSignals(input.headers);
+    const senderAuthenticated = input.senderAuthenticated === true;
+    const scans = focusScansNeeded({ sender, mailDomain, signals, senderAuthenticated });
     const row = await db.prepare(FOCUS_LOOKUP_SQL)
-      .bind(input.mailboxId, sender, JSON.stringify(focusDomainCandidates(senderDomain(sender))), ORG_SETTING_FOCUSED_INBOX)
+      .bind(
+        input.mailboxId,
+        sender,
+        JSON.stringify(focusDomainCandidates(senderDomain(sender))),
+        ORG_SETTING_FOCUSED_INBOX,
+        scans.correspondent ? 1 : 0,
+        scans.frequent ? 1 : 0,
+      )
       .first<FocusLookupRow>();
     if (!row || Number(row.active) !== 1) return null;
     return classifyFocus({
       sender,
-      mailDomain: (input.mailDomain || '').trim().toLowerCase(),
-      signals: focusHeaderSignals(input.headers),
+      mailDomain,
+      signals,
+      senderAuthenticated,
       addressOverride: isFocusClass(row.address_class) ? row.address_class : null,
       domainOverride: isFocusClass(row.domain_class) ? row.domain_class : null,
       correspondent: Number(row.correspondent) === 1,
+      sharedMailbox: Number(row.shared_mailbox) === 1,
       recentFromSender: Number(row.recent_from_sender) || 0,
     });
   } catch {
-    // No addresses or content in the log.
-    console.error('Focused Inbox classification was skipped for a delivery');
+    // Once per isolate, with no addresses or content.
+    if (!lookupFailureLogged) {
+      lookupFailureLogged = true;
+      console.error('Focused Inbox classification was skipped (lookup failed; is migration 0031 applied?)');
+    }
     return null;
   }
 }

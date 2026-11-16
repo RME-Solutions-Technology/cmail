@@ -23,7 +23,7 @@ function setup(options: { on?: boolean; env?: Record<string, unknown> } = {}) {
   if (options.on ?? true) setSwitch('focused_inbox_enabled', true);
 
   const storage = { put: vi.fn(async () => undefined), delete: vi.fn(async () => undefined) };
-  const env: Record<string, unknown> = { DB: d1, STORAGE: storage, MAIL_DOMAIN: DOMAIN, ...GUARDS_OFF, ...options.env };
+  const env: Record<string, unknown> = { DB: d1, STORAGE: storage, MAIL_DOMAIN: DOMAIN, INBOUND_AUTHSERV_ID: AUTHSERV, ...GUARDS_OFF, ...options.env };
   const seen: string[] = [];
   const prepare = d1.prepare.bind(d1);
   (d1 as unknown as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
@@ -32,12 +32,14 @@ function setup(options: { on?: boolean; env?: Record<string, unknown> } = {}) {
   };
 
   let n = 0;
-  async function deliver(input: { from?: string; to?: string; headers?: string[]; contentType?: string; subject?: string } = {}) {
+  /** dmarc: the verdict the trusted boundary records for the From (omitted = no record). */
+  async function deliver(input: { from?: string; to?: string; headers?: string[]; contentType?: string; subject?: string; dmarc?: 'pass' | 'fail' } = {}) {
     n += 1;
     const from = input.from ?? 'pat@partner.example.org';
     const to = input.to ?? `alice@${DOMAIN}`;
     const messageId = `<m${n}@partner.example.org>`;
     const raw = [
+      ...(input.dmarc ? [`Authentication-Results: ${AUTHSERV}; dmarc=${input.dmarc} header.from=${from.slice(from.lastIndexOf('@') + 1)}`] : []),
       `From: ${from}`,
       `To: ${to}`,
       `Subject: ${input.subject ?? `Message ${n}`}`,
@@ -120,18 +122,35 @@ describe('Focused Inbox at delivery: each signal', () => {
     })).toMatchObject({ focus_class: 'focused', focus_reason: 'delivery_report' });
   });
 
-  it('someone this mailbox has written to (To, Cc) stays in Focused, even with an automated-looking address', async () => {
+  it('someone this mailbox has written to (To, Cc) stays in Focused, even with an automated-looking address or list headers', async () => {
     const t = setup();
     t.sent('mbx-alice', ['noreply@partner.example.org']);
     t.sent('mbx-alice', [], ['Kim@Partner.Example.org']);
-    expect(await t.deliver({ from: 'noreply@partner.example.org' })).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
-    expect(await t.deliver({ from: 'kim@partner.example.org' })).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
+    expect(await t.deliver({ from: 'noreply@partner.example.org', dmarc: 'pass' })).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
+    expect(await t.deliver({ from: 'kim@partner.example.org', dmarc: 'pass', headers: ['List-Id: <club.partner.example.org>'] })).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
     // Another mailbox's Sent mail does not count.
-    expect(await t.deliver({ to: `bob@${DOMAIN}`, from: 'noreply@partner.example.org' })).toMatchObject({ focus_class: 'other', focus_reason: 'automated_sender' });
+    expect(await t.deliver({ to: `bob@${DOMAIN}`, from: 'noreply@partner.example.org', dmarc: 'pass' })).toMatchObject({ focus_class: 'other', focus_reason: 'automated_sender' });
   });
 
-  it('a sender on MAIL_DOMAIN is internal', async () => {
-    expect(await setup().deliver({ from: `notifications@${DOMAIN}` })).toMatchObject({ focus_class: 'focused', focus_reason: 'internal' });
+  it('a forged From (no DMARC pass) is never a correspondent', async () => {
+    const t = setup();
+    t.sent('mbx-alice', ['kim@partner.example.org']);
+    expect(await t.deliver({ from: 'kim@partner.example.org', headers: ['List-Unsubscribe: <mailto:x@partner.example.org>'] })).toMatchObject({ focus_class: 'other', focus_reason: 'mailing_list' });
+    expect(await t.deliver({ from: 'kim@partner.example.org', dmarc: 'fail', headers: ['Precedence: bulk'] })).toMatchObject({ focus_class: 'other', focus_reason: 'bulk_precedence' });
+  });
+
+  it('a sender on MAIL_DOMAIN is internal only with a DMARC pass', async () => {
+    const t = setup();
+    expect(await t.deliver({ from: `notifications@${DOMAIN}`, dmarc: 'pass' })).toMatchObject({ focus_class: 'focused', focus_reason: 'internal' });
+    // A forged colleague address gets no "in your organisation" reason.
+    expect(await t.deliver({ from: `notifications@${DOMAIN}` })).toMatchObject({ focus_class: 'other', focus_reason: 'automated_sender' });
+    expect(await t.deliver({ from: `ceo@${DOMAIN}`, dmarc: 'fail' })).toMatchObject({ focus_class: 'focused', focus_reason: 'default' });
+  });
+
+  it('a shared mailbox never uses the frequent-sender signal (its replies go from personal mailboxes)', async () => {
+    const t = setup();
+    for (let i = 0; i < 21; i += 1) await t.deliver({ to: `desk@${DOMAIN}`, from: 'updates@shop.example.org' });
+    expect(await t.deliver({ to: `desk@${DOMAIN}`, from: 'updates@shop.example.org' })).toMatchObject({ focus_class: 'focused', focus_reason: 'default' });
   });
 
   it('a frequent sender never written to goes to Other at the threshold', async () => {
@@ -200,6 +219,14 @@ describe('Focused Inbox: Exchange mirror filing', () => {
       { mailbox_id: 'mbx-alice', direction: 'outbound', folder: 'sent', focus_class: null, focus_reason: null },
       { mailbox_id: 'mbx-bob', direction: 'inbound', folder: 'inbox', focus_class: 'other', focus_reason: 'mailing_list' },
     ]);
+  });
+
+  it('a colleague is internal only when Exchange says it was an authenticated submission of this tenant', async () => {
+    const internal = await file(mirror(true), innerMessage());
+    expect(internal.find((row) => row.mailbox_id === 'mbx-bob')).toMatchObject({ focus_class: 'focused', focus_reason: 'internal' });
+    // The same From from the internet (no AuthAs Internal / tenant id): no Sent copy, not internal.
+    const forged = await file(mirror(true), innerMessage({ from: 'noreply@example.test', internal: false }));
+    expect(forged).toEqual([{ mailbox_id: 'mbx-bob', direction: 'inbound', folder: 'inbox', focus_class: 'other', focus_reason: 'automated_sender' }]);
   });
 
   it('stores nothing with the Focused Inbox switch off', async () => {

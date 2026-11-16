@@ -419,11 +419,19 @@ export async function runFocusBackfill(
 
   try {
     const { results: messages } = await db.prepare(
-      `SELECT id, from_address FROM messages
+      `SELECT id, from_address, direction FROM messages
        WHERE mailbox_id = ? AND folder = 'inbox' AND focus_class IS NULL AND direction <> 'outbound'
        ORDER BY received_at DESC LIMIT ?`,
-    ).bind(mailboxId, limit).all<{ id: string; from_address: string }>();
-    const rows = (messages || []).map((row) => ({ id: row.id, sender: normalizeFocusAddress(row.from_address) }));
+    ).bind(mailboxId, limit).all<{ id: string; from_address: string; direction: string }>();
+    // Stored mail keeps no authentication result, so only mail delivered
+    // between cmail mailboxes (direction 'internal') counts as authenticated.
+    const rows = (messages || []).map((row) => ({
+      id: row.id,
+      sender: normalizeFocusAddress(row.from_address),
+      authenticated: row.direction === 'internal',
+    }));
+    const mailbox = await db.prepare('SELECT type FROM mailboxes WHERE id = ?').bind(mailboxId).first<{ type: string }>();
+    const sharedMailbox = mailbox?.type === 'shared';
     const senders = [...new Set(rows.map((row) => row.sender).filter((sender): sender is string => Boolean(sender)))];
 
     let sorted = 0;
@@ -478,6 +486,8 @@ export async function runFocusBackfill(
           sender,
           mailDomain,
           signals: null,
+          senderAuthenticated: row.authenticated,
+          sharedMailbox,
           addressOverride: addressOverrides.get(sender) ?? null,
           domainOverride,
           correspondent: correspondent.has(sender),

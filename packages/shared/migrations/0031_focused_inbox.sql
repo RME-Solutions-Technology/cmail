@@ -20,8 +20,11 @@
 --
 -- Upgrade note: additive only (two nullable columns, one partial index, two
 -- new tables, one trigger). Apply with the normal `pnpm db:migrate`. No
--- existing row changes. Building the partial index reads the messages table
--- once; on a large database run it outside busy hours.
+-- existing row changes. Each ADD COLUMN with a CHECK makes SQLite read every
+-- messages row to verify it, and building the partial index reads the table
+-- again: three passes over messages. On a large database run it outside
+-- busy hours. The index is maintained on every Inbox insert and move from
+-- then on, whether or not the feature is on.
 
 ALTER TABLE messages ADD COLUMN focus_class TEXT
   CHECK (focus_class IS NULL OR focus_class IN ('focused', 'other'));

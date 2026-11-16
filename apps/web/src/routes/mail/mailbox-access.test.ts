@@ -9,15 +9,20 @@ import { load as loadMessage } from './[id]/+page.server';
 interface CapturedDatabase {
   db: D1Database;
   queries: string[];
+  switchReads: string[];
 }
+
+/** The Focused Inbox switch read (docs/focused-inbox.md); off here: no row. */
+const FOCUS_SWITCH_READ = 'SELECT value FROM org_settings WHERE key = ?';
 
 function capturedDatabase(): CapturedDatabase {
   const queries: string[] = [];
+  const switchReads: string[] = [];
   const db = {
     prepare(query: string) {
-      // The Focused Inbox switch read (off here: no row) is not an access
-      // query; leave it out so the indexes below stay the list's own queries.
-      if (query !== 'SELECT value FROM org_settings WHERE key = ?') queries.push(query);
+      // Kept apart so the indexes below stay the list's own access queries.
+      if (query === FOCUS_SWITCH_READ) switchReads.push(query);
+      else queries.push(query);
       const statement = {
         bind() {
           return statement;
@@ -35,7 +40,7 @@ function capturedDatabase(): CapturedDatabase {
       return statement;
     },
   } as unknown as D1Database;
-  return { db, queries };
+  return { db, queries, switchReads };
 }
 
 function platform(db: D1Database): App.Platform {
@@ -81,6 +86,9 @@ describe('disabled mailbox access boundaries', () => {
     });
     expect(globalResult.messages).toEqual([]);
     expectActiveMailboxFilter(global.queries[0]);
+    // Focused Inbox off: exactly one switch read per list load, nothing else.
+    expect(global.switchReads).toHaveLength(1);
+    expect(global.queries.some((query) => /focus/.test(query))).toBe(false);
 
     const specific = capturedDatabase();
     const specificResult = await (listMessages as any)({

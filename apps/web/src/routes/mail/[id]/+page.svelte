@@ -84,6 +84,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, folder: targetFolder || undefined }),
       });
+      // Always finish reading the response: an unread body keeps the request
+      // open, so the page never settles (seen opening an unread message).
+      await response.body?.cancel().catch(() => undefined);
       if (!response.ok) throw new Error('Couldn\'t update message');
       if (action === 'star') starred = !starred;
       if (action === 'read') await invalidateAll();

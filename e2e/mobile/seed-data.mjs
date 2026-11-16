@@ -116,6 +116,11 @@ export function buildMessages(now = Date.now()) {
     { id: 'msg-book-1', mb: 'mb-bookings', from: 'yoga@ironbark.test', fromName: 'Ironbark Yoga', subject: 'Booking request: Tuesdays in November', body: p('Could we book the small hall on Tuesdays 6–7pm in November?'), ago: 3 * HOUR, read: 1 },
     // Sam's mailbox
     { id: 'msg-sam-1', mb: 'mb-sam', from: 'otto@wattle.test', fromName: 'Otto Fischer', subject: 'Market float', body: p('The float is in the office safe.'), ago: 2 * HOUR },
+    // One unread message per device project: opening it marks it read, so
+    // each project needs its own (smoke.spec.ts, "an unread message").
+    ...['pixel-7', 'galaxy-s24', 'iphone-14', 'desktop-chrome'].map((project, index) => ({
+      id: `msg-sam-unread-${project}`, mb: 'mb-sam', from: 'nell@wattle.test', fromName: 'Nell Abara', subject: `Hall keys (${project})`, body: p('The spare keys are in the office.'), ago: 3 * DAY + index * MINUTE,
+    })),
   ];
   return rows.map((row) => ({
     folder: 'inbox',

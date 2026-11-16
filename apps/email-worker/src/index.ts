@@ -1313,7 +1313,14 @@ export default {
     // Inbox after spam filing and inbox rules. null (switch off, or the lookup
     // failed) stores nothing and the message is filed exactly as before.
     const focus = (ruleOutcome?.folder ?? placement.folder) === 'inbox'
-      ? await decideFocusAtDelivery(env.DB, { mailboxId: mailbox.id, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: parsed.headers })
+      ? await decideFocusAtDelivery(env.DB, {
+        mailboxId: mailbox.id,
+        sender: headerFrom,
+        mailDomain: env.MAIL_DOMAIN,
+        headers: parsed.headers,
+        // Only a DMARC pass recorded by the trusted boundary proves the From.
+        senderAuthenticated: auth.dmarc === 'pass',
+      })
       : null;
 
     const storageNamespace = generateId();

@@ -286,6 +286,25 @@ export function sentCopyAllowed(input: {
   return true;
 }
 
+/**
+ * For Focused Inbox: the original was submitted by an authenticated user of
+ * this tenant (X-MS-Exchange-CrossTenant-AuthAs "Internal" and this tenant's
+ * id on every instance, at least one of each, and a well-formed header
+ * block), the same proof sentCopyAllowed uses. Anything else, including all
+ * internet mail, is treated as unauthenticated.
+ */
+export function mirroredSenderAuthenticated(input: {
+  tenantId: string | null | undefined;
+  innerHeaders: readonly Header[] | undefined;
+  innerHeaderBlockOk: boolean;
+}): boolean {
+  if (!input.tenantId || !input.innerHeaderBlockOk) return false;
+  const authAs = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-authas').map((value) => value.trim().toLowerCase());
+  if (!authAs.length || authAs.some((value) => value !== 'internal')) return false;
+  const tenants = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-id').map((value) => value.trim().toLowerCase());
+  return tenants.length > 0 && tenants.every((value) => value === input.tenantId);
+}
+
 async function processReport(
   message: ForwardableEmailMessage,
   env: JournalEnv,
@@ -430,6 +449,11 @@ async function processReport(
   // when it is on, each Inbox copy costs one more lookup (counted below).
   const focusOn = placement.folder === 'inbox' && await focusedInboxOrgEnabled(env.DB);
   const innerHeaders = inner.headers as Header[];
+  const innerSenderAuthenticated = focusOn && mirroredSenderAuthenticated({
+    tenantId: config.tenantId,
+    innerHeaders,
+    innerHeaderBlockOk: headerBlockWellFormed(original.raw),
+  });
 
   // Ids and duplicates, then the subrequest budget.
   const ids = await Promise.all(targets.map((target) => target.role === 'inbound'
@@ -487,7 +511,7 @@ async function processReport(
     // Only an Inbox copy is sorted; null stores nothing (switch off for the
     // mailbox, or the lookup failed) and the copy is filed as before.
     const focus = !sent && focusOn
-      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders })
+      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated })
       : null;
     const to = toParticipants.length ? toParticipants : [{ address: target.address, name: '' }];
     const insert = env.DB.prepare(

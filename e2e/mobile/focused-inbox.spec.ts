@@ -117,8 +117,7 @@ test('move to Focused from the list, then "always move" a sender to Other from a
   await open(page, '/mail');
   await expect(page.getByRole('link', { name: /Spring planting bulletin/ })).toBeVisible();
 
-  // An unread message marks itself read on open; wait for the content, not network idle.
-  await page.goto('/mail/msg-hall');
+  await open(page, '/mail/msg-hall');
   await expect(page.getByText('In Focused.')).toBeVisible();
   await page.getByRole('button', { name: 'Always move messages from this sender to Other' }).click();
   await expect(page).toHaveURL(/\/mail(\?|$)/);

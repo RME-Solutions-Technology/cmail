@@ -889,6 +889,8 @@ async function materializeTarget(
       sender: journal.from_address,
       mailDomain: senderDomain(journal.from_address),
       headers: null,
+      // Sent by a signed-in cmail user from one of this organisation's mailboxes.
+      senderAuthenticated: true,
     })
     : null;
   const providerIds = target.direction === 'outbound' ? journal.provider_message_ids : '[]';

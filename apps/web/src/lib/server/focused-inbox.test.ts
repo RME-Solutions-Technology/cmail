@@ -313,20 +313,27 @@ describe('the one-off sort of recent mail', () => {
     expect(fixture.db.sqlite.prepare('SELECT COUNT(*) AS n FROM messages WHERE focus_class IS NULL').get()).toEqual({ n: 5 });
   });
 
-  it('uses the mailbox\'s entries, its Sent mail and internal senders; never header signals', async () => {
+  it('uses the mailbox\'s entries; correspondents and internal only for mail between cmail mailboxes (stored mail has no DMARC result)', async () => {
     const fixture = createFixture();
     on(fixture);
     seedMessage(fixture, { id: 'e1', mailboxId: 'mb-alice', from: 'noreply@written.example.org' });
     seedMessage(fixture, { id: 'e2', mailboxId: 'mb-alice', from: 'kim@lists.example.org' });
     seedMessage(fixture, { id: 'e3', mailboxId: 'mb-alice', from: 'noreply@example.test' });
+    seedMessage(fixture, { id: 'e5', mailboxId: 'mb-alice', from: 'bob@example.test' });
+    fixture.db.sqlite.prepare(`UPDATE messages SET direction = 'internal' WHERE id = 'e5'`).run();
+    fixture.db.sqlite.prepare(`INSERT INTO messages (id, mailbox_id, direction, from_address, to_addresses, folder) VALUES ('s2', 'mb-alice', 'outbound', 'alice@example.test', '["bob@example.test"]', 'sent')`).run();
     seedMessage(fixture, { id: 'e4', mailboxId: 'mb-alice', from: 'lee@mail.shop.example.org' });
     fixture.db.sqlite.prepare(`INSERT INTO messages (id, mailbox_id, direction, from_address, to_addresses, cc_addresses, bcc_addresses, folder) VALUES ('s1', 'mb-alice', 'outbound', 'alice@example.test', '["x@example.org"]', '["NoReply@Written.example.org"]', '[]', 'sent')`).run();
     await saveFocusOverride(fixture.db.d1, 'mb-alice', { kind: 'address', pattern: 'kim@lists.example.org', focusClass: 'other' }, 'user-alice');
     await saveFocusOverride(fixture.db.d1, 'mb-alice', { kind: 'domain', pattern: 'shop.example.org', focusClass: 'other' }, 'user-alice');
-    expect(await runFocusBackfill(fixture.db.d1, 'mb-alice', { mailDomain: 'example.test' })).toEqual({ status: 'done', sorted: 4 });
-    expect(row(fixture, 'e1')).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
+    expect(await runFocusBackfill(fixture.db.d1, 'mb-alice', { mailDomain: 'example.test' })).toEqual({ status: 'done', sorted: 5 });
+    // Written to, but received from outside: the From is unproven, so no "correspondent".
+    expect(row(fixture, 'e1')).toMatchObject({ focus_class: 'other', focus_reason: 'automated_sender' });
     expect(row(fixture, 'e2')).toMatchObject({ focus_class: 'other', focus_reason: 'sender_override' });
-    expect(row(fixture, 'e3')).toMatchObject({ focus_class: 'focused', focus_reason: 'internal' });
+    // A MAIL_DOMAIN address received from outside is not "in your organisation".
+    expect(row(fixture, 'e3')).toMatchObject({ focus_class: 'other', focus_reason: 'automated_sender' });
+    // Mail from another cmail mailbox is authenticated.
+    expect(row(fixture, 'e5')).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
     expect(row(fixture, 'e4')).toMatchObject({ focus_class: 'other', focus_reason: 'domain_override' });
   });
 
