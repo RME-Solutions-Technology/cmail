@@ -25,8 +25,11 @@ one settings row and returns, and no mail is sent.
   scheduled sender), `apps/web/src/lib/server/m365-welcome-admin.ts` and
   `apps/web/src/routes/admin/m365-sync/` (Admin).
 - Data: migration `0029_m365_welcome_emails.sql` (`m365_welcome_emails`, the
-  once-only record; `m365_welcome_state`, the status row). Settings live in
-  `org_settings`.
+  once-only record; `m365_welcome_state`, the status row) and
+  `0032_m365_sync_upn.sql` (additive: `m365_sync_links.upn`, the person's
+  sign-in name). Settings live in `org_settings`.
+- Public help page the email links to: `apps/web/src/routes/help/first-sign-in/`
+  (see "The help page").
 - Tests: `apps/email-worker/src/m365-welcome/welcome.sql.node.test.ts` and
   `apps/web/src/lib/server/m365-welcome-admin.test.ts`.
 
@@ -57,6 +60,16 @@ is queued and again just before it is sent:
 5. their sync link was created at or after the switch's cut-off (see below),
    unless a manager pressed Send or Resend.
 
+**Licensed, enabled people only.** The sync links a person only while their
+account is enabled, a member (not a guest) and holds a usable Exchange Online
+mailbox plan (Graph `assignedPlans`, the same rule as everywhere in the sync;
+see [Microsoft 365 sync](m365-sync.md)). When they lose the licence or are
+disabled, the link goes out of scope and rule 1 stops matching (and a queued
+email is skipped before it is sent). So unlicensed and disabled accounts, room
+and equipment mailboxes and guests are never emailed, and no separate licence
+flag is stored. Only people who have **never signed in** are emailed (rule 2):
+someone who already signed in and has no passkey is not reminded.
+
 **Shared mailboxes never get one.** The sync creates shared mailboxes as
 mailboxes with no account, so they never match rule 1; rule 3 also excludes
 an account whose address is a shared mailbox. Managers, paused, offboarded and
@@ -80,7 +93,16 @@ the sync's tenant known (`M365_TENANT_ID` on the web app, or a tenant GUID in
 "Cannot send: people created by the sync cannot sign in yet" and the switch
 stays off.
 
-## Which address it is sent to
+## Which address it is sent to, and which account they sign in with
+
+The email is sent **to** the person's own mailbox address (primary SMTP). The
+sign-in line names the **userPrincipalName (UPN)**, which is what they type at
+Microsoft sign-in and can differ from the mailbox address. The sync reads the
+UPN from Graph (`userPrincipalName`, already selected) and saves it on the
+person's link (`m365_sync_links.upn`, migration 0032) each time it sees them.
+Until the sync has recorded one (an existing link not yet seen since the
+upgrade), the email names the account address, as before. When the two are
+equal nothing changes.
 
 The person's account email, which the sync keeps equal to their Microsoft 365
 **primary SMTP address** (`mail`). This is deliberate:
@@ -108,7 +130,8 @@ Microsoft's
 [email authentication overview](https://learn.microsoft.com/en-us/defender-office-365/email-authentication-about)
 explains how Exchange Online treats a message from your own domain that fails
 it). On the first live run, check one welcome email in Exchange message trace
-and in the person's Inbox (not Junk) before sending to everyone.
+and in the person's Inbox (not Junk) before sending to everyone. **Send a test
+   to me** does this for your own address first.
 
 ### The From address must pass DMARC
 
@@ -173,6 +196,21 @@ run nothing is queued or sent; each run records how many people would be
 emailed and lists up to 200 of them in Admin. A Resend pressed during dry run
 waits until dry run is off.
 
+## Send a test to me
+
+**Send a test to me** (Admin > Microsoft 365 sync > Welcome emails, managers
+only) sends the current email to the signed-in manager's own address and no
+one else, with the subject prefixed `[Test] `. It:
+
+- is sent by the web app through its own outbound mail (the path manager
+  invitations use), so it works for a manager the sync did not create and does
+  not need the Worker's send binding;
+- is **not** a welcome send: no `m365_welcome_emails` row, so it never counts
+  as the once-only email, and it turns nothing on;
+- names the manager's UPN when the sync has one for them, else their address;
+- is audited (`m365_welcome.test_sent`, or `m365_welcome.test_failed`) without
+  the address, and limited to **5 an hour per manager**.
+
 ## Exactly once, retries and limits
 
 - **Once only.** `m365_welcome_emails` has one row per account (primary key).
@@ -203,13 +241,25 @@ waits until dry run is off.
   `org.m365_welcome_note`, `m365_welcome.resend_requested`. Worker logs carry
   counts and codes only.
 
-**Admin shows** counts (Sent, Waiting to send, Failed, Skipped, Not sent),
-the last run's result and problem, the dry-run list, a preview of the email,
-and up to 200 people with status, attempts, last attempt and error. **Resend**
+**Admin shows**, before anything is sent, **Who would be emailed: N people**
+and the full list (up to 1,000 names; N is always exact): licensed, enabled
+people who have not been sent a welcome email, each with their sign-in name
+(UPN) and, when it differs, the mailbox the email goes to. Shared mailboxes,
+unlicensed, disabled and signed-in accounts never appear. Below it: counts
+(Sent, Waiting to send, Failed, Skipped, Not sent), the last run's result and
+problem, the dry-run list, a preview of the email, and up to 200 people with
+status, attempts, last attempt and error. **Resend**
 (or **Send** for someone never queued) is offered for people who are still
 eligible and not already waiting; it re-queues that one person, audited.
 
 ## The email
+
+The first paragraph says why the person has an account. With a standby switch
+on (`standby_enabled`, the standby switch, or `exchange_mirror_enabled`, the
+Exchange mirror) it is: "<Organisation> uses <App name> as a standby for email
+emergencies. Nothing changes day to day." With neither on it is neutral:
+"Signing in once now means your account is ready if you ever need it." The
+optional standby sentence set in Admin follows it.
 
 Plain and short, HTML and text parts, `lang="en"`, an ordered list for the
 steps, link colours that meet WCAG AA contrast (the brand colour is used for
@@ -217,10 +267,11 @@ text only when it reaches 4.5:1 on white, otherwise a standard blue; it is
 always used for the top border). **No images** (no logo: Gmail and Outlook
 strip SVG and data-URI images, and an external image would be a tracking
 request), no tracking pixel, no external resources, no token: the only links
-are `APP_URL` and the contact's `mailto:`. Every value is HTML-escaped and
+are `APP_URL`, the help page on `APP_URL` (`/help/first-sign-in`) and the
+contact's `mailto:`. Nothing points to another site. Every value is HTML-escaped and
 header values are kept on one line.
 
-Template text, with passkey sign-in on and no standby sentence (the example
+Template text, with passkey sign-in on and a standby switch on (the example
 values are placeholders):
 
 > **From:** Example Org Mail &lt;noreply@example.com&gt;
@@ -231,7 +282,7 @@ Example Org
 
 Hello Alex,
 
-You now have a mail account at Example Org in cmail.
+You now have a mail account at Example Org in cmail. Example Org uses cmail as a standby for email emergencies. Nothing changes day to day.
 
 To sign in for the first time:
 
@@ -239,6 +290,8 @@ To sign in for the first time:
 2. Choose Sign in with Microsoft and use your work account (alex@example.com).
 3. If you are asked to accept the IT policy, read it and accept it.
 4. Add a passkey: in the left menu choose Settings > Passkeys, then Add passkey. Do this soon after you sign in. A passkey lets you sign in with your fingerprint, face or PIN if Microsoft sign-in is ever unavailable.
+
+Step-by-step help: https://mail.example.com/help/first-sign-in
 
 Questions? Contact desk@example.com.
 
@@ -255,6 +308,7 @@ Sent by Example Org with cmail.
 - **Step 4** appears only while [passkey sign-in](passkeys.md) is switched on
   (checked at send time). "Soon after you sign in" matters: adding a passkey
   needs a session opened in the last 15 minutes.
+- **The work account** in step 2 is the person's UPN (see above).
 - **Hello Alex** uses the first word of the display name; with no name it is
   just "Hello,".
 - **Questions?** uses the support email from Admin > Settings, and is left out
@@ -264,6 +318,15 @@ Sent by Example Org with cmail.
   need it if Microsoft 365 email is down." It is added after "You now have a
   mail account…". Plain text, one paragraph, up to 300 characters; empty
   leaves it out.
+
+## The help page
+
+`https://<APP_URL>/help/first-sign-in` is a public page (no sign-in), on the
+instance's own address, with the same steps (Sign in with Microsoft, accept the
+IT policy, Settings > Passkeys > Add passkey), what a passkey is and who to
+contact (the support email). It shows the passkey part only while passkey
+sign-in is on, and the Access wording when the Access bridge is on. It reads
+only those two settings and the organisation details every public page shows.
 
 ### How to customise
 
@@ -307,8 +370,9 @@ No new cron: it runs on the sync's `*/15 * * * *` schedule.
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#8-welcome-emails-optional), step 8.
 
-1. Apply migration `0029` (`pnpm db:migrate`; owner's yes for a live
-   database). Deploy the email Worker, then the web app.
+1. Apply migrations `0029` and `0032` (`pnpm db:migrate`; owner's yes for a
+   live database). `0032` adds one column and is additive; the sync fills in
+   each person's UPN on its next pass (the daily reconciliation covers everyone). Deploy the email Worker, then the web app.
 2. Make sure first sign-in works (see [First sign-in](m365-sync.md#first-sign-in): try it with one synced test account), the sync and Cloudflare Email Sending for the
    From domain all work. Send yourself a normal test message first.
 3. Open Admin > Microsoft 365 sync. Read the preview; set the standby sentence

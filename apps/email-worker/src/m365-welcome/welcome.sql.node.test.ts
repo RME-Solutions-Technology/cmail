@@ -60,12 +60,12 @@ function setup(options: {
   if (options.profile !== null) setting('m365_welcome_profile', JSON.stringify({ ...PROFILE, ...options.profile }));
 
   /** A person the sync created: pending, never signed in, linked and in scope. */
-  const person = (id: string, extra: { linkedAt?: string; status?: string; role?: string; name?: string; signedIn?: boolean; kind?: 'shared-address' } = {}) => {
+  const person = (id: string, extra: { linkedAt?: string; status?: string; role?: string; name?: string; signedIn?: boolean; kind?: 'shared-address'; upn?: string } = {}) => {
     const email = `${id}@${DOMAIN}`;
     sqlite.prepare(`INSERT INTO users (id, email, display_name, role, status, last_sign_in) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(id, email, extra.name ?? `${id[0].toUpperCase()}${id.slice(1)} Example`, extra.role ?? 'standard', extra.status ?? 'pending', extra.signedIn ? '2026-11-15 10:00:00' : null);
-    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id, source_state, created_at) VALUES (?, 'person', ?, 'in_scope', ?)`)
-      .run(objectId(), id, extra.linkedAt ?? '2026-11-15 12:00:00');
+    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id, source_state, created_at, upn) VALUES (?, 'person', ?, 'in_scope', ?, ?)`)
+      .run(objectId(), id, extra.linkedAt ?? '2026-11-15 12:00:00', extra.upn ?? '');
     return email;
   };
 
@@ -251,7 +251,10 @@ describe('welcome emails: content', () => {
     const email = renderWelcomeEmail({ profile: PROFILE, passkeys: true, note: '', displayName: 'Alice Example', address: `alice@${DOMAIN}` });
     expect(email.html).not.toMatch(/<img|<script|<link|<iframe|url\(|background-image/i);
     const links = [...email.html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
-    expect(links).toEqual(['https://mail.example.test', `mailto:desk@${DOMAIN}`]);
+    // Only the instance's own origin (the app and its help page) and the contact: no outside site.
+    expect(links).toEqual(['https://mail.example.test', 'https://mail.example.test/help/first-sign-in', `mailto:desk@${DOMAIN}`]);
+    for (const link of links.filter((href) => href.startsWith('http'))) expect(new URL(link).origin).toBe('https://mail.example.test');
+    expect(email.text).toContain('Step-by-step help: https://mail.example.test/help/first-sign-in');
     expect(email.text).toContain('1. Open https://mail.example.test\n');
     expect(email.html).toContain('<html lang="en">');
     expect(email.html).toContain('<ol');
@@ -274,10 +277,10 @@ describe('welcome emails: content', () => {
 
   it('uses the standby sentence only when set, and the brand colour only when readable', () => {
     const plain = renderWelcomeEmail({ profile: { ...PROFILE, brandColor: '#ffff00' }, passkeys: false, note: '', displayName: '', address: `alice@${DOMAIN}` });
-    expect(plain.text).toContain('Hello,\n\nYou now have a mail account at Example Org in cmail.\n');
+    expect(plain.text).toContain('Hello,\n\nYou now have a mail account at Example Org in cmail. Signing in once now means your account is ready if you ever need it.\n');
     expect(plain.html).toContain('color:#1d4ed8');
     const note = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: 'This is our standby mailbox.', displayName: 'Alice Example', address: `alice@${DOMAIN}` });
-    expect(note.text).toContain('Hello Alice,\n\nYou now have a mail account at Example Org in cmail. This is our standby mailbox.\n');
+    expect(note.text).toContain('Hello Alice,\n\nYou now have a mail account at Example Org in cmail. Signing in once now means your account is ready if you ever need it. This is our standby mailbox.\n');
     expect(note.html).toContain('color:#0078d4');
   });
 });
@@ -416,5 +419,95 @@ describe('welcome emails: wording follows the deployment', () => {
     t.person('bob');
     await t.tick();
     expect(seen).toEqual([1, 2]);
+  });
+});
+describe('welcome emails: sign-in name (UPN), standby wording, help link', () => {
+  it('sends to the mailbox address and names the UPN as the sign-in account when they differ', async () => {
+    const t = setup({ passkeys: true });
+    t.person('alice', { upn: `alice.example@corp.${DOMAIN}` });
+    await t.tick();
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0].to).toBe(`alice@${DOMAIN}`);
+    expect(t.sent[0].text).toContain(`2. Choose Sign in with Microsoft and use your work account (alice.example@corp.${DOMAIN}).`);
+    expect(t.sent[0].text).not.toContain(`work account (alice@${DOMAIN})`);
+    expect(t.sent[0].html).toContain(`alice.example@corp.${DOMAIN}`);
+  });
+
+  it('names the account address when the UPN equals it, or has not been recorded yet', async () => {
+    const t = setup();
+    t.person('same', { upn: `same@${DOMAIN}` });
+    t.person('unrecorded');
+    await t.tick();
+    expect(t.sent.find((item) => item.to === `same@${DOMAIN}`)?.text).toContain(`use your work account (same@${DOMAIN}).`);
+    expect(t.sent.find((item) => item.to === `unrecorded@${DOMAIN}`)?.text).toContain(`use your work account (unrecorded@${DOMAIN}).`);
+  });
+
+  it('never sends to a shared mailbox, even one that also has a person link or its own UPN', async () => {
+    const t = setup();
+    t.sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('m-team', ?, 'shared', 'active')`).run(`team@${DOMAIN}`);
+    t.sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id, created_at, upn) VALUES (?, 'shared', 'm-team', '2026-11-15 12:00:00', ?)`).run(objectId(), `team@${DOMAIN}`);
+    t.person('team', { upn: `team@${DOMAIN}` });
+    t.person('alice');
+    await t.tick();
+    expect(t.sent.map((item) => item.to)).toEqual([`alice@${DOMAIN}`]);
+  });
+
+  it('says why the account exists only when a standby switch is on, in one plain sentence', async () => {
+    for (const key of ['standby_enabled', 'exchange_mirror_enabled']) {
+      const on = setup();
+      on.setting(key, 'true');
+      on.person('alice');
+      await on.tick();
+      expect(on.sent[0].text).toContain('Example Org uses cmail as a standby for email emergencies. Nothing changes day to day.');
+      expect(on.sent[0].html).toContain('Nothing changes day to day.');
+    }
+    const off = setup();
+    off.person('alice');
+    await off.tick();
+    expect(off.sent[0].text).not.toMatch(/standby|emergenc/i);
+    expect(off.sent[0].text).toContain('Signing in once now means your account is ready if you ever need it.');
+  });
+
+  it('renders the exact email for an org named RME Solutions Technology with passkeys and standby on', () => {
+    const email = renderWelcomeEmail({
+      profile: { ...PROFILE, orgName: 'RME Solutions Technology', appName: 'RME Mail', appUrl: 'https://mail.rme.example.test' },
+      passkeys: true,
+      standby: true,
+      note: '',
+      displayName: 'Alex Example',
+      address: `alex@${DOMAIN}`,
+      signInName: `alex@corp.${DOMAIN}`,
+    });
+    expect(email.subject).toBe('Your RME Solutions Technology mail account is ready');
+    expect(email.text).toBe(`RME Solutions Technology
+
+Hello Alex,
+
+You now have a mail account at RME Solutions Technology in RME Mail. RME Solutions Technology uses RME Mail as a standby for email emergencies. Nothing changes day to day.
+
+To sign in for the first time:
+
+1. Open https://mail.rme.example.test
+2. Choose Sign in with Microsoft and use your work account (alex@corp.${DOMAIN}).
+3. If you are asked to accept the IT policy, read it and accept it.
+4. Add a passkey: in the left menu choose Settings > Passkeys, then Add passkey. Do this soon after you sign in. A passkey lets you sign in with your fingerprint, face or PIN if Microsoft sign-in is ever unavailable.
+
+Step-by-step help: https://mail.rme.example.test/help/first-sign-in
+
+Questions? Contact desk@${DOMAIN}.
+
+RME Solutions Technology will never ask for your password by email.
+
+--
+Sent by RME Solutions Technology with RME Mail.
+`);
+    expect(email.text).not.toMatch(/small organisation/i);
+  });
+
+  it('prefixes a test email subject with [Test] and nothing else changes', () => {
+    const real = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: '', displayName: '', address: `a@${DOMAIN}` });
+    const test = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: '', displayName: '', address: `a@${DOMAIN}`, test: true });
+    expect(test.subject).toBe(`[Test] ${real.subject}`);
+    expect(test.text).toBe(real.text);
   });
 });

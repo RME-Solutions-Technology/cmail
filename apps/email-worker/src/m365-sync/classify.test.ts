@@ -7,7 +7,7 @@ const none = { scope: null, shared: null };
 
 describe('classify', () => {
   it('accepts an enabled member with an Exchange plan on the mail domain', () => {
-    expect(classify(person(1, 'alex'), DOMAIN, none, null)).toEqual({ kind: 'person', address: 'alex@example.test', displayName: 'Person 1' });
+    expect(classify(person(1, 'alex'), DOMAIN, none, null)).toEqual({ kind: 'person', address: 'alex@example.test', displayName: 'Person 1', upn: 'alex@example.test' });
   });
 
   it.each([

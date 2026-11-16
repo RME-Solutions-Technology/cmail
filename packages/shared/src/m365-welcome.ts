@@ -24,6 +24,20 @@ export const M365_WELCOME_SETTING_PROFILE = 'm365_welcome_profile';
 /** The passkey feature's own switch (docs/passkeys.md), read at send time. */
 export const PASSKEY_SIGNIN_SETTING = 'passkey_signin_enabled';
 
+/**
+ * The standby switches (docs/standby-switch.md: standby_enabled; docs/exchange-mirror.md:
+ * exchange_mirror_enabled). When either is on, the email says in one sentence that
+ * the organisation uses this service as an emergency standby.
+ */
+export const WELCOME_STANDBY_SETTINGS = ['standby_enabled', 'exchange_mirror_enabled'] as const;
+
+export function standbyIsOn(settings: ReadonlyMap<string, string>): boolean {
+  return WELCOME_STANDBY_SETTINGS.some((key) => settings.get(key) === 'true');
+}
+
+/** The public help page on the instance's own origin (no sign-in needed). */
+export const WELCOME_HELP_PATH = '/help/first-sign-in';
+
 export const M365_WELCOME_NOTE_MAX = 300;
 /** Every link ever created counts as "on or after" this. */
 export const M365_WELCOME_SINCE_ALL = '1970-01-01 00:00:00';
@@ -189,6 +203,12 @@ export const WELCOME_ELIGIBLE_SQL = `
     AND NOT EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id)
     AND NOT EXISTS (SELECT 1 FROM mailboxes m WHERE m.type = 'shared' AND lower(m.address) = lower(u.email))`;
 
+/**
+ * What the person types at Microsoft sign-in: their userPrincipalName as the
+ * sync last saw it (l.upn), else the account address. Aliases: l, u.
+ */
+export const WELCOME_SIGNIN_NAME_SQL = `COALESCE(NULLIF(l.upn, ''), u.email)`;
+
 /** Eligible and never queued or sent: the "N people already waiting". */
 export const WELCOME_WAITING_SQL = `${WELCOME_ELIGIBLE_SQL}
     AND NOT EXISTS (SELECT 1 FROM m365_welcome_emails w WHERE w.user_id = u.id)`;
@@ -232,7 +252,14 @@ export interface WelcomeEmailInput {
   /** Optional standby sentence; '' omits it. */
   note: string;
   displayName: string;
+  /** The mailbox address the email is sent to. */
   address: string;
+  /** What the person types at Microsoft sign-in (their UPN). Defaults to address. */
+  signInName?: string;
+  /** A standby switch is on: say why the account exists. */
+  standby?: boolean;
+  /** A manager's own test: the subject starts with "[Test] ". */
+  test?: boolean;
 }
 
 export interface WelcomeEmail {
@@ -261,6 +288,12 @@ export function accessibleAccent(hex: string): string {
   return contrastOnWhite(hex) >= 4.5 ? hex : '#1d4ed8';
 }
 
+/** A sign-in name for the text: a plain single-line address, else ''. */
+function cleanUpnText(value: unknown): string {
+  const raw = cleanLine(value, 254).toLowerCase();
+  return isWelcomeEmailAddress(raw) ? raw : '';
+}
+
 function firstName(displayName: string, address: string): string {
   const cleaned = cleanLine(displayName, 120);
   if (!cleaned || cleaned.includes('@') || cleaned.toLowerCase() === address.toLowerCase()) return '';
@@ -280,17 +313,22 @@ export function renderWelcomeEmail(input: WelcomeEmailInput): WelcomeEmail {
   const org = profile.orgName;
   const app = profile.appName;
   const accent = accessibleAccent(profile.brandColor);
-  const subject = cleanLine(`Your ${org} mail account is ready`, 200);
+  const signInName = cleanUpnText(input.signInName) || address;
+  const subject = cleanLine(`${input.test ? '[Test] ' : ''}Your ${org} mail account is ready`, 200);
+  const helpUrl = `${profile.appUrl}${WELCOME_HELP_PATH}`;
 
   const greeting = name ? `Hello ${name},` : 'Hello,';
-  const intro = `You now have a mail account at ${org} in ${app}.`;
+  const why = input.standby
+    ? `${org} uses ${app} as a standby for email emergencies. Nothing changes day to day.`
+    : 'Signing in once now means your account is ready if you ever need it.';
+  const intro = `You now have a mail account at ${org} in ${app}. ${why}`;
   const steps = [
     { text: `Open ${profile.appUrl}`, html: `Open <a href="${escapeHtml(profile.appUrl)}" style="color:${accent};text-decoration:underline;">${escapeHtml(profile.appUrl)}</a>` },
     profile.signIn === 'access'
       // Behind the Cloudflare Access bridge there is no cmail sign-in button:
       // the Access login page asks for the work account.
-      ? { text: `Sign in with your work account (${address}) when asked.`, html: `Sign in with your work account (${escapeHtml(address)}) when asked.` }
-      : { text: `Choose Sign in with Microsoft and use your work account (${address}).`, html: `Choose <strong>Sign in with Microsoft</strong> and use your work account (${escapeHtml(address)}).` },
+      ? { text: `Sign in with your work account (${signInName}) when asked.`, html: `Sign in with your work account (${escapeHtml(signInName)}) when asked.` }
+      : { text: `Choose Sign in with Microsoft and use your work account (${signInName}).`, html: `Choose <strong>Sign in with Microsoft</strong> and use your work account (${escapeHtml(signInName)}).` },
     { text: 'If you are asked to accept the IT policy, read it and accept it.', html: 'If you are asked to accept the IT policy, read it and accept it.' },
   ];
   if (passkeys) {
@@ -313,6 +351,8 @@ export function renderWelcomeEmail(input: WelcomeEmailInput): WelcomeEmail {
     'To sign in for the first time:',
     '',
     ...steps.map((step, index) => `${index + 1}. ${step.text}`),
+    '',
+    `Step-by-step help: ${helpUrl}`,
     '',
     ...(contact ? [`Questions? Contact ${contact}.`, ''] : []),
     safety,
@@ -342,6 +382,7 @@ export function renderWelcomeEmail(input: WelcomeEmailInput): WelcomeEmail {
 <ol style="margin:0 0 16px;padding-left:24px;">
 ${steps.map((step) => `<li style="margin:0 0 8px;">${step.html}</li>`).join('\n')}
 </ol>
+<p style="${p}">Step-by-step help: <a href="${escapeHtml(helpUrl)}" style="color:${accent};text-decoration:underline;">${escapeHtml(helpUrl)}</a></p>
 ${contact ? `<p style="${p}">Questions? Contact <a href="mailto:${escapeHtml(contact)}" style="color:${accent};text-decoration:underline;">${escapeHtml(contact)}</a>.</p>\n` : ''}<p style="margin:0;color:#4b5563;font-size:14px;">${escapeHtml(safety)}</p>
 </div>
 <p style="margin:16px 0 0;text-align:center;color:#4b5563;font-size:13px;">${escapeHtml(footer)}</p>
