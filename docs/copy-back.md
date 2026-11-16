@@ -213,6 +213,8 @@ one item that keeps failing never holds up the others.
 
 ## Setup (least privilege)
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#12-standby-test-switch-and-copy-back-optional), step 12.
+
 Do these on a **test tenant first**. Everything below is per instance; cmail's
 code has no tenant data.
 

@@ -282,6 +282,8 @@ Image storage in Cloudflare's registry was not found priced separately
 (unverified).
 ## Setup
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#11-shared-mailbox-permissions-optional), step 11, with `scripts/onboarding/perms-setup.ps1` for steps 1 to 5 below.
+
 Do this in a **test tenant first**. Steps 1 to 4 are in Microsoft 365, 5 to
 8 in Cloudflare and cmail.
 

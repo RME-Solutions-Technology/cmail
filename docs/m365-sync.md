@@ -440,6 +440,8 @@ response bodies.
 
 ## Entra app setup (least privilege)
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#5-microsoft-365-sync), step 5, with `scripts/onboarding/new-sync-app.ps1`.
+
 Do this in the customer's tenant, as a Privileged Role Administrator or
 Global Administrator (admin consent for application permissions needs one of
 those roles).

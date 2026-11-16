@@ -244,6 +244,8 @@ last resort; layer 1 (long sessions) covers most outages without it.
 
 ## Set up
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#7-passkeys), step 7.
+
 1. Apply migration `0025` (`pnpm db:migrate`). It adds `passkey_credentials`,
    `passkey_challenges` and the nullable `sessions.passkey_credential_id`
    column. Additive: no existing row changes.

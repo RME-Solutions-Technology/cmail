@@ -31,6 +31,12 @@ For engineers and operators setting up a deployment, roughly in this order:
 7. [Running cmail](operations.md) — upgrade, back up, restore, roll back, monitor, and rotate secrets on a live deployment.
 8. [Upgrading and keeping your settings](upgrading.md) — where each setting lives, what an upgrade changes, upgrading a plain copy or a fork, and checking for new settings.
 
+Onboarding an organisation that uses Microsoft 365? Follow
+[Onboarding an organisation that uses Microsoft 365](onboarding-microsoft-365.md):
+the tested order from an empty instance to staff signing in with Microsoft,
+then the optional standby steps, with a one-page checklist and the setup
+scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
+
 To keep accounts in step with a Microsoft 365 tenant (read-only, off by
 default, with a manager switch and dry run), see
 [Microsoft 365 mailbox sync](m365-sync.md). To email each person the sync

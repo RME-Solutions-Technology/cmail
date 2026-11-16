@@ -229,6 +229,8 @@ $env:CLOUDFLARE_ACCOUNT_ID = '<account id>'
 
 ## First-time setup and drill
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#12-standby-test-switch-and-copy-back-optional), step 12.
+
 Once per domain, before the standby can be relied on. It sets up Email
 Routing, then runs a **full cycle with the scripts**: switch-back, switch
 `--apply`, an outside test message into cmail, switch-back `--apply`. **Needs

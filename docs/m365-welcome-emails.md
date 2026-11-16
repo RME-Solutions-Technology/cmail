@@ -283,6 +283,8 @@ No new cron: it runs on the sync's `*/15 * * * *` schedule.
 
 ## Runbook
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#8-welcome-emails-optional), step 8.
+
 1. Apply migration `0029` (`pnpm db:migrate`; owner's yes for a live
    database). Deploy the email Worker, then the web app.
 2. Make sure first sign-in works (see [First sign-in](m365-sync.md#first-sign-in): try it with one synced test account), the sync and Cloudflare Email Sending for the

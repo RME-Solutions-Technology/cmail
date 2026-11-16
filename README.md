@@ -111,6 +111,7 @@ apps/email-worker/           Cloudflare Email Routing and private native-outboun
 packages/shared/             Shared types, push utilities, and D1 migrations
 scripts/setup.mjs            Creates local Wrangler files from templates
 scripts/verify-migrations.mjs  Verifies the schema in a fresh temporary D1
+scripts/onboarding/          Microsoft 365 onboarding scripts (PowerShell 7)
 docs/                        Setup, deployment, security, and policy guidance
 landing/                     Optional static project landing page
 ```
@@ -150,6 +151,12 @@ sequence — provisioning Cloudflare resources, identity providers, outbound
 mail, deployment, inbound routing, and bootstrapping the first manager. Use
 the [Configuration reference](docs/configuration.md) for every setting along
 the way.
+
+For an organisation on Microsoft 365, follow
+[Onboarding an organisation that uses Microsoft 365](docs/onboarding-microsoft-365.md)
+instead: the same sequence in the order that worked, plus Microsoft 365 sync,
+staff sign-in, passkeys and the optional Exchange standby steps, with setup
+scripts in [`scripts/onboarding/`](scripts/onboarding/README.md).
 
 ## Standards and assurance
 
