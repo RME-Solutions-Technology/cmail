@@ -121,7 +121,7 @@ Run from the repository root:
 ## Page metadata
 
 Each page starts with a metadata block between `---` lines: `title`,
-`summary`, `applies_to` (`primary`, `standby` or `both`), `audience`,
+`summary`, `applies_to` (`primary`, `standby` or `both`), `audience` (any of `operator`, `manager`, `user`),
 `switch` (the Admin label that turns the feature on, or `none`),
 `last_reviewed` and `related` (file names). The docs site reads it for
 search; GitHub shows it as a table.

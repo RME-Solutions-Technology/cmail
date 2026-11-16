@@ -2,7 +2,7 @@
 title: "Onboarding an organisation that uses Microsoft 365"
 summary: "The tested order from an empty instance to staff signing in with Microsoft, then the optional standby steps."
 applies_to: standby
-audience: [operator, client admin]
+audience: [operator, manager]
 switch: none
 last_reviewed: 2026-11-16
 related: [credentials.md, m365-sync.md, exchange-mirror.md, standby-switch.md]
