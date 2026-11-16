@@ -305,7 +305,7 @@ and pipes a new client secret into the Worker secret `M365_CLIENT_SECRET`.
 Then, either way, in `apps/email-worker/wrangler.toml` `[vars]`:
 `M365_TENANT_ID`, `M365_CLIENT_ID`, `MAIL_DOMAIN`,
 `M365_DETECT_SHARED_MAILBOXES = "true"` if wanted; keep the `*/15 * * * *`
-cron; `pnpm deploy:email-worker`. Then Admin > Microsoft 365 sync: turn it
+cron; `pnpm deploy:email-worker`. Then Admin > Microsoft 365 > Directory sync: turn it
 on with **dry run on**, press **Sync now**, and read the report.
 
 **Check.** The dry run counts match Microsoft 365 (people, shared mailboxes,
@@ -375,7 +375,7 @@ Access, `/auth/passkey` needs its own Bypass application. Details:
 steps.
 
 **Run.** Needs working outbound mail from `MAIL_DOMAIN` and step 6. Admin >
-Microsoft 365 sync > Welcome emails, with the sync in dry run first; send to
+Microsoft 365 > Welcome emails, with the sync in dry run first; send to
 one test account before anyone else. Full steps:
 [Microsoft 365 welcome emails: runbook](m365-welcome-emails.md#runbook).
 
@@ -466,7 +466,7 @@ Between a and b:
 3. Add `include:spf.protection.outlook.com` to the SPF TXT record of
    `standby.example.com`, keeping the Cloudflare include.
 
-Between b and c: Admin > Exchange mirror > **Turn on**.
+Between b and c: Admin > Microsoft 365 > Mail feed > Journal source (legacy) > **Turn on**.
 
 **Manual equivalent.** [Exchange mirror: Exchange Online](exchange-mirror.md#3-exchange-online)
 (`Set-TransportConfig -JournalingReportNdrTo`, `New-RemoteDomain` +
@@ -475,13 +475,13 @@ then `Enable-JournalRule`). Save `(Get-TransportConfig).JournalingReportNdrTo`
 before changing it.
 
 **Check.** Send a message between two licensed users. Within a minute Admin >
-Exchange mirror shows a last report time, the message "filed", and no
+Microsoft 365 > Mail feed shows a last report time, the message "filed", and no
 refused reports. If reports are refused, read the reason and the safe
 diagnostic in the audit log ([diagnosing](exchange-mirror.md#troubleshoot-refused-reports)).
 
 **Undo.** `exchange-mirror.ps1 @m -Rollback`: disables and removes the
 rule, removes the remote domain and restores the saved NDR address. Then
-Admin > Exchange mirror > Turn off; optionally delete the routing rule and
+Admin > Microsoft 365 > Mail feed > Journal source (legacy) > Turn off; optionally delete the routing rule and
 `M365_JOURNAL_ADDRESS`. Mirrored mail stays until a manager removes it.
 
 **Pitfalls (all seen live).**
@@ -546,7 +546,7 @@ the PFX (base64) and its random password into the Worker secrets
 
 Then: `[vars]` `M365_EXO_APP_ID` and `M365_EXO_ORGANIZATION`; uncomment the
 container block from `wrangler.toml.example`; migration `0028`; with Docker
-running, deploy the Worker, then the web app; Admin > Shared mailbox access >
+running, deploy the Worker, then the web app; Admin > Microsoft 365 > Shared mailbox access >
 Turn on (dry run stays on).
 
 **Check.** Two cron runs later the report matches Exchange for a shared

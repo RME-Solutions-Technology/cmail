@@ -15,6 +15,7 @@
   import { GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
 
   let { data, form } = $props();
+  const appName = $derived(data.appName || 'cmail');
   const overview = $derived(data.overview);
   const today = $derived(overview && overview.days[0]?.day === new Date(overview.now).toISOString().slice(0, 10) ? overview.days[0] : null);
 
@@ -54,13 +55,10 @@
   };
 </script>
 
-<svelte:head><title>Exchange mirror · Management · {data.appName || 'cmail'}</title></svelte:head>
-
-<section class="mirror-page" aria-labelledby="mirror-heading">
-  <header class="page-heading">
-    <p class="eyebrow">Mail</p>
-    <h1 id="mirror-heading">Exchange mirror</h1>
-    <p>Keeps cmail a live copy of your Exchange Online mail, so people already have their recent mail here if Exchange fails. The Graph source (recommended) reads each linked mailbox from Microsoft 365; the older journal source receives a copy of every message by email. Both are off by default and can run together: a message that arrives by both is filed once. Nothing here changes how cmail receives its own mail.</p>
+<section class="m365-section" aria-labelledby="feed-title">
+  <header class="section-heading">
+    <h2 id="feed-title">Mail feed</h2>
+    <p>Keeps {appName} a live copy of your Exchange Online mail, so people already have their recent mail here if Exchange fails. The Graph source (recommended) reads each linked mailbox from Microsoft 365; the older journal source receives a copy of every message by email. Both are off by default and can run together: a message that arrives by both is filed once. Nothing here changes how {appName} receives its own mail.</p>
   </header>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
@@ -83,10 +81,10 @@
     {/if}
 
     {#if graph}
-      <section class="card" aria-labelledby="graph-heading">
+      <section class="card" aria-labelledby="feed-graph-heading">
         <div class="switch-head">
           <div>
-            <h2 id="graph-heading">Graph source (recommended)</h2>
+            <h3 id="feed-graph-heading">Graph source (recommended)</h3>
             <p class="muted">Reads new mail from each mailbox the Microsoft 365 sync linked (people and shared mailboxes) every few minutes, with the sync's app and the Exchange role "Application Mail.Read". Copies are filed as read, with no notification and no rules. Unlike the journal source, mail from senders with a strict DMARC policy is not lost.</p>
           </div>
           <span class="state-badge" class:on={graph.enabled}>{graph.enabled ? 'On' : 'Off'}</span>
@@ -107,7 +105,7 @@
           <div class="notice notice-warning" role="status">{graph.status.denied} mailbox{graph.status.denied === 1 ? ' is' : 'es are'} outside the app's Exchange RBAC scope, so {graph.status.denied === 1 ? 'it is' : 'they are'} not mirrored.</div>
         {/if}
         <div class="actions">
-          <form method="POST">
+          <form method="POST" action="?/mirror#mail-feed">
             <input type="hidden" name="action" value={graph.enabled ? 'graph_disable' : 'graph_enable'} />
             <button type="submit" class="btn {graph.enabled ? 'btn-outline-danger' : 'btn-primary'}"
               disabled={!graph.enabled && (!graph.installed || graph.config.state === 'not_configured')}>
@@ -115,7 +113,7 @@
             </button>
           </form>
           {#if graph.enabled}
-            <form method="POST">
+            <form method="POST" action="?/mirror#mail-feed">
               <input type="hidden" name="action" value="graph_run_now" />
               <button type="submit" class="btn">Run now</button>
             </form>
@@ -123,7 +121,7 @@
         </div>
         {#if graph.config.state === 'configured'}
           <dl class="facts">
-            <div><dt>Folders</dt><dd>{graph.config.folders.map((folder) => FOLDER_NAMES[folder] ?? folder).join(', ')}</dd></div>
+            <div><dt>Folders</dt><dd>{graph.config.folders.map((folder: string) => FOLDER_NAMES[folder] ?? folder).join(', ')}</dd></div>
             <div><dt>First pull</dt><dd>Last {graph.config.lookbackHours} hours, at most {graph.config.initialCap} messages per folder</dd></div>
           </dl>
         {/if}
@@ -145,8 +143,8 @@
           {/if}
         {/if}
         {#if graph.enabled}
-          <div class="import-box" aria-labelledby="import-heading">
-            <h3 id="import-heading">Import older mail</h3>
+          <div class="import-box" aria-labelledby="feed-import-heading">
+            <h4 id="feed-import-heading">Import older mail</h4>
             <p class="muted">Bring older mail from Microsoft 365 into every mirrored mailbox (people and shared, all domains). It is a finite import, not a copy that keeps growing: first a count (a dry run that writes no mail), then your confirmation, then the import in the background.</p>
 
             {#if job && job.status !== 'running' && job.finishedAt}
@@ -168,7 +166,7 @@
               {#if job.error}<p class="muted">{GRAPH_IMPORT_ERROR_TEXT[job.error] ?? job.error}</p>{/if}
               {#if job.errors}<p class="muted">{job.errors} folders or mailboxes could not be read and were left out.</p>{/if}
               <p class="muted">Runs in the background, a few hundred messages every 5 minutes, after live mail. Live mail always goes first. This figure refreshes by itself.</p>
-              <form method="POST"><input type="hidden" name="action" value="graph_import_stop" /><button type="submit" class="btn">Stop the import</button></form>
+              <form method="POST" action="?/mirror#mail-feed"><input type="hidden" name="action" value="graph_import_stop" /><button type="submit" class="btn">Stop the import</button></form>
             {:else}
               {#if counting}
                 <div class="notice notice-warning" role="status">
@@ -178,9 +176,9 @@
                     Waiting for the next scheduled run (within about 5 minutes) to {imp?.requestPending === 'start' ? 'check the numbers and start' : 'start counting'}.
                   {/if}
                 </div>
-                <form method="POST"><input type="hidden" name="action" value="graph_import_stop" /><button type="submit" class="btn">Cancel</button></form>
+                <form method="POST" action="?/mirror#mail-feed"><input type="hidden" name="action" value="graph_import_stop" /><button type="submit" class="btn">Cancel</button></form>
               {:else}
-                <form method="POST" class="import-slider">
+                <form method="POST" action="?/mirror#mail-feed" class="import-slider">
                   <input type="hidden" name="action" value="graph_import_estimate" />
                   <label for="import-stop">How far back: <strong>{sliderPeriod.label}</strong></label>
                   <input id="import-stop" name="stop" type="range" min="0" max={GRAPH_IMPORT_PERIODS.length - 1} step="1" bind:value={sliderStop} aria-valuetext={sliderPeriod.label} />
@@ -226,9 +224,9 @@
                 {/if}
                 {#if canStart && !counting}
                   <div class="notice notice-warning" role="note">
-                    <strong>Before you start.</strong> A big import uses storage that costs money on Cloudflare, can take hours or days, and runs in the background. You can stop it at any time. Nothing already in cmail is changed or duplicated (mail is matched by its Message-ID). Imported mail is filed as read, with no rules and no notifications.
+                    <strong>Before you start.</strong> A big import uses storage that costs money on Cloudflare, can take hours or days, and runs in the background. You can stop it at any time. Nothing already in {appName} is changed or duplicated (mail is matched by its Message-ID). Imported mail is filed as read, with no rules and no notifications.
                   </div>
-                  <form method="POST" class="import-confirm">
+                  <form method="POST" action="?/mirror#mail-feed" class="import-confirm">
                     <input type="hidden" name="action" value="graph_import_start" />
                     <input type="hidden" name="estimateId" value={estimate.id} />
                     <input type="hidden" name="messages" value={estimate.messages} />
@@ -244,42 +242,15 @@
       </section>
     {/if}
 
-    <section class="card" aria-labelledby="switch-heading">
+    <section class="card" aria-labelledby="feed-colleague-heading">
       <div class="switch-head">
         <div>
-          <h2 id="switch-heading">Journal source (not recommended with Cloudflare Email Routing)</h2>
-          <p class="muted">Journal reports carry the original sender in From, so Cloudflare Email Routing refuses reports for mail from senders whose DMARC policy is reject, and that mail never reaches cmail. Use the Graph source instead.</p>
-          <p class="muted">Off means mail to the journal address is refused like any unknown address and nothing is filed.</p>
-        </div>
-        <span class="state-badge" class:on={overview.enabled}>{overview.enabled ? 'On' : 'Off'}</span>
-      </div>
-      <form method="POST">
-        <input type="hidden" name="action" value={overview.enabled ? 'disable' : 'enable'} />
-        <button type="submit" class="btn {overview.enabled ? 'btn-outline-danger' : 'btn-primary'}"
-          disabled={!overview.enabled && (!overview.installed || overview.config.state === 'not_configured')}>
-          {overview.enabled ? 'Turn Exchange mirror off' : 'Turn Exchange mirror on'}
-        </button>
-      </form>
-      {#if overview.config.state === 'configured'}
-        <dl class="facts">
-          <div><dt>Journal address</dt><dd><code>{overview.config.maskedAddress}</code> (full address in the Worker settings only)</dd></div>
-          <div><dt>Trusted sender domains</dt><dd>{overview.config.senderDomains.join(', ')}</dd></div>
-          <div><dt>SPF/DKIM/DMARC check</dt><dd>{overview.config.requireAuth ? 'Required' : 'Off (weaker: token and headers only)'}</dd></div>
-          <div><dt>Tenant check</dt><dd>{overview.config.tenantCheck ? 'On (M365_TENANT_ID)' : 'Off: set M365_TENANT_ID'}</dd></div>
-          <div><dt>Sent copies</dt><dd>{overview.config.mirrorSent ? 'Filed for cmail users who sent through Exchange' : 'Off (default until a live test confirms the report headers)'}</dd></div>
-        </dl>
-      {/if}
-    </section>
-
-    <section class="card" aria-labelledby="colleague-heading">
-      <div class="switch-head">
-        <div>
-          <h2 id="colleague-heading">Send colleague mail through Exchange</h2>
-          <p class="muted">On: mail from cmail to a colleague on the mail domain goes out through the outbound provider, so Exchange delivers it and it shows in Outlook; the cmail copy comes from the mirror. Off: it goes straight into their cmail mailbox only. Prove it with one test message first (<a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/exchange-mirror.md#prove-it-with-one-message">how</a>).</p>
+          <h3 id="feed-colleague-heading">Send colleague mail through Exchange</h3>
+          <p class="muted">On: mail from {appName} to a colleague on the mail domain goes out through the outbound provider, so Exchange delivers it and it shows in Outlook; the {appName} copy comes from the mirror. Off: it goes straight into their {appName} mailbox only. Prove it with one test message first (<a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/exchange-mirror.md#prove-it-with-one-message">how</a>).</p>
         </div>
         <span class="state-badge" class:on={overview.colleagueSend && overview.enabled}>{overview.colleagueSend ? (overview.enabled ? 'On' : 'On (mirror off: not in effect)') : 'Off'}</span>
       </div>
-      <form method="POST">
+      <form method="POST" action="?/mirror#mail-feed">
         <input type="hidden" name="action" value={overview.colleagueSend ? 'colleague_send_disable' : 'colleague_send_enable'} />
         <button type="submit" class="btn {overview.colleagueSend ? 'btn-outline-danger' : 'btn-primary'}" disabled={!overview.colleagueSend && !overview.enabled}>
           {overview.colleagueSend ? 'Turn off' : 'Turn on'}
@@ -287,45 +258,15 @@
       </form>
     </section>
 
-    <section class="card" aria-labelledby="status-heading">
-      <h2 id="status-heading">Status</h2>
-      <dl class="facts">
-        <div><dt>Last journal report</dt><dd>{when(overview.lastReportAt)}</dd></div>
-        <div><dt>Received today</dt><dd>{today?.received ?? 0}</dd></div>
-        <div><dt>Filed today</dt><dd>{today?.filed ?? 0} to recipients, {today?.sentFiled ?? 0} to Sent</dd></div>
-        <div><dt>Duplicates today</dt><dd>{today?.duplicates ?? 0}</dd></div>
-        <div><dt>Unmatched recipients today</dt><dd>{today?.unmatched ?? 0}</dd></div>
-        <div><dt>Not filed today</dt><dd>{today?.skipped ?? 0} copies skipped, {today?.rejected ?? 0} reports refused</dd></div>
-      </dl>
-      {#if today?.lastProblem}
-        <p class="muted">Latest problem ({when(today.lastProblemAt)}): <code>{today.lastProblem}</code> {reasonText(today.lastProblem)}</p>
-      {/if}
-      {#if overview.days.length}
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Day (UTC)</th><th>Received</th><th>Filed</th><th>Sent</th><th>Duplicates</th><th>Unmatched</th><th>Skipped</th><th>Refused</th></tr></thead>
-            <tbody>
-              {#each overview.days as day (day.day)}
-                <tr><td>{day.day}</td><td>{day.received}</td><td>{day.filed}</td><td>{day.sentFiled}</td><td>{day.duplicates}</td><td>{day.unmatched}</td><td>{day.skipped}</td><td>{day.rejected}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {:else}
-        <p class="muted">No journal reports in the last 7 days.</p>
-      {/if}
-      <p class="muted">Unmatched recipients are people outside this organisation, or addresses with no active cmail mailbox or alias. Refused reports and skipped copies are in the audit log.</p>
-    </section>
-
-    <section class="card" aria-labelledby="alias-heading">
+    <section class="card" aria-labelledby="feed-alias-heading">
       <div class="switch-head">
         <div>
-          <h2 id="alias-heading">Aliases from Microsoft 365</h2>
+          <h3 id="feed-alias-heading">Aliases from Microsoft 365</h3>
           <p class="muted">Imports each synced person's and shared mailbox's extra addresses (proxyAddresses on your mail domain), so mirrored mail sent to an alias is filed. Needs the Microsoft 365 sync on and out of dry run. Only the Exchange mirror uses these aliases.</p>
         </div>
         <span class="state-badge" class:on={overview.aliasEnabled}>{overview.aliasEnabled ? 'On' : 'Off'}</span>
       </div>
-      <form method="POST">
+      <form method="POST" action="?/mirror#mail-feed">
         <input type="hidden" name="action" value={overview.aliasEnabled ? 'alias_disable' : 'alias_enable'} />
         <button type="submit" class="btn {overview.aliasEnabled ? 'btn-outline-danger' : 'btn-primary'}" disabled={!overview.aliasEnabled && !overview.installed}>
           {overview.aliasEnabled ? 'Turn alias import off' : 'Turn alias import on'}
@@ -337,7 +278,7 @@
       {#if overview.aliasState?.lastError === 'mass_removal'}
         <div class="notice notice-warning" role="status">
           The last import would remove {overview.aliasState.counts?.heldRemovals ?? 'many'} aliases at once, so it held them. Check Microsoft 365, then approve if it is right.
-          <form method="POST"><input type="hidden" name="action" value="alias_approve_removals" /><button type="submit" class="btn">Approve alias removals</button></form>
+          <form method="POST" action="?/mirror#mail-feed"><input type="hidden" name="action" value="alias_approve_removals" /><button type="submit" class="btn">Approve alias removals</button></form>
         </div>
       {/if}
       {#if overview.aliasEnabled && (!overview.sync.enabled || overview.sync.dryRun)}
@@ -352,15 +293,74 @@
         {/if}
       </dl>
     </section>
+
+    <details class="legacy" data-testid="journal-source">
+      <summary>Journal source (legacy, not recommended with Cloudflare Email Routing) <span class="state-badge" class:on={overview.enabled}>{overview.enabled ? 'On' : 'Off'}</span></summary>
+      <section class="card" aria-labelledby="feed-switch-heading">
+        <div class="switch-head">
+          <div>
+            <h3 id="feed-switch-heading">Journal address and checks</h3>
+            <p class="muted">Journal reports carry the original sender in From, so Cloudflare Email Routing refuses reports for mail from senders whose DMARC policy is reject, and that mail never reaches {appName}. Use the Graph source instead.</p>
+            <p class="muted">Off means mail to the journal address is refused like any unknown address and nothing is filed.</p>
+          </div>
+          <span class="state-badge" class:on={overview.enabled}>{overview.enabled ? 'On' : 'Off'}</span>
+        </div>
+        <form method="POST" action="?/mirror#mail-feed">
+          <input type="hidden" name="action" value={overview.enabled ? 'disable' : 'enable'} />
+          <button type="submit" class="btn {overview.enabled ? 'btn-outline-danger' : 'btn-primary'}"
+            disabled={!overview.enabled && (!overview.installed || overview.config.state === 'not_configured')}>
+            {overview.enabled ? 'Turn Exchange mirror off' : 'Turn Exchange mirror on'}
+          </button>
+        </form>
+        {#if overview.config.state === 'configured'}
+          <dl class="facts">
+            <div><dt>Journal address</dt><dd><code>{overview.config.maskedAddress}</code> (full address in the Worker settings only)</dd></div>
+            <div><dt>Trusted sender domains</dt><dd>{overview.config.senderDomains.join(', ')}</dd></div>
+            <div><dt>SPF/DKIM/DMARC check</dt><dd>{overview.config.requireAuth ? 'Required' : 'Off (weaker: token and headers only)'}</dd></div>
+            <div><dt>Tenant check</dt><dd>{overview.config.tenantCheck ? 'On (M365_TENANT_ID)' : 'Off: set M365_TENANT_ID'}</dd></div>
+            <div><dt>Sent copies</dt><dd>{overview.config.mirrorSent ? `Filed for ${appName} users who sent through Exchange` : 'Off (default until a live test confirms the report headers)'}</dd></div>
+          </dl>
+        {/if}
+      </section>
+
+      <section class="card" aria-labelledby="feed-status-heading">
+        <h3 id="feed-status-heading">Status</h3>
+        <dl class="facts">
+          <div><dt>Last journal report</dt><dd>{when(overview.lastReportAt)}</dd></div>
+          <div><dt>Received today</dt><dd>{today?.received ?? 0}</dd></div>
+          <div><dt>Filed today</dt><dd>{today?.filed ?? 0} to recipients, {today?.sentFiled ?? 0} to Sent</dd></div>
+          <div><dt>Duplicates today</dt><dd>{today?.duplicates ?? 0}</dd></div>
+          <div><dt>Unmatched recipients today</dt><dd>{today?.unmatched ?? 0}</dd></div>
+          <div><dt>Not filed today</dt><dd>{today?.skipped ?? 0} copies skipped, {today?.rejected ?? 0} reports refused</dd></div>
+        </dl>
+        {#if today?.lastProblem}
+          <p class="muted">Latest problem ({when(today.lastProblemAt)}): <code>{today.lastProblem}</code> {reasonText(today.lastProblem)}</p>
+        {/if}
+        {#if overview.days.length}
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Day (UTC)</th><th>Received</th><th>Filed</th><th>Sent</th><th>Duplicates</th><th>Unmatched</th><th>Skipped</th><th>Refused</th></tr></thead>
+              <tbody>
+                {#each overview.days as day (day.day)}
+                  <tr><td>{day.day}</td><td>{day.received}</td><td>{day.filed}</td><td>{day.sentFiled}</td><td>{day.duplicates}</td><td>{day.unmatched}</td><td>{day.skipped}</td><td>{day.rejected}</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {:else}
+          <p class="muted">No journal reports in the last 7 days.</p>
+        {/if}
+        <p class="muted">Unmatched recipients are people outside this organisation, or addresses with no active {appName} mailbox or alias. Refused reports and skipped copies are in the audit log.</p>
+      </section>
+    </details>
   {/if}
 </section>
 
 <style>
-  .mirror-page { display: grid; gap: 20px; max-width: 960px; }
-  .page-heading h1 { margin: 2px 0 6px; font-size: var(--fs-title-2); font-weight: 600; }
-  .page-heading > p:last-child { max-width: 760px; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
-  .eyebrow { margin: 0; }
-  h2 { margin: 0 0 4px; font-size: var(--fs-subtitle); font-weight: 600; }
+  .m365-section { display: grid; gap: 20px; scroll-margin-top: 16px; }
+  .section-heading h2 { margin: 0 0 6px; font-size: var(--fs-title-3, var(--fs-subtitle)); font-weight: 600; }
+  .section-heading p { max-width: 760px; margin: 0; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
+  h3 { margin: 0 0 4px; font-size: var(--fs-subtitle); font-weight: 600; }
   .muted { margin: 0; color: var(--text-muted); font-size: 13px; }
   .notice { padding: 8px 12px; border: 0; border-left: 3px solid; border-radius: 0; }
   .notice ul { margin: 6px 0; padding-left: 18px; }
@@ -377,7 +377,7 @@
   .table-wrap { overflow-x: auto; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .import-box { display: grid; gap: 10px; padding-top: 8px; }
-  .import-box h3, .import-box h4 { margin: 0; font-size: 14px; font-weight: 600; }
+  .import-box h4 { margin: 0; font-size: 14px; font-weight: 600; }
   .import-slider { display: grid; gap: 6px; max-width: 560px; }
   .import-slider input[type='range'] { width: 100%; }
   .slider-stops { display: flex; justify-content: space-between; gap: 2px; color: var(--text-muted); font-size: 11px; }
@@ -385,4 +385,8 @@
   progress { width: 100%; max-width: 560px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th, td { padding: 6px 8px; text-align: left; }
+  .legacy { border-top: 1px solid var(--border); padding-top: 12px; }
+  .legacy > summary { cursor: pointer; font-weight: 600; font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .legacy[open] > summary { margin-bottom: 12px; }
+  .legacy > .card { margin-bottom: 16px; }
 </style>

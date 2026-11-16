@@ -3,7 +3,7 @@ title: "Shared mailbox access from Exchange Online"
 summary: "How to copy Full Access and Send As on shared mailboxes from Exchange Online into cmail each day."
 applies_to: standby
 audience: [operator, manager]
-switch: "Admin > Shared mailbox access"
+switch: "Admin > Microsoft 365 > Shared mailbox access"
 last_reviewed: 2026-11-16
 related: [m365-sync.md, credentials.md, onboarding-microsoft-365.md]
 ---
@@ -41,7 +41,7 @@ gives people access to those shared mailboxes the way Exchange does.
 
 ## In short
 
-- **Off by default.** A manager switch in Admin > Shared mailbox access. While
+- **Off by default.** A manager switch in Admin > Microsoft 365 > Shared mailbox access. While
   off, the scheduled job reads one setting and returns: no container start, no
   Microsoft call, no write. Primary mail (receiving, sending, personal
   mailboxes, the Microsoft 365 sync) is not touched either way. A test proves
@@ -100,7 +100,7 @@ email Worker, cron */15
   ├─ groups: expand group trustees with Graph transitiveMembers (groups.ts)
   ├─ diff: Exchange rights vs cmail assignments and the ledger (diff.ts)
   ├─ brake check → apply in bounded chunks with audit rows (apply.ts)
-  └─ status row m365_perm_state → Admin > Shared mailbox access
+  └─ status row m365_perm_state → Admin > Microsoft 365 > Shared mailbox access
 ```
 
 Each step saves its place in `m365_perm_state`, so a cron run that stops at
@@ -238,7 +238,7 @@ The Microsoft 365 sync never adopts or links a manager account (it reports
 every Exchange grant to them is skipped as `trusteeNotLinked`: they can have
 Full Access to every shared mailbox in Exchange and see none in cmail.
 
-**Include manager accounts** (Admin > Shared mailbox access, org setting
+**Include manager accounts** (Admin > Microsoft 365 > Shared mailbox access, org setting
 `m365_perms_include_managers`) closes that gap. It is **off by default**; off,
 no manager is looked up (no Graph call, no extra write). On, once per round,
 before the diff:
@@ -319,7 +319,7 @@ room), `manager_matched` or `manager_not_matched` with one of:
 would add, as for anyone else. Logs carry outcome counts only, never
 addresses.
 
-**Turn it on:** Admin > Shared mailbox access > **Include manager accounts**,
+**Turn it on:** Admin > Microsoft 365 > Shared mailbox access > **Include manager accounts**,
 ideally with dry run on first, and check the next report. **Turn it off:** the
 same button; access already given stays as it is and is reported as
 `unlinked_kept` (remove it in Admin > Mailboxes if you do not want it).
@@ -590,7 +590,7 @@ web app.
 
 ### 8. Turn it on
 
-Admin > Shared mailbox access: check there is no "not configured" notice,
+Admin > Microsoft 365 > Shared mailbox access: check there is no "not configured" notice,
 **Turn on** (dry run stays on), wait for two cron runs (collection, then
 report), read the report. When it matches Exchange **and step 4 was a go**,
 **Turn dry run off**.
@@ -620,7 +620,7 @@ report), read the report. When it matches Exchange **and step 4 was a go**,
 
 ## How to turn it off and roll back
 
-- **Stop:** Admin > Shared mailbox access > Turn off. Nothing runs; every
+- **Stop:** Admin > Microsoft 365 > Shared mailbox access > Turn off. Nothing runs; every
   assignment stays.
 - **Undo its grants:** the ledger lists them:
   `SELECT mailbox_id, user_id, level_written FROM m365_perm_ledger;` Remove

@@ -1,5 +1,6 @@
 <script lang="ts">
   let { data, form } = $props();
+  const appName = $derived(data.appName || 'cmail');
   const overview = $derived(data.overview);
   const toggle = $derived(overview?.toggle);
   const status = $derived(overview?.status);
@@ -12,8 +13,8 @@
     remove: ['Removed access', 'Would remove access'],
     manager_kept: ['Set by a manager; left as is', 'Set by a manager; would leave as is'],
     manager_removed: ['Removed by a manager; not given back', 'Removed by a manager; would not give back'],
-    not_representable: ['Send As without Full Access; no cmail equivalent', 'Send As without Full Access; no cmail equivalent'],
-    mailbox_not_linked: ['Shared mailbox not in cmail yet', 'Shared mailbox not in cmail yet'],
+    not_representable: ['Send As without Full Access; no equivalent here', 'Send As without Full Access; no equivalent here'],
+    mailbox_not_linked: ['Shared mailbox not set up here yet', 'Shared mailbox not set up here yet'],
     skipped: ['Skipped', 'Skipped'],
     conflict: ['Changed by someone else; left as is', 'Changed by someone else; left as is'],
     manager_matched: ['Manager account matched', 'Manager account would match'],
@@ -23,9 +24,9 @@
   };
   const COUNT_LABELS: Array<[string, string]> = [
     ['added', 'Added'], ['upgraded', 'Raised'], ['downgraded', 'Lowered'], ['removed', 'Removed'],
-    ['managerKept', 'Kept (manager)'], ['notRepresentable', 'No cmail equivalent'], ['trusteeNotLinked', 'Person not in cmail'],
+    ['managerKept', 'Kept (manager)'], ['notRepresentable', 'No equivalent here'], ['trusteeNotLinked', 'Person not linked'],
     ['managerMatched', 'Matched to a manager'], ['managerAccountKept', 'Kept (manager account)'], ['unlinkedKept', 'Kept (no link or match)'],
-    ['mailboxNotLinked', 'Mailbox not in cmail'], ['mailboxNotCovered', 'Mailbox not covered'], ['changedConcurrently', 'Changed meanwhile'], ['unchanged', 'Unchanged'],
+    ['mailboxNotLinked', 'Mailbox not set up here'], ['mailboxNotCovered', 'Mailbox not covered'], ['changedConcurrently', 'Changed meanwhile'], ['unchanged', 'Unchanged'],
   ];
   const BRAKE_TEXT: Record<string, string> = {
     too_many_removals: 'This run would remove or lower more access than the safety limit allows.',
@@ -54,13 +55,10 @@
   }
 </script>
 
-<svelte:head><title>Shared mailbox access · Management · {data.appName || 'cmail'}</title></svelte:head>
-
-<section class="sync-page" aria-labelledby="perms-heading">
-  <header class="page-heading">
-    <p class="eyebrow">Identity &amp; organisation</p>
-    <h1 id="perms-heading">Shared mailbox access</h1>
-    <p>Copy Full Access and Send As on shared mailboxes from Exchange Online into cmail, once a day. It only reads from Microsoft. It gives, raises, lowers or removes only access it gave itself; anything a manager set in Mailboxes is never changed. If Exchange cannot be read, nothing changes. Primary mail is not affected either way.</p>
+<section class="m365-section" aria-labelledby="access-title">
+  <header class="section-heading">
+    <h2 id="access-title">Shared mailbox access</h2>
+    <p>Copy Full Access and Send As on shared mailboxes from Exchange Online into {appName}, once a day. It only reads from Microsoft. It gives, raises, lowers or removes only access it gave itself; anything a manager set in Mailboxes is never changed. If Exchange cannot be read, nothing changes. Primary mail is not affected either way.</p>
   </header>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
@@ -96,27 +94,27 @@
       <p class="muted" role="status">Sync access now is queued: it runs at about {when(overview.queuedUntil)} (one manual collection an hour).</p>
     {/if}
 
-    <section class="card" aria-labelledby="switch-heading">
+    <section class="card" aria-labelledby="access-switch-heading">
       <div class="switch-head">
         <div>
-          <h2 id="switch-heading">Access sync</h2>
+          <h3 id="access-switch-heading">Access sync</h3>
           <p class="muted">Off means the scheduled job does nothing: no container, no Microsoft call, no change.</p>
         </div>
         <span class="state-badge" class:on={toggle.enabled}>{toggle.enabled ? 'On' : 'Off'}</span>
       </div>
       <div class="switch-row">
-        <form method="POST">
+        <form method="POST" action="?/access#shared-mailbox-access">
           <input type="hidden" name="action" value={toggle.enabled ? 'disable' : 'enable'} />
           <button type="submit" class="btn {toggle.enabled ? 'btn-outline-danger' : 'btn-primary'}"
             disabled={!toggle.enabled && (!overview.installed || overview.config.state === 'not_configured')}>
             {toggle.enabled ? 'Turn off' : 'Turn on'}
           </button>
         </form>
-        <form method="POST">
+        <form method="POST" action="?/access#shared-mailbox-access">
           <input type="hidden" name="action" value={toggle.dryRun ? 'dry_run_off' : 'dry_run_on'} />
           <button type="submit" class="btn">{toggle.dryRun ? 'Turn dry run off (apply changes)' : 'Turn dry run on (report only)'}</button>
         </form>
-        <form method="POST">
+        <form method="POST" action="?/access#shared-mailbox-access">
           <input type="hidden" name="action" value="sync_now" />
           <button type="submit" class="btn" disabled={!toggle.enabled}>Sync access now</button>
         </form>
@@ -124,16 +122,16 @@
       <p class="muted">Dry run is <strong>{toggle.dryRun ? 'on' : 'off'}</strong>. {toggle.dryRun ? 'Runs only report what they would change.' : 'Runs apply changes and audit each one.'} A collection takes a few minutes; results show here after the next run.</p>
     </section>
 
-    <section class="card" aria-labelledby="managers-heading">
+    <section class="card" aria-labelledby="access-managers-heading">
       <div class="switch-head">
         <div>
-          <h2 id="managers-heading">Manager accounts</h2>
-          <p class="muted">The Microsoft 365 sync never links manager accounts, so Exchange access granted to a manager is normally skipped (Person not in cmail). Turn this on to also give a manager the shared mailbox access Exchange grants them, when their cmail address is exactly their Microsoft 365 primary email address on this mail domain, and exactly one Microsoft 365 member account and one active manager match. It only adds or raises a manager's access, never lowers or removes it; the manager account stays unlinked. If the match is later lost (switch off, address changed), that access is kept and listed as Kept (no link or match): remove it in Mailboxes if unwanted. Off by default; off looks nobody up. Dry run shows what it would add.</p>
+          <h3 id="access-managers-heading">Manager accounts</h3>
+          <p class="muted">The Microsoft 365 sync never links manager accounts, so Exchange access granted to a manager is normally skipped (Person not linked). Turn this on to also give a manager the shared mailbox access Exchange grants them, when their {appName} address is exactly their Microsoft 365 primary email address on this mail domain, and exactly one Microsoft 365 member account and one active manager match. It only adds or raises a manager's access, never lowers or removes it; the manager account stays unlinked. If the match is later lost (switch off, address changed), that access is kept and listed as Kept (no link or match): remove it in Mailboxes if unwanted. Off by default; off looks nobody up. Dry run shows what it would add.</p>
         </div>
         <span class="state-badge" class:on={toggle.includeManagers}>{toggle.includeManagers ? 'On' : 'Off'}</span>
       </div>
       <div class="switch-row">
-        <form method="POST">
+        <form method="POST" action="?/access#shared-mailbox-access">
           <input type="hidden" name="action" value={toggle.includeManagers ? 'managers_off' : 'managers_on'} />
           <button type="submit" class="btn">{toggle.includeManagers ? 'Stop matching manager accounts' : 'Include manager accounts'}</button>
         </form>
@@ -141,8 +139,8 @@
     </section>
 
     {#if status?.round?.phase === 'held' && status.round.brake}
-      <section class="card held-card" aria-labelledby="held-heading">
-        <h2 id="held-heading">Removals held for approval</h2>
+      <section class="card held-card" aria-labelledby="access-held-heading">
+        <h3 id="access-held-heading">Removals held for approval</h3>
         <p>{BRAKE_TEXT[status.round.brake.reason] ?? ''} {status.round.brake.removals} of {status.round.brake.ledger} sync-made grants ({status.round.brake.percent}%) would be removed or lowered. New access was still given; nothing was removed or lowered.</p>
         {#if status.round.report.length}
           <div class="table-wrap">
@@ -158,13 +156,13 @@
         {/if}
         <div class="switch-row">
           {#if status.round.brake.reason !== 'empty_snapshot'}
-            <form method="POST">
+            <form method="POST" action="?/access#shared-mailbox-access">
               <input type="hidden" name="action" value="approve_round" />
               <input type="hidden" name="round_id" value={status.round.id} />
               <button type="submit" class="btn btn-danger">Approve removals</button>
             </form>
           {/if}
-          <form method="POST">
+          <form method="POST" action="?/access#shared-mailbox-access">
             <input type="hidden" name="action" value="sync_now" />
             <button type="submit" class="btn">Discard and collect again</button>
           </form>
@@ -173,8 +171,8 @@
     {/if}
 
     {#if status}
-      <section class="card" aria-labelledby="status-heading">
-        <h2 id="status-heading">Status</h2>
+      <section class="card" aria-labelledby="access-status-heading">
+        <h3 id="access-status-heading">Status</h3>
         <dl class="facts">
           <div><dt>Last check</dt><dd>{when(status.lastTickAt)}</dd></div>
           <div><dt>Result</dt><dd>{status.lastResult ?? 'not run yet'}{status.lastError ? ` (${status.lastError.code}, ${when(status.lastError.at)})` : ''}</dd></div>
@@ -186,8 +184,8 @@
       </section>
 
       {#if last}
-        <section class="card" aria-labelledby="report-heading">
-          <h2 id="report-heading">Last run{last.mode === 'dry_run' ? ': dry run' : ''}</h2>
+        <section class="card" aria-labelledby="access-report-heading">
+          <h3 id="access-report-heading">Last run{last.mode === 'dry_run' ? ': dry run' : ''}</h3>
           <p class="muted">
             Finished {when(last.finishedAt)}.
             {#if last.snapshot}Exchange read at {when(last.snapshot.collectedAt)}: {last.snapshot.mailboxes} of {last.snapshot.mailboxesInTenant} shared mailboxes in {last.snapshot.batches ?? 1} {(last.snapshot.batches ?? 1) === 1 ? 'batch' : 'batches'}, {last.snapshot.grants} grants.{/if}
@@ -219,12 +217,10 @@
 </section>
 
 <style>
-  .sync-page { display: grid; gap: 20px; max-width: 960px; }
-  .page-heading { display: block; }
-  .page-heading h1 { margin: 2px 0 6px; font-size: var(--fs-title-2); font-weight: 600; }
-  .page-heading > p:last-child { max-width: 760px; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
-  .eyebrow { margin: 0; }
-  h2 { margin: 0 0 4px; font-size: var(--fs-subtitle); font-weight: 600; }
+  .m365-section { display: grid; gap: 20px; scroll-margin-top: 16px; }
+  .section-heading h2 { margin: 0 0 6px; font-size: var(--fs-title-3, var(--fs-subtitle)); font-weight: 600; }
+  .section-heading p { max-width: 760px; margin: 0; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
+  h3 { margin: 0 0 4px; font-size: var(--fs-subtitle); font-weight: 600; }
   .muted { margin: 0; color: var(--text-muted); font-size: 13px; }
   .notice { padding: 8px 12px; border: 0; border-left: 3px solid; border-radius: 0; }
   .notice ul { margin: 6px 0; padding-left: 18px; }

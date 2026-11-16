@@ -264,4 +264,5 @@ export const MIA_PAGES: Array<{ name: string; path: string; ready: string }> = [
   { name: 'admin mailboxes', path: '/admin/mailboxes', ready: 'h1' },
   { name: 'admin settings', path: '/admin/settings', ready: 'h1' },
   { name: 'admin audit', path: '/admin/audit', ready: 'h1' },
+  { name: 'admin microsoft 365', path: '/admin/microsoft-365', ready: 'h1' },
 ];

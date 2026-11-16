@@ -3,7 +3,7 @@ title: "Microsoft 365 mailbox sync"
 summary: "How to keep cmail accounts and shared mailboxes in step with a Microsoft 365 tenant, read only."
 applies_to: standby
 audience: [operator, manager]
-switch: "Admin > Microsoft 365 sync"
+switch: "Admin > Microsoft 365 > Directory sync"
 last_reviewed: 2026-11-16
 related: [m365-welcome-emails.md, staff-sign-in.md, credentials.md, onboarding-microsoft-365.md]
 ---
@@ -32,7 +32,7 @@ person how to sign in.
 - Code: `apps/email-worker/src/m365-sync/` (Graph client, rules, apply,
   scheduled driver), `packages/shared/src/m365-sync.ts` (switch, config check,
   status types), `apps/web/src/lib/server/m365-sync-admin.ts` and
-  `apps/web/src/routes/admin/m365-sync/` (the Admin page).
+  `apps/web/src/routes/admin/microsoft-365/` (the Admin page).
 - Data: migration `0022_m365_sync.sql` (`m365_sync_links`,
   `m365_sync_state`); migration `0026_m365_mailbox_purpose.sql`
   (`m365_sync_mailbox_purpose`, the mailbox type cache, used only by
@@ -49,7 +49,7 @@ person how to sign in.
 - [What the sync changes in cmail](#what-the-sync-changes-in-cmail)
 - [First sign-in](#first-sign-in)
 - [Mass-pause brake](#mass-pause-brake)
-- [The switch (Admin > Microsoft 365 sync)](#the-switch-admin--microsoft-365-sync)
+- [The switch (Admin > Microsoft 365 > Directory sync)](#the-switch-admin--microsoft-365--directory-sync)
 - [Troubleshoot the sync](#troubleshoot-the-sync)
 - [How to set up the Entra app (least privilege)](#how-to-set-up-the-entra-app-least-privilege)
 - [Configuration](#configuration)
@@ -61,7 +61,7 @@ person how to sign in.
 
 ```mermaid
 flowchart LR
-  admin["Admin > Microsoft 365 sync<br/>(manager switch)"] -->|org_settings| d1[(D1)]
+  admin["Admin > Microsoft 365 > Directory sync<br/>(manager switch)"] -->|org_settings| d1[(D1)]
   cron["Email Worker cron<br/>*/15 * * * *"] --> sw{"Switch on?"}
   sw -->|no| stop["Return. No Graph call, no write"]
   sw -->|yes| graph["Microsoft Graph v1.0<br/>users/delta, $batch checkMemberGroups,<br/>$batch mailboxSettings/userPurpose (optional)"]
@@ -420,7 +420,7 @@ While a round is held, no other round runs. A held round is dropped after 7
 days. In dry run the brake never holds; the report says the round would have
 been held.
 
-## The switch (Admin > Microsoft 365 sync)
+## The switch (Admin > Microsoft 365 > Directory sync)
 
 Managers only. Three controls, each audited:
 
@@ -548,7 +548,7 @@ settings. Public Microsoft cloud only (`graph.microsoft.com`,
    database).
 2. Create the Entra app (above). Set the vars and the secret, add the cron,
    and deploy the email Worker, then the web app.
-3. Open Admin > Microsoft 365 sync. It should not say "not configured".
+3. Open Admin > Microsoft 365 > Directory sync. It should not say "not configured".
 4. Turn the sync on with **dry run on**. Within 15 minutes the report shows
    what would be created, adopted, paused and in conflict.
 5. Fix conflicts at the source (Microsoft 365 or Admin), press Sync now, and

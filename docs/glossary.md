@@ -28,7 +28,7 @@ One meaning per term. The docs use these words exactly this way.
 
 | Term | Meaning |
 |---|---|
-| **Switch** | An on/off setting a manager changes in Admin (for example **Admin > Microsoft 365 sync**). Every optional feature ships with its switch off. |
+| **Switch** | An on/off setting a manager changes in Admin (for example **Admin > Microsoft 365 > Directory sync**). Every optional feature ships with its switch off. |
 | **Dry run** | A mode that reads everything and reports what it *would* change, but changes nothing. Features that change accounts or mail start in dry run. |
 | **Brake** | A limit that holds a large change (for example many pauses or removals at once) until a manager approves it in Admin. |
 | **Fail closed** | When a check cannot be completed, cmail refuses rather than allows. |

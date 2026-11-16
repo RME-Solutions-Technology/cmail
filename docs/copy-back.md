@@ -378,7 +378,7 @@ missing and turn the switch on.
 
 ## How to run a copy-back
 
-1. Make sure the sync has linked the mailboxes (Admin > Microsoft 365 sync).
+1. Make sure the sync has linked the mailboxes (Admin > Microsoft 365 > Directory sync).
 2. Enter the window in UTC, from when Exchange stopped receiving to when mail
    flowed to Exchange again. Prefer a little too wide: messages Exchange
    already has are skipped by Message-ID.

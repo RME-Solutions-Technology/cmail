@@ -3,7 +3,7 @@ title: "Exchange mirror (warm standby of Exchange Online)"
 summary: "How to keep cmail a live copy of every Exchange Online mailbox, from Microsoft Graph (recommended) or a journal rule, with no setup per address."
 applies_to: standby
 audience: [operator, manager]
-switch: "Admin > Exchange mirror"
+switch: "Admin > Microsoft 365 > Mail feed"
 last_reviewed: 2026-11-16
 related: [onboarding-microsoft-365.md, credentials.md, standby-switch.md, multi-domain.md]
 ---
@@ -251,7 +251,7 @@ Every step that changes a live system needs the owner's yes.
    `M365_GRAPH_MIRROR_ARCHIVE = "true"`. Add `"*/5 * * * *"` to the email
    Worker's `[triggers] crons` (without it the source runs every 10 minutes).
    Deploy the email Worker and web app.
-5. Admin > Exchange mirror > **Turn Graph source on**, then **Run now**.
+5. Admin > Microsoft 365 > Mail feed > **Turn Graph source on**, then **Run now**.
    Within a few minutes Admin shows the mailboxes covered and the messages
    filed. "Permission missing" means step 3 has not reached Exchange's cache
    yet (up to 2 hours) or was not done.
@@ -260,14 +260,14 @@ Every step that changes a live system needs the owner's yes.
    (`Disable-JournalRule -Identity "cmail mirror"`) and turn the journal
    source off.
 
-To turn it off: Admin > Exchange mirror > **Turn Graph source off**. Nothing
+To turn it off: Admin > Microsoft 365 > Mail feed > **Turn Graph source off**. Nothing
 more is read; mail already filed stays. Remove the role assignment if it is
 not coming back. Migration `0033` is additive; leaving it applied is
 harmless.
 
 ### Admin
 
-Admin > Exchange mirror, **Graph source (recommended)** (managers only): the
+Admin > Microsoft 365 > Mail feed, **Graph source (recommended)** (managers only): the
 switch (audited, `org.graph_mirror_toggled`), **Run now** (one bounded run,
 audited), **Import older mail** (audited), the settings the Worker reports,
 and the status: last run, last clean run, mailboxes covered, filed today (to
@@ -280,7 +280,7 @@ per run).
 
 ### Import older mail
 
-Admin > Exchange mirror > Graph source > **Import older mail** (managers
+Admin > Microsoft 365 > Mail feed > Graph source > **Import older mail** (managers
 only, while the Graph source is on) brings older mail from Microsoft 365 into
 every mirrored mailbox (people and shared, all domains; Inbox, Sent Items and
 Archive). It is finite: a slider with the stops **1 week, 1 month, 2 months, 3
@@ -494,7 +494,7 @@ filed straight into that mailbox, as on any instance. While Exchange holds
 the organisation's mail domains ([Multiple mail domains](multi-domain.md)),
 that copy never reaches Exchange, so the colleague does not see it in Outlook.
 
-**Send colleague mail through Exchange** (Admin > Exchange mirror, **off by
+**Send colleague mail through Exchange** (Admin > Microsoft 365 > Mail feed, **off by
 default**, acts only while the mirror is on) changes that: recipients on any
 of the organisation's mail domains are sent through the outbound provider like any external
 address. Exchange delivers the message to Outlook, the journal report comes
@@ -556,7 +556,7 @@ Before relying on it, on the live tenant:
    any External tag). Open the message headers and check the
    authentication results above.
 4. In cmail: Admin > Mail trace shows it accepted by the provider and no
-   bounce within an hour; Admin > Exchange mirror counts one more filed copy
+   bounce within an hour; Admin > Microsoft 365 > Mail feed counts one more filed copy
    and no duplicate in the colleague's cmail Inbox.
 5. If any step fails, turn the switch off. Nothing else changes.
 ## How a report is trusted
@@ -592,7 +592,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
    whose local part is `journal-` followed by a random token of 32 to 64
    lower-case letters and digits. Only Exchange and the cmail settings know
    it. Generate the token with `openssl rand -hex 16` (32 characters).
-2. **The manager switch is on** (Admin > Exchange mirror). Off: the address
+2. **The manager switch is on** (Admin > Microsoft 365 > Mail feed). Off: the address
    is treated like any unknown address (refused), nothing is parsed.
 3. **It is a journal report:** it carries the `X-MS-Journal-Report` header
    that Exchange adds to every journal report. Any sender can add it too.
@@ -718,7 +718,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
 
 People have addresses besides their primary one (`proxyAddresses` in
 Microsoft 365). Without them, mirrored mail to an alias would count as
-unmatched. The **alias import** (its own switch in Admin > Exchange mirror,
+unmatched. The **alias import** (its own switch in Admin > Microsoft 365 > Mail feed,
 off by default) adds them:
 
 - It runs with the Microsoft 365 sync ([m365-sync.md](m365-sync.md)), using
@@ -798,7 +798,7 @@ changes a live system needs the owner's yes.
    | `M365_JOURNAL_MIRROR_SENT` | Optional, default `"false"`. Set `"true"` (needs `M365_TENANT_ID`) only after the first live test shows real originals carry `X-MS-Exchange-CrossTenant-AuthAs: Internal` and the tenant id. |
    | `M365_JOURNAL_REQUIRE_AUTH` | Leave at `"true"` with check 5a or 5b set up. `"false"` is the fallback: it needs `M365_TENANT_ID`, and every report must then carry that tenant id; only the token, the journal header and the tenant header protect the address. |
 
-4. Deploy the email Worker and web app. In Admin > Exchange mirror the
+4. Deploy the email Worker and web app. In Admin > Microsoft 365 > Mail feed the
    settings show as configured (the address masked). Leave the switch **off**.
 
 ### 2. Cloudflare Email Routing
@@ -874,7 +874,7 @@ Needs the Exchange Online "Journaling" permission
 
 ### 4. Turn it on and check
 
-1. Admin > Exchange mirror > **Turn Exchange mirror on**.
+1. Admin > Microsoft 365 > Mail feed > Journal source (legacy) > **Turn Exchange mirror on**.
 2. `Enable-JournalRule -Identity "cmail mirror"`.
 3. Send a test message from one licensed user to another and to an external
    address. Within a minute Admin shows a last report time and "filed" for
@@ -911,12 +911,12 @@ letters, digits, `.`, `_` and `-`); otherwise only its length is shown. For
 the domain of `header.d`, `header.i`, `header.from` and `smtp.mailfrom` are
 kept: comments, quoted text (so quoted local parts and display names), local
 parts, reasons and IP addresses never are.
-5. Optional: Admin > Exchange mirror > **Turn alias import on** (needs the
+5. Optional: Admin > Microsoft 365 > Mail feed > **Turn alias import on** (needs the
    Microsoft 365 sync on and out of dry run).
 
 ## Admin
 
-Admin > Exchange mirror (managers only) shows:
+Admin > Microsoft 365 > Mail feed (managers only) shows:
 
 - The mirror switch, the masked journal address, trusted sender domains and
   whether the authentication, tenant and Sent options are on, or the list of
@@ -981,7 +981,7 @@ the old address refuses them, and retries.
    between are refused, go to the undeliverable-reports mailbox, and can be
    resent from there with Outlook's **Send Again**
    ([Configure journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/configure-journaling)).
-5. Check Admin > Exchange mirror shows a new last report time.
+5. Check Admin > Microsoft 365 > Mail feed shows a new last report time.
 6. Cloudflare: delete the old address's routing rule.
 
 ## How to turn it off and roll back
@@ -989,7 +989,7 @@ the old address refuses them, and retries.
 1. Exchange: `Disable-JournalRule -Identity "cmail mirror"` (or Purview >
    Journal rules > Disable). Reports stop. Remove it later with
    `Remove-JournalRule -Identity "cmail mirror"`.
-2. cmail: Admin > Exchange mirror > **Turn Exchange mirror off**. Any report
+2. cmail: Admin > Microsoft 365 > Mail feed > Journal source (legacy) > **Turn Exchange mirror off**. Any report
    still in flight is refused like an unknown address (Exchange sends it to
    the undeliverable-reports mailbox).
 3. Optional: Cloudflare: delete the `journal-<token>` routing rule; unset
@@ -1084,7 +1084,7 @@ real tenant:
 
 ```sh
 pnpm --filter @cmail/email-worker exec vitest run src/exchange-mirror/ src/graph-mirror/ src/m365-sync/aliases.sql.node.test.ts
-pnpm --filter @cmail/web exec vitest run src/lib/server/exchange-mirror-admin.test.ts src/lib/server/graph-mirror-admin.test.ts src/routes/admin/exchange-mirror/
+pnpm --filter @cmail/web exec vitest run src/lib/server/exchange-mirror-admin.test.ts src/lib/server/graph-mirror-admin.test.ts src/routes/admin/microsoft-365/
 ```
 
 The Graph source tests (`apps/email-worker/src/graph-mirror/graph-mirror.sql.node.test.ts`)

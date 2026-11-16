@@ -376,7 +376,7 @@ DNS, and at least twice a year.
 - [ ] **Sign-in tested:** someone signed in to cmail today the way staff will
       (Access, and passkeys if Entra is down). If Entra is down, check that
       the people who need mail have a working session or passkey.
-- [ ] **Mailboxes exist:** Admin > Microsoft 365 sync ran recently without a
+- [ ] **Mailboxes exist:** Admin > Microsoft 365 > Directory sync ran recently without a
       held change; new starters have mailboxes.
 - [ ] **Routing ready:** the dry run shows the catch-all sending to the
       Worker and no warnings about literal rules or the standby subdomain.
@@ -399,7 +399,7 @@ DNS, and at least twice a year.
 5. Note the time and the path it printed as "Rollback snapshot saved and
    checked". You need both to switch back and to copy mail back. Check the
    exit code against [Exit codes](#exit-codes).
-6. In **Admin > Exchange mirror**, turn **Send colleague mail through
+6. In **Admin > Microsoft 365 > Mail feed**, turn **Send colleague mail through
    Exchange** off, then the **Exchange mirror** off. With cmail holding the
    mail, colleagues must be delivered straight into cmail, and no journal
    reports come while Exchange is down. Note which were on.
@@ -429,7 +429,7 @@ switch back.
    ```
 2. The owner's yes, then the same with `--apply`, typing the domain.
    Then turn the **Exchange mirror** (and **Send colleague mail through
-   Exchange**, if it was on) back on in Admin > Exchange mirror.
+   Exchange**, if it was on) back on in Admin > Microsoft 365 > Mail feed.
 3. Verify: `dig +short MX example.com @1.1.1.1` shows the original hosts; an
    outside test message reaches Exchange (Outlook); Admin > Standby test is
    still green (the standby address keeps working for next time).

@@ -25,6 +25,7 @@ const ADMIN = [
   { path: '/admin/signatures', heading: /signature/i },
   { path: '/admin/quarantine', heading: /quarantine/i },
   { path: '/admin/trace', heading: /trace/i },
+  { path: '/admin/microsoft-365', heading: 'Microsoft 365' },
 ];
 
 test.describe('management pages', () => {
