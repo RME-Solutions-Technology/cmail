@@ -108,7 +108,9 @@ Not used, on purpose:
 An Entra object becomes a cmail **person** when all of these hold:
 
 1. it is not deleted (no `@removed`);
-2. its primary SMTP address (`mail`) is on `MAIL_DOMAIN` and is an address
+2. its primary SMTP address (`mail`) is on one of the organisation's mail
+   domains (`MAIL_DOMAIN`, plus the tenant's verified domains once the sync
+   can read them: [Multiple mail domains](multi-domain.md)) and is an address
    Admin could create (letters, digits, `.`, `_`, `-`);
 3. `userType` is `Member` (guests are left out);
 4. `accountEnabled` is `true`;
@@ -488,6 +490,10 @@ those roles).
    **`MailboxSettings.Read`** (application), the least privileged
    permission for reading `userPurpose`
    ([get mailboxSettings permissions](https://learn.microsoft.com/en-us/graph/api/user-get-mailboxsettings#permissions)).
+   For [multiple mail domains](multi-domain.md), also add **`Domain.Read.All`**
+   (application), the least privileged permission for listing the tenant's
+   domains ([list domains permissions](https://learn.microsoft.com/en-us/graph/api/domain-list#permissions)).
+   Without it the sync covers `MAIL_DOMAIN` only, as before, and Admin says so.
    Nothing else: no mail, no `Directory.*`, no write permission.
 3. **Grant admin consent** for the tenant, and check that each permission
    shows "Granted".
@@ -654,6 +660,8 @@ prove a live tenant's behaviour.
   November 2026). Start it in dry run on each new tenant.
 - Mail aliases (`proxyAddresses`) are not synced; only the primary address.
 - Mailbox delegation and Send As are not synced.
-- One mail domain (`MAIL_DOMAIN`). Users on other domains in the tenant are
-  out of scope.
+- Mail domains: `MAIL_DOMAIN` plus the tenant's verified domains, read with
+  `Domain.Read.All` at most once a day (or on Sync now). Without that
+  permission, users on other domains in the tenant are out of scope, as
+  before. See [Multiple mail domains](multi-domain.md).
 - The sync needs Workers Paid: Workers Free allows only 50 external subrequests per invocation, which a run with group checks can pass.

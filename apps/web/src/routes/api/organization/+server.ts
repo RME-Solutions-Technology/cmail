@@ -8,6 +8,6 @@ const PRIVATE_HEADERS = {
 };
 
 export const GET: RequestHandler = async ({ platform }) => {
-  const directory = await loadPublicDirectory(platform?.env?.DB, platform?.env?.MAIL_DOMAIN);
+  const directory = await loadPublicDirectory(platform?.env?.DB, platform?.env?.MAIL_DOMAIN, platform?.env?.M365_TENANT_ID);
   return json(directory.entries, { headers: PRIVATE_HEADERS });
 };

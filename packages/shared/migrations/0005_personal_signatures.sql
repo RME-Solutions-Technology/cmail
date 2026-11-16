@@ -10,8 +10,11 @@ CREATE TABLE IF NOT EXISTS personal_signatures (
   updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Existing organisation templates were implicitly enabled. Keeping their
--- content when disabled makes it possible to turn a notice back on without
+-- The organisation signature is off by default: a fresh install seeds a
+-- professional confidentiality line in 0001 and this column default leaves it
+-- disabled until a manager turns on "Append to outgoing mail". Keeping the
+-- content when disabled makes it possible to turn a notice on without
 -- re-entering it, while compose omits disabled templates entirely.
+-- Instances that already applied this migration keep their existing rows.
 ALTER TABLE signature_templates
-  ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 1 CHECK (is_enabled IN (0, 1));
+  ADD COLUMN is_enabled INTEGER NOT NULL DEFAULT 0 CHECK (is_enabled IN (0, 1));

@@ -9,6 +9,7 @@ function requestEvent(options: {
   role?: 'standard' | 'manager';
   query?: string;
   rows?: unknown[];
+  orgDomains?: string[];
 }) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   const db = {
@@ -22,6 +23,9 @@ function requestEvent(options: {
         },
         async all() {
           return { results: options.rows || [] };
+        },
+        async first() {
+          return options.orgDomains ? { value: JSON.stringify({ tenantId: '00000000-0000-0000-0000-000000000000', domains: options.orgDomains, refreshedAt: 1 }) } : null;
         },
       };
       return statement;
@@ -80,6 +84,12 @@ describe('manager mailbox assignee search', () => {
       displayName: 'Alex Example',
       mailboxAddress: 'alex@example.com',
     }]);
-    expect(captured.calls[0].values).toEqual(['example.com', '%alex%', '%alex%', 8]);
+    expect(captured.calls.at(-1)?.values).toEqual(['["example.com"]', '%alex%', '%alex%', 8]);
+  });
+
+  it('searches people on every organisation domain the sync discovered', async () => {
+    const captured = requestEvent({ role: 'manager', query: 'alex', orgDomains: ['example.org'] });
+    expect((await GET(captured.event as never)).status).toBe(200);
+    expect(captured.calls.at(-1)?.values).toEqual(['["example.com","example.org"]', '%alex%', '%alex%', 8]);
   });
 });

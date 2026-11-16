@@ -4,8 +4,11 @@ import type { Mailbox, MailboxAssignment, UserStatus } from '@cmail/shared/types
 import { audit, generateId } from '#lib/server/db.js';
 import {
   ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL,
+  assigneeDomainsParam,
   getEligibleMailboxAssignee,
 } from '#lib/server/mailbox-assignees.js';
+import { chooseOrgDomain, orgDomainsForDisplay } from '#lib/server/org-domains.js';
+import { orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
 import {
   boundedInteger,
   escapeLike,
@@ -75,6 +78,7 @@ export const load: PageServerLoad = async ({ platform, url }) => {
       total: 0,
       totalPages: 1,
       mailDomain: '',
+      mailDomains: [] as string[],
       typeFilter: '',
       statusFilter: '',
       summary: {
@@ -203,6 +207,7 @@ export const load: PageServerLoad = async ({ platform, url }) => {
     total,
     totalPages,
     mailDomain: normalizeDomain(env.MAIL_DOMAIN) || '',
+    mailDomains: (await orgDomainsForDisplay(env)).domains,
     summary: {
       total: Number(summaryRow?.total) || 0,
       shared: Number(summaryRow?.shared) || 0,
@@ -230,8 +235,14 @@ export const actions: Actions = {
     const permissions = typeof rawPermissions === 'string' && (MAILBOX_PERMISSIONS as readonly string[]).includes(rawPermissions)
       ? rawPermissions as MailboxAssignment['permissions']
       : null;
-    const mailDomain = normalizeDomain(env.MAIL_DOMAIN);
-    if (!mailDomain) {
+    let domains: OrgDomains;
+    try {
+      domains = await orgDomains(env, env.DB);
+    } catch (error) {
+      logAdminFailure('create', error);
+      return fail(503, { error: 'Mail domains are temporarily unavailable. Try again shortly.' });
+    }
+    if (!domains.primary) {
       return fail(503, { error: 'Set MAIL_DOMAIN before creating mailboxes' });
     }
     if (!rawAddress) return fail(400, { error: 'Enter a mailbox name or address' });
@@ -246,12 +257,17 @@ export const actions: Actions = {
       return fail(400, { error: 'Choose a permission level for the delegate' });
     }
 
+    // The domain is one of the organisation's own (docs/multi-domain.md):
+    // picked from the list, or the domain of a full address typed in.
     const fullAddress = normalizeEmail(rawAddress);
     const candidateLocalPart = fullAddress ? fullAddress.slice(0, fullAddress.lastIndexOf('@')) : rawAddress;
     const localPart = normalizeMailboxLocalPart(candidateLocalPart);
-    if (!localPart || (fullAddress && !isAddressAtDomain(fullAddress, mailDomain))) {
+    const mailDomain = chooseOrgDomain(fullAddress ? fullAddress.slice(fullAddress.lastIndexOf('@') + 1) : data.get('domain'), domains);
+    if (!localPart || !mailDomain || (fullAddress && !isAddressAtDomain(fullAddress, mailDomain))) {
       return fail(400, {
-        error: `Mailbox addresses must use @${mailDomain}; names may contain letters, numbers, dots, underscores, and hyphens`,
+        error: domains.domains.length > 1
+          ? `Mailbox addresses must use one of your organisation's domains (@${domains.domains.join(', @')}); names may contain letters, numbers, dots, underscores, and hyphens`
+          : `Mailbox addresses must use @${domains.primary}; names may contain letters, numbers, dots, underscores, and hyphens`,
       });
     }
     const address = `${localPart}@${mailDomain}`;
@@ -260,7 +276,7 @@ export const actions: Actions = {
       env.DB.prepare('SELECT id FROM mailboxes WHERE lower(address) = ?')
         .bind(address).first<{ id: string }>(),
       delegateUserId
-        ? getEligibleMailboxAssignee(env.DB, mailDomain, delegateUserId)
+        ? getEligibleMailboxAssignee(env.DB, domains.domains, delegateUserId)
         : Promise.resolve(null),
     ]);
     if (existing) return fail(409, { error: 'That mailbox address is already in use' });
@@ -274,7 +290,7 @@ export const actions: Actions = {
             `INSERT INTO mailboxes (id, address, display_name, type, status, created_at)
              SELECT ?, ?, ?, 'shared', 'active', datetime('now')
              WHERE ${ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL}`,
-          ).bind(mailboxId, address, displayName, mailDomain, delegate.userId)
+          ).bind(mailboxId, address, displayName, assigneeDomainsParam(domains.domains), delegate.userId)
           : env.DB.prepare(
             `INSERT INTO mailboxes (id, address, display_name, type, status, created_at)
              VALUES (?, ?, ?, 'shared', 'active', datetime('now'))`,
@@ -287,7 +303,7 @@ export const actions: Actions = {
                (user_id, mailbox_id, permissions, assigned_at, assigned_by)
              SELECT ?, ?, ?, datetime('now'), ?
              WHERE ${ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL}`,
-          ).bind(delegate.userId, mailboxId, permissions, locals.user!.id, mailDomain, delegate.userId),
+          ).bind(delegate.userId, mailboxId, permissions, locals.user!.id, assigneeDomainsParam(domains.domains), delegate.userId),
         );
       }
       const results = await env.DB.batch(statements);
@@ -337,11 +353,19 @@ export const actions: Actions = {
     if (!mailboxAddress || !userId || !permissions) {
       return fail(400, { error: 'Choose an active or pending account with an active personal mailbox and a valid access level' });
     }
+    let domains: OrgDomains;
+    try {
+      domains = await orgDomains(env, env.DB);
+    } catch (error) {
+      logAdminFailure('assign', error);
+      return fail(503, { error: 'Mail domains are temporarily unavailable. Try again shortly.' });
+    }
+    const domainsParam = assigneeDomainsParam(domains.domains) || '[]';
 
     const [mailbox, user, existingAssignment] = await Promise.all([
       env.DB.prepare('SELECT id, type FROM mailboxes WHERE lower(address) = ?')
         .bind(mailboxAddress).first<Pick<Mailbox, 'id' | 'type'>>(),
-      getEligibleMailboxAssignee(env.DB, normalizeDomain(env.MAIL_DOMAIN) || '__invalid__', userId),
+      getEligibleMailboxAssignee(env.DB, domains.domains, userId),
       env.DB.prepare(
         `SELECT ma.permissions, ma.assigned_by
          FROM mailbox_assignments ma
@@ -380,7 +404,7 @@ export const actions: Actions = {
         permissions,
         locals.user!.id,
         mailbox.id,
-        normalizeDomain(env.MAIL_DOMAIN) || '__invalid__',
+        domainsParam,
         user.userId,
       ).run();
       if (!result.meta.changes) {

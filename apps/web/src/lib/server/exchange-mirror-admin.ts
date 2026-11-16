@@ -5,6 +5,7 @@
 // the counts the Worker writes.
 import {
   ALIAS_MAX_AGE_MS,
+  EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND,
   EXCHANGE_MIRROR_SETTING_ENABLED,
   M365_ALIAS_SYNC_SETTING_APPROVE_REMOVALS,
   M365_ALIAS_SYNC_SETTING_ENABLED,
@@ -27,6 +28,8 @@ export type ExchangeMirrorWorkerConfig =
 
 export interface ExchangeMirrorOverview {
   enabled: boolean;
+  /** "Send colleague mail through Exchange": the stored switch (it acts only while the mirror is on). */
+  colleagueSend: boolean;
   aliasEnabled: boolean;
   /** False until migration 0027 is applied. */
   installed: boolean;
@@ -87,8 +90,10 @@ export async function loadExchangeMirrorOverview(
   now = Date.now(),
 ): Promise<ExchangeMirrorOverview> {
   const db = env.DB;
-  const [enabled, aliasEnabled, config, sync] = await Promise.all([
+  const [enabled, colleagueSend, aliasEnabled, config, sync] = await Promise.all([
     loadExchangeMirrorSwitch(db).catch(() => false),
+    db.prepare('SELECT value FROM org_settings WHERE key = ?').bind(EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND)
+      .first<{ value: string }>().then((row) => row?.value === 'true', () => false),
     loadAliasSyncSwitch(db).catch(() => false),
     exchangeMirrorWorkerConfig(env.EMAIL_SERVICE),
     loadM365SyncSwitch(db).catch(() => ({ enabled: false, dryRun: true })),
@@ -112,6 +117,7 @@ export async function loadExchangeMirrorOverview(
   }
   return {
     enabled,
+    colleagueSend,
     aliasEnabled,
     installed,
     config,
@@ -125,9 +131,10 @@ export async function loadExchangeMirrorOverview(
   };
 }
 
-export type ExchangeMirrorAdminAction = 'enable' | 'disable' | 'alias_enable' | 'alias_disable' | 'alias_approve_removals';
+export type ExchangeMirrorAdminAction = 'enable' | 'disable' | 'alias_enable' | 'alias_disable' | 'alias_approve_removals'
+  | 'colleague_send_enable' | 'colleague_send_disable';
 
-const ACTIONS: ReadonlySet<string> = new Set(['enable', 'disable', 'alias_enable', 'alias_disable', 'alias_approve_removals']);
+const ACTIONS: ReadonlySet<string> = new Set(['enable', 'disable', 'alias_enable', 'alias_disable', 'alias_approve_removals', 'colleague_send_enable', 'colleague_send_disable']);
 
 export function parseExchangeMirrorAdminAction(value: unknown): ExchangeMirrorAdminAction | null {
   return typeof value === 'string' && ACTIONS.has(value) ? value as ExchangeMirrorAdminAction : null;
@@ -156,6 +163,17 @@ export async function applyExchangeMirrorAdminAction(
 ): Promise<ExchangeMirrorAdminResult> {
   const db = env.DB;
   const actor = { actor_id: manager.id, actor_role: 'manager' as const };
+  if (action === 'colleague_send_enable') {
+    if (!await loadExchangeMirrorSwitch(db)) return { ok: false, status: 409, error: 'Turn the Exchange mirror on first' };
+    await putSetting(db, EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND, true, manager.id);
+    await audit(db, { event_type: 'org.exchange_mirror_colleague_send_toggled', ...actor, detail: 'Send colleague mail through Exchange turned on' });
+    return { ok: true, message: 'Mail to colleagues on the mail domain now goes through Exchange, so it shows in Outlook; their cmail copy comes from the mirror.' };
+  }
+  if (action === 'colleague_send_disable') {
+    await putSetting(db, EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND, false, manager.id);
+    await audit(db, { event_type: 'org.exchange_mirror_colleague_send_toggled', ...actor, detail: 'Send colleague mail through Exchange turned off' });
+    return { ok: true, message: 'Mail to colleagues is delivered straight into their cmail mailbox again (Outlook does not see it).' };
+  }
   if (action === 'enable' || action === 'alias_enable') {
     const overview = await loadExchangeMirrorOverview(env);
     if (!overview.installed) return { ok: false, status: 409, error: 'Apply database migration 0027 first' };

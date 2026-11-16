@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadAliasSyncSwitch, loadExchangeMirrorSwitch } from '@cmail/shared/exchange-mirror';
+import { loadAliasSyncSwitch, loadColleagueSendViaExchange, loadExchangeMirrorSwitch } from '@cmail/shared/exchange-mirror';
 import { createTestDatabase } from './mcp/testing/harness';
 import {
   applyExchangeMirrorAdminAction,
@@ -61,6 +61,22 @@ describe('Exchange mirror admin', () => {
     const { env, d1 } = setup({ configured: false, problems: ['M365_JOURNAL_ADDRESS is not set on the email Worker'] });
     expect(await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'enable')).toMatchObject({ ok: false, status: 409 });
     expect(await loadExchangeMirrorSwitch(d1)).toBe(false);
+  });
+
+  it('"Send colleague mail through Exchange" is off by default, needs the mirror on, and is audited', async () => {
+    const { env, d1, audits } = setup();
+    expect(await loadColleagueSendViaExchange(d1)).toBe(false);
+    expect((await loadExchangeMirrorOverview(env, NOW)).colleagueSend).toBe(false);
+    expect(await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'colleague_send_enable')).toMatchObject({ ok: false, status: 409 });
+    await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'enable');
+    expect(await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'colleague_send_enable')).toMatchObject({ ok: true });
+    expect(await loadColleagueSendViaExchange(d1)).toBe(true);
+    expect((await loadExchangeMirrorOverview(env, NOW)).colleagueSend).toBe(true);
+    // The mirror off takes the switch out of effect without changing it.
+    await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'disable');
+    expect(await loadColleagueSendViaExchange(d1)).toBe(false);
+    expect(await applyExchangeMirrorAdminAction(env, { id: 'manager-1' }, 'colleague_send_disable')).toMatchObject({ ok: true });
+    expect(audits().filter((row) => row.event_type === 'org.exchange_mirror_colleague_send_toggled')).toHaveLength(2);
   });
 
   it('turns each switch on and off and audits it', async () => {

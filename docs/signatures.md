@@ -13,7 +13,7 @@ related: [manager-handbook.md]
 cmail can add two signatures to your outgoing mail:
 
 1. Your **personal signature**.
-2. An optional **organisation signature** — a company-wide footer or disclaimer that a Manager controls.
+2. An optional **organisation signature** — a company-wide footer or disclaimer that a Manager controls. It is **off by default** on new installs.
 
 If both are on, cmail puts your personal signature first, then the organisation signature. Both sit below your new text and above any quoted message history, in new messages, replies, and forwards. They also appear in the plain-text version of your message.
 
@@ -29,6 +29,7 @@ Clearing your signature removes only your personal layer — it does not turn of
 
 Go to **Management > Email signatures**.
 
+- A new install starts with a short confidentiality line saved as the organisation signature, but not applied to any mail. To use it, go to **Management > Email signatures**, edit the text if you like (it is a normal editable signature), and turn on **Append to outgoing mail**. The default reads: "This email and any attachments are confidential and intended only for the named recipient. If you have received it in error, please tell the sender and delete it." Instances set up before this change keep whatever organisation signature they already had.
 - Set the **organisation signature** for an approved footer, branding, contact details, or legal notice. Turn on **Append to outgoing mail** to use it. Turning it off keeps the saved text but stops adding it to mail.
 - Under **Personal signatures**, pick a person to edit and save their personal layer. Select **Lock personal signature** to lock in that exact version and take control of it — the person can no longer edit it. Clear the lock to hand control back.
 - Saving a personal signature replaces only that person's layer. It never touches the organisation signature.

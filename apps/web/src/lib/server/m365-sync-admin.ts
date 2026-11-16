@@ -15,6 +15,7 @@ import {
   type M365StatusView,
   type M365SyncSwitch,
 } from '@cmail/shared/m365-sync';
+import { emptyOrgDomainsCache, loadOrgDomainsCache, type OrgDomainsCache } from '@cmail/shared/org-domains';
 import { audit } from './db';
 
 export type M365ConfigStatus =
@@ -38,6 +39,8 @@ export interface M365SyncOverview {
    * a row (0 before migration 0026).
    */
   unreadableLinked: number;
+  /** The tenant's verified domains as the sync last read them (docs/multi-domain.md). */
+  orgDomains: OrgDomainsCache;
 }
 
 /** Count for the Admin alert; 0 when migration 0026 is not applied. */
@@ -89,9 +92,14 @@ export async function loadM365SyncOverview(env: { DB: D1Database; EMAIL_SERVICE?
       ).first<{ people: number | null; shared: number | null }>(),
     ]);
     const unreadableLinked = await unreadableLinkedCount(env.DB);
-    return { toggle, config, installed: true, status: m365StatusView(status), linkedPeople: counts?.people ?? 0, linkedShared: counts?.shared ?? 0, unreadableLinked };
+    // Shown only; a failed read must not make the sync look uninstalled.
+    const orgDomains = await loadOrgDomainsCache(env.DB).catch((caught: unknown) => {
+      console.error('Organisation domains could not be read for Admin', caught instanceof Error ? caught.name : 'UnknownError');
+      return emptyOrgDomainsCache();
+    });
+    return { toggle, config, installed: true, status: m365StatusView(status), linkedPeople: counts?.people ?? 0, linkedShared: counts?.shared ?? 0, unreadableLinked, orgDomains };
   } catch {
-    return { toggle, config, installed: false, status: null, linkedPeople: 0, linkedShared: 0, unreadableLinked: 0 };
+    return { toggle, config, installed: false, status: null, linkedPeople: 0, linkedShared: 0, unreadableLinked: 0, orgDomains: emptyOrgDomainsCache() };
   }
 }
 
