@@ -16,7 +16,7 @@ and *standby* are defined in the [Glossary](glossary.md).
 
 ## Start here
 
-- **Primary mail for a small organisation:** [Getting started](getting-started.md),
+- **Primary mail for your organisation:** [Getting started](getting-started.md),
   then [Deployment and verification](deployment.md).
 - **Standby for an organisation on Microsoft 365:** [Onboarding an
   organisation that uses Microsoft 365](onboarding-microsoft-365.md).

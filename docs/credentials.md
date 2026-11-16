@@ -38,7 +38,7 @@ saved in shell history.
 
 | You want | You need |
 |---|---|
-| Primary mail for a small organisation | A Wrangler login or [deploy token](#deploy-token-wrangler), a sign-in app (Google or Microsoft), `SESSION_SECRET`, `INBOUND_SENDER_HASH_KEY`, and the one-time bootstrap pair. Optional: the REST fallback and Unblock tokens, Postmark, Turnstile, VAPID. |
+| Primary mail for your organisation | A Wrangler login or [deploy token](#deploy-token-wrangler), a sign-in app (Google or Microsoft), `SESSION_SECRET`, `INBOUND_SENDER_HASH_KEY`, and the one-time bootstrap pair. Optional: the REST fallback and Unblock tokens, Postmark, Turnstile, VAPID. |
 | Microsoft 365 standby | All of the above with the Microsoft sign-in app, plus whichever standby features you turn on: the [sync app](#microsoft-365-sync-app), the [permission reader](#shared-mailbox-permission-reader), the [copy-back app](#copy-back-app), the [journal address](#exchange-journal-rule-no-app) and the [standby switch token](#standby-switch-token). |
 
 Every standby feature is off by default and has its own Admin switch. A

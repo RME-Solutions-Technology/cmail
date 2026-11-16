@@ -18,7 +18,7 @@ What a live report carries is in
 what is still unproven is in [What is not verified](#what-is-not-verified).
 The code paths are covered by tests (see [How to test](#how-to-test)).
 
-cmail's main use is primary email for a small organisation. This feature is
+cmail's main use is primary email for your organisation. This feature is
 for the other case: an organisation that stays on Exchange Online and wants
 cmail as a live copy ("warm standby") of every mailbox, so that if Exchange
 fails, people already have their recent mail in cmail. It needs **no setup
