@@ -1,3 +1,13 @@
+---
+title: "Reading mail safely"
+summary: "How cmail cleans HTML, blocks images and checks links when you read mail."
+applies_to: both
+audience: [user, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [receiving.md]
+---
+
 # Reading mail safely
 
 Email is untrusted input. This page explains how cmail shows a message without

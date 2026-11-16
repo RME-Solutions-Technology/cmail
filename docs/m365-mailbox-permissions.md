@@ -1,15 +1,42 @@
+---
+title: "Shared mailbox access from Exchange Online"
+summary: "How to copy Full Access and Send As on shared mailboxes from Exchange Online into cmail each day."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Shared mailbox access"
+last_reviewed: 2026-11-16
+related: [m365-sync.md, credentials.md, onboarding-microsoft-365.md]
+---
+
 # Shared mailbox access from Exchange Online
 
 Copies **Full Access** and **Send As** on Exchange Online shared mailboxes into
 cmail's shared mailbox assignments, automatically, once a day.
 
-**Status: built, off by default, not yet tested against a real tenant or a
-deployed Cloudflare Container.** Everything below that says "unverified" must
+**Status: built, off by default. On one live tenant the collector (in a
+deployed Cloudflare Container) and a dry run are verified; live mode has not
+yet run.** Everything below that says "unverified" must
 be checked in a test tenant (never a client's) before the first live use.
 
 It is an optional add-on to the [Microsoft 365 mailbox sync](m365-sync.md):
 that sync creates the cmail accounts and shared mailboxes; this feature then
 gives people access to those shared mailboxes the way Exchange does.
+
+**In this article**
+
+- [In short](#in-short)
+- [Why a container](#why-a-container)
+- [Architecture](#architecture)
+- [Mapping: Exchange to cmail](#mapping-exchange-to-cmail)
+- [Safety rules](#safety-rules)
+- [Troubleshoot shared mailbox access](#troubleshoot-shared-mailbox-access)
+- [Snapshot contract (version 1)](#snapshot-contract-version-1)
+- [Cost](#cost)
+- [How to set up shared mailbox access](#how-to-set-up-shared-mailbox-access)
+- [How to test](#how-to-test)
+- [How to turn it off and roll back](#how-to-turn-it-off-and-roll-back)
+- [Network egress](#network-egress)
+- [Not verified yet](#not-verified-yet)
 
 ## In short
 
@@ -202,7 +229,7 @@ count as not fully read (no removals there).
 MCP (AI app) mailbox access is checked against `mailbox_assignments` at call
 time, so a removed assignment takes effect on the next request.
 
-## Failure modes
+## Troubleshoot shared mailbox access
 
 | What happens | Behaviour | Admin shows |
 |---|---|---|
@@ -280,7 +307,7 @@ usage, about USD 1.20 a month extra. A tenant too large for one batch takes one 
 batch per 15-minute cron run until the pass is complete, each up to 13 minutes. Durable Object and D1 use is a handful of requests a day.
 Image storage in Cloudflare's registry was not found priced separately
 (unverified).
-## Setup
+## How to set up shared mailbox access
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#11-shared-mailbox-permissions-optional), step 11, with `scripts/onboarding/perms-setup.ps1` for steps 1 to 5 below.
 
@@ -496,7 +523,7 @@ report), read the report. When it matches Exchange **and step 4 was a go**,
   Admin > Mailboxes and check the sync leaves it alone; break the certificate
   and check nothing changes and the alert appears after 3 runs.
 
-## Rollback
+## How to turn it off and roll back
 
 - **Stop:** Admin > Shared mailbox access > Turn off. Nothing runs; every
   assignment stays.
@@ -526,6 +553,10 @@ through the module, holds no data beyond one snapshot, and the image carries
 no secret. Restricting egress to Microsoft hosts is a planned hardening step.
 
 ## Not verified yet
+
+Verified on one live tenant (November 2026): the container builds and
+starts, the collector signs in and reads Exchange Online, and a dry run
+completes. Live mode and the points below are still open for other tenants.
 
 - A real run against Exchange Online (cmdlet output formats, trustee formats,
   timings, throttling).

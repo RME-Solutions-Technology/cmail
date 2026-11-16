@@ -1,3 +1,13 @@
+---
+title: "Microsoft 365 welcome emails"
+summary: "How to email each person the sync creates with first sign-in steps."
+applies_to: standby
+audience: [manager, operator]
+switch: "Admin > Microsoft 365 sync > Welcome emails"
+last_reviewed: 2026-11-16
+related: [m365-sync.md, staff-sign-in.md]
+---
+
 # Microsoft 365 welcome emails
 
 **Status:** built, off by default, not yet tested against a real tenant,
@@ -19,6 +29,18 @@ one settings row and returns, and no mail is sent.
   `org_settings`.
 - Tests: `apps/email-worker/src/m365-welcome/welcome.sql.node.test.ts` and
   `apps/web/src/lib/server/m365-welcome-admin.test.ts`.
+
+**In this article**
+
+- [Who gets one](#who-gets-one)
+- [How they sign in (no link token)](#how-they-sign-in-no-link-token)
+- [Which address it is sent to](#which-address-it-is-sent-to)
+- [The switch (Admin > Microsoft 365 sync > Welcome emails)](#the-switch-admin--microsoft-365-sync--welcome-emails)
+- [Exactly once, retries and limits](#exactly-once-retries-and-limits)
+- [The email](#the-email)
+- [Configuration](#configuration)
+- [Runbook](#runbook)
+- [Limits](#limits)
 
 ## Who gets one
 

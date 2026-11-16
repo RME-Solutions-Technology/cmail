@@ -1,3 +1,13 @@
+---
+title: "Calendar"
+summary: "How to accept, decline, create and cancel meeting invitations in cmail."
+applies_to: both
+audience: [user]
+switch: none
+last_reviewed: 2026-11-16
+related: [user-guide.md]
+---
+
 # Calendar
 
 cmail can send and receive meeting invitations by email, using the same `.ics` calendar format most mail clients understand. There's no separate calendar to sign into — invitations arrive as mail, and responses go out the same way.

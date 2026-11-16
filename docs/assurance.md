@@ -1,8 +1,18 @@
+---
+title: "Security, privacy, and assurance"
+summary: "The responsibility boundary, control matrix, limitations and evidence checklist for security and privacy reviewers."
+applies_to: both
+audience: [reviewer, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [standards-alignment.md, privacy-and-data-handling.md, security-checklist.md]
+---
+
 # Security, privacy, and assurance
 
 - **Document status:** public project assurance guide
 - **Last reviewed:** 14 August 2026
-- **Applies to:** the latest supported revision of the pre-1.0 cmail project
+- **Applies to:** the latest supported revision of the cmail beta (0.9, before 1.0)
 - **Deployment owner:** the organisation operating each deployment
 
 This page gives managers, reviewers, and auditors a concise map of cmail's

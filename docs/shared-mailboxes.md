@@ -1,8 +1,27 @@
+---
+title: "Shared mailboxes"
+summary: "How to use a team address: delegation, Send as, Full access and shared folders."
+applies_to: both
+audience: [user, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [m365-mailbox-permissions.md, manager-handbook.md]
+---
+
 # Shared mailboxes
 
 A shared mailbox is a team or function address — such as `support@example.org` or `accounts@example.org` — that several people can access without sharing a password. A Manager grants access to named accounts, and each person signs in with their own Google or Microsoft identity.
 
 These terms — shared mailbox, Send as, Full access, Mail trace — describe cmail's own permission model. cmail is not Microsoft Exchange, is not affiliated with Microsoft, and does not match it feature-for-feature.
+
+**In this article**
+
+- [Permission bundles](#permission-bundles)
+- [Shared state](#shared-state)
+- [From identity and replies](#from-identity-and-replies)
+- [Manager setup flow](#manager-setup-flow)
+- [Disable, re-enable, and offboard](#disable-re-enable-and-offboard)
+- [What this does not cover](#what-this-does-not-cover)
 
 ## Permission bundles
 

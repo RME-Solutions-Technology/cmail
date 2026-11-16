@@ -1,11 +1,36 @@
+---
+title: "Switch mail to the cmail standby, and back"
+summary: "How to move a domain's incoming mail to cmail and back, one DNS change each, with scripts."
+applies_to: standby
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [standby-probe.md, copy-back.md, credentials.md]
+---
+
 # Switch mail to the cmail standby, and back
+
+**In this article**
+
+- [At 3am: state now, do this next](#at-3am-state-now-do-this-next)
+- [Proven and not proven](#proven-and-not-proven)
+- [How it works](#how-it-works)
+- [First-time setup and drill](#first-time-setup-and-drill)
+- [Pre-flight checklist (before every switch)](#pre-flight-checklist-before-every-switch)
+- [How to switch over](#how-to-switch-over)
+- [How to verify mail is arriving](#how-to-verify-mail-is-arriving)
+- [How to switch back](#how-to-switch-back)
+- [What it cannot do](#what-it-cannot-do)
+- [Troubleshoot: when a script refuses](#troubleshoot-when-a-script-refuses)
+- [Code and tests](#code-and-tests)
+- [Sources](#sources)
 
 ## At 3am: state now, do this next
 
 | You see | Mail goes to | Do this next |
 |---|---|---|
-| `dig +short MX <domain> @1.1.1.1` lists the old provider (for example `*.mail.protection.outlook.com`) | The old provider | Provider down? [Pre-flight](#pre-flight-checklist-before-every-switch), then [Switch](#switch). Not down? Nothing. |
-| It lists `*.mx.cloudflare.net` | cmail | Provider back? [Switch back](#switch-back) with the **apply** snapshot. Not back? Watch [Verify](#verify-mail-is-arriving). |
+| `dig +short MX <domain> @1.1.1.1` lists the old provider (for example `*.mail.protection.outlook.com`) | The old provider | Provider down? [Pre-flight](#pre-flight-checklist-before-every-switch), then [How to switch over](#how-to-switch-over). Not down? Nothing. |
+| It lists `*.mx.cloudflare.net` | cmail | Provider back? [How to switch back](#how-to-switch-back) with the **apply** snapshot. Not back? Watch [Verify](#how-to-verify-mail-is-arriving). |
 | A mix of both | Either, unpredictably | Run the switch-back **dry run** with the apply snapshot and follow what it says; it never changes anything without `--apply`. |
 | A script ended with exit code 2, 3 or 4 | Unknown until checked | Read its last lines: they print the snapshot path and the exact command. See [Exit codes](#exit-codes). |
 
@@ -211,8 +236,12 @@ scoped to the one zone (and the one account for D1):
 | Zone > Zone Settings > Read | Email Routing settings and its DNS list |
 | Zone > Email Routing Rules > Read | catch-all and rules |
 | Account > D1 > Read | the probe (only with `--probe-d1`; also set `CLOUDFLARE_ACCOUNT_ID`) |
-| Zone > DNS > Write | `--apply` (the batch) |
-| Zone > Zone Settings > Write | switch-back `--apply` when records must be unlocked |
+| Zone > DNS > Edit | `--apply` (the batch) |
+| Zone > Zone Settings > Edit | switch-back `--apply` when records must be unlocked |
+
+The dashboard calls the write level **Edit**; the API reference calls it
+Write. All of cmail's credentials are listed in
+[Credentials and permissions](credentials.md).
 
 A read-only token is enough for every dry run. Give the write permissions
 only to the people who may change DNS, and set the token for the session only:
@@ -308,12 +337,12 @@ Following Cloudflare's
    leave mail on the old provider, and rethink before relying on the standby.
 10. Switch dry run: every check must pass (Email Routing status, catch-all,
     TTL, probe GREEN). Note the Email Routing status it shows.
-11. **Switch for real**, exactly as in an outage ([Switch](#switch), steps 2
-    and 4), then [Verify mail is arriving](#verify-mail-is-arriving): an
+11. **Switch for real**, exactly as in an outage ([How to switch over](#how-to-switch-over), steps 2
+    and 4), then [How to verify mail is arriving](#how-to-verify-mail-is-arriving): an
     outside test message must appear in cmail and in Email Routing >
     Activity as delivered to the Worker. This proves the apply path.
 12. **Switch back for real** with the apply snapshot from step 11
-    ([Switch back](#switch-back)), and verify an outside test reaches
+    ([How to switch back](#how-to-switch-back)), and verify an outside test reaches
     Exchange.
 13. Copy back any real mail that arrived in cmail during the window
     ([copy-back](copy-back.md)).
@@ -349,7 +378,7 @@ DNS, and at least twice a year.
 - [ ] People know to read mail in cmail for now (a message from a channel
       that does not depend on the failed mail system).
 
-## Switch
+## How to switch over
 
 1. Set the token for this session (see [Token permissions](#token-permissions)).
 2. Dry run, and read all of it:
@@ -365,7 +394,7 @@ DNS, and at least twice a year.
    checked". You need both to switch back and to copy mail back. Check the
    exit code against [Exit codes](#exit-codes).
 
-## Verify mail is arriving
+## How to verify mail is arriving
 
 1. `dig +short MX example.com @1.1.1.1` and `@8.8.8.8` list the Cloudflare
    hosts. Other resolvers may give the old answer until the old TTL passes.
@@ -381,7 +410,7 @@ If mail is rejected or not arriving: check the catch-all in the dashboard,
 then Activity for the reason, then [receiving](receiving.md). If in doubt,
 switch back.
 
-## Switch back
+## How to switch back
 
 1. When the provider receives again (check its service health), dry run with
    the **apply** snapshot:
@@ -440,7 +469,7 @@ switch back.
 - **It does not check sign-in, sending, or the mail itself**; the checklist
   and the verify steps do.
 
-## When it refuses
+## Troubleshoot: when a script refuses
 
 | It says | Do |
 |---|---|

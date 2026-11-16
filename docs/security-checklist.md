@@ -1,6 +1,29 @@
+---
+title: "Security checklist"
+summary: "The security checklist to complete for every environment."
+applies_to: both
+audience: [operator, reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, operations-checklist.md]
+---
+
 # Security checklist
 
 This checklist replaces deployment-specific audit notes. It's a starting point, not a certification and not a substitute for independent review.
+
+**In this article**
+
+- [Source and supply chain](#source-and-supply-chain)
+- [Authentication and sessions](#authentication-and-sessions)
+- [Authorization](#authorization)
+- [Message and attachment handling](#message-and-attachment-handling)
+- [Data protection](#data-protection)
+- [Mail and DNS](#mail-and-dns)
+- [Cloudflare and provider controls](#cloudflare-and-provider-controls)
+- [Browser notifications, when enabled](#browser-notifications-when-enabled)
+- [AI agent (MCP) connections, when enabled](#ai-agent-mcp-connections-when-enabled)
+- [Release decision](#release-decision)
 
 ## Source and supply chain
 

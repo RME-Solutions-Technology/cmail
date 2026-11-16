@@ -1,3 +1,13 @@
+---
+title: "AI agents and MCP"
+summary: "How to connect Claude or another AI app to cmail over MCP, and how Managers control it."
+applies_to: both
+audience: [user, manager]
+switch: "Management > Settings > AI agent (MCP) connections"
+last_reviewed: 2026-11-16
+related: [manager-handbook.md]
+---
+
 # AI agents and MCP
 
 cmail includes a remote [Model Context Protocol](https://modelcontextprotocol.io/)
@@ -19,6 +29,17 @@ The feature is **off by default** on every deployment. A Manager turns it on.
 - [Security model and threat model](#security-model)
 - [Limits](#limits)
 - [Protocol and endpoint reference](#protocol-reference)
+- [Troubleshooting](#troubleshooting)
+
+**In this article**
+
+- [Connect an AI app](#connect-an-ai-app)
+- [Manager setup](#manager-setup)
+- [Scopes](#scopes)
+- [How the sign-in works](#how-the-sign-in-works)
+- [Security model](#security-model)
+- [Limits](#limits)
+- [Protocol reference](#protocol-reference)
 - [Troubleshooting](#troubleshooting)
 
 ## Connect an AI app

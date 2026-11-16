@@ -1,3 +1,13 @@
+---
+title: "Email signatures"
+summary: "How to set a personal signature, and how Managers add and lock an organisation signature."
+applies_to: both
+audience: [user, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [manager-handbook.md]
+---
+
 # Email signatures
 
 cmail can add two signatures to your outgoing mail:

@@ -1,3 +1,13 @@
+---
+title: "Dependency upgrade review — 22 September 2026"
+summary: "Dependency upgrade review of 22 September 2026: toolchain, major-version migrations and compatibility."
+applies_to: both
+audience: [developer, reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [development.md]
+---
+
 # Dependency upgrade review — 22 September 2026
 
 This release updates direct dependencies to the latest stable versions found

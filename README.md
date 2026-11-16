@@ -17,6 +17,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/README.md">Documentation</a> ·
+  <a href="docs/credentials.md">Credentials</a> ·
   <a href="docs/assurance.md">Security &amp; assurance</a> ·
   <a href="ROADMAP.md">Roadmap</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
@@ -45,7 +46,7 @@ R2 (Cloudflare's object storage). Outbound mail uses Cloudflare Email Service
 by default, with Postmark as an alternative.
 
 > [!IMPORTANT]
-> cmail is pre-1.0 software. Review the code and threat model for your environment, test recovery procedures, and complete the [security checklist](docs/security-checklist.md) before handling sensitive or production mail.
+> cmail is beta software (0.9, before 1.0). Review the code and threat model for your environment, test recovery procedures, and complete the [security checklist](docs/security-checklist.md) before handling sensitive or production mail.
 
 ## Key features
 
@@ -89,6 +90,16 @@ by default, with Postmark as an alternative.
   the scopes and mailboxes an AI app may use; sending is a separate opt-in;
   every call is re-authorised and audited; Managers have an off-switch. See
   [AI agents and MCP](docs/mcp.md).
+- **Microsoft 365 standby, off by default** — for an organisation that stays
+  on Exchange Online: directory sync with shared mailbox detection, welcome
+  emails, Microsoft sign-in for synced staff, shared mailbox permissions from
+  Exchange, a live Exchange mirror from one journal rule, a daily standby
+  probe, one-step switch and switch-back scripts, and copy-back into Exchange
+  after an outage. Each has its own Admin switch and dry run. See
+  [Onboarding an organisation that uses Microsoft 365](docs/onboarding-microsoft-365.md).
+- **Break-glass sign-in** — passkeys that work when Microsoft or Cloudflare
+  Access is down, and an optional Cloudflare Access bridge. See
+  [Passkeys](docs/passkeys.md) and [Staff sign-in](docs/staff-sign-in.md).
 - **Optional browser notifications** — user-enabled, with privacy-minimised
   new-mail copy only.
 - **Responsive, installable PWA** — works on desktop and mobile browsers.
@@ -107,11 +118,13 @@ before enabling external mail flow.
 
 ```text
 apps/web/                    SvelteKit web application
-apps/email-worker/           Cloudflare Email Routing and private native-outbound Worker
+apps/email-worker/           Email Routing, sending and scheduled jobs (incl. Microsoft 365)
+apps/backup-worker/          Optional scheduled backup Worker
 packages/shared/             Shared types, push utilities, and D1 migrations
 scripts/setup.mjs            Creates local Wrangler files from templates
 scripts/verify-migrations.mjs  Verifies the schema in a fresh temporary D1
 scripts/onboarding/          Microsoft 365 onboarding scripts (PowerShell 7)
+scripts/standby/             Standby switch and switch-back scripts (Node)
 docs/                        Setup, deployment, security, and policy guidance
 landing/                     Optional static project landing page
 ```
@@ -122,7 +135,8 @@ Prerequisites:
 
 - Node.js 24 LTS recommended (minimum 22.17), and the pinned pnpm 12.15.0
 - A Cloudflare account with a domain on Cloudflare DNS
-- A Google OAuth client, a Microsoft Entra application, or both
+- A Google OAuth client, a Microsoft Entra application, or both (see
+  [Credentials and permissions](docs/credentials.md))
 - Cloudflare Email Service (recommended) or Postmark, if you need external
   outbound mail
 
@@ -170,6 +184,9 @@ opinion — your organisation still owns compliance for its own deployment.
 ## Documentation and contributing
 
 - Full documentation index: [docs/README.md](docs/README.md)
+- Every token, app and secret, with exact permissions:
+  [Credentials and permissions](docs/credentials.md)
+- Terms used in the docs: [Glossary](docs/glossary.md)
 - To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a
   change
 - Report vulnerabilities through the private process in

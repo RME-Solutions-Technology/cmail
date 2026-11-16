@@ -1,3 +1,13 @@
+---
+title: "Focused Inbox"
+summary: "How the optional Focused and Other tabs sort Inbox mail, how to turn them on and off, and what they cost."
+applies_to: both
+audience: [user, manager, developer]
+switch: "Admin > Settings > Focused Inbox"
+last_reviewed: 2026-11-16
+related: [user-guide.md, inbox-rules.md, spam-and-quarantine.md, exchange-mirror.md]
+---
+
 # Focused Inbox
 
 Focused and Other tabs above the Inbox, like Outlook's

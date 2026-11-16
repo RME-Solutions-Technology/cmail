@@ -1,3 +1,13 @@
+---
+title: "Delivery status and bounces"
+summary: "Delivery status on Sent mail, Undeliverable notices, and how to send again or unblock a blocked recipient."
+applies_to: both
+audience: [user, manager, operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [sending.md, credentials.md]
+---
+
 # Delivery status and bounces
 
 After a message leaves cmail, Cloudflare reports what happened to it:
@@ -7,6 +17,16 @@ How the message got to Cloudflare is covered in [How sending works](sending.md).
 
 Delivery status needs native Cloudflare Email Sending. Postmark sends get no
 delivery events and no blocked-address checks.
+
+**In this article**
+
+- [Where delivery events come from](#where-delivery-events-come-from)
+- [What users see](#what-users-see)
+- [The Undeliverable notice](#the-undeliverable-notice)
+- [Blocked addresses](#blocked-addresses)
+- [Data](#data)
+- [Settings](#settings)
+- [Tests](#tests)
 
 ## Where delivery events come from
 

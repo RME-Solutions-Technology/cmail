@@ -1,3 +1,13 @@
+---
+title: "Template security review — 13 September 2026"
+summary: "Template security review of 13 September 2026. Historical record."
+applies_to: both
+audience: [reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [assurance.md]
+---
+
 # Template security review — 13 September 2026
 
 Scope: authentication and sessions; manager authorization and auditing; mailbox and draft isolation; attachment access and HTML rendering; inbound/outbound email and calendar processing; quotas; dependencies, secrets handling and CI. This is a source review with regression testing, not an independent penetration-test certification or proof that no vulnerabilities remain.

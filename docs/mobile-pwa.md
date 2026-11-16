@@ -1,8 +1,28 @@
+---
+title: "Mobile app and notifications"
+summary: "How to install cmail on a phone and turn on new-mail alerts, with troubleshooting."
+applies_to: both
+audience: [user]
+switch: none
+last_reviewed: 2026-11-16
+related: [push-notification-reliability.md]
+---
+
 # Mobile app and notifications
 
 cmail is an installable Progressive Web App (PWA) — a website that behaves like an app once installed, with its own icon and window. A Home Screen shortcut can open in the browser instead; both give you quick access. cmail does not download or store mail for offline use — reading, searching, composing, and sending all need a network connection.
 
 New-mail alerts are optional. They only work when your operator has turned on Web Push, your browser and device support it, and you allow notifications for that browser or app. You need to set this up separately on every device. Alerts cover your active personal and shared mailboxes. Tapping an alert opens the message, and your access is checked again at that point.
+
+**In this article**
+
+- [iPhone and iPad](#iphone-and-ipad)
+- [Android](#android)
+- [Turn alerts off](#turn-alerts-off)
+- [Updates and recovery](#updates-and-recovery)
+- [Stay signed in](#stay-signed-in)
+- [Troubleshooting](#troubleshooting)
+- [Privacy on mobile devices](#privacy-on-mobile-devices)
 
 ## iPhone and iPad
 

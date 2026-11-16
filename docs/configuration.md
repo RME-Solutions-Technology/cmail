@@ -1,6 +1,36 @@
+---
+title: "Configuration reference"
+summary: "Every cmail setting: origin, mail domain, sign-in providers, outbound mail, limits and organisation defaults."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, deployment.md]
+---
+
 # Configuration reference
 
 cmail is configured through Cloudflare bindings for storage, plain environment variables for non-secret settings, provider secret stores for credentials, and optional organisation settings stored in D1 (Cloudflare's hosted database).
+
+**In this article**
+
+- [Storage bindings](#storage-bindings)
+- [Core web settings](#core-web-settings)
+- [OAuth](#oauth)
+- [Email one-time-code sign-in](#email-one-time-code-sign-in)
+- [Cloudflare Access bridge (optional)](#cloudflare-access-bridge-optional)
+- [Optional Web Push](#optional-web-push)
+- [Inbound calendar updates](#inbound-calendar-updates)
+- [Outbound delivery](#outbound-delivery)
+- [Bootstrap](#bootstrap)
+- [Organisation defaults](#organisation-defaults)
+- [Organisation directory and public endpoint](#organisation-directory-and-public-endpoint)
+- [Brand and regional defaults](#brand-and-regional-defaults)
+- [Web guardrails](#web-guardrails)
+- [AI agent (MCP) connections](#ai-agent-mcp-connections)
+- [Inbound Worker limits](#inbound-worker-limits)
+- [Where values belong](#where-values-belong)
+- [Secret handling](#secret-handling)
 
 ## Storage bindings
 
@@ -346,6 +376,9 @@ Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `
 | `STANDBY_SUBDOMAIN_LABEL` | `standby` | — | Optional [standby address](standby-probe.md): the subdomain label, so `name@standby.<MAIL_DOMAIN>` |
 | `STANDBY_PROBE_LOCAL_PART` | `cmail-standby-probe` | — | Local part of the standby probe's dedicated system mailbox |
 | `STANDBY_PROBE_TIMEOUT_MINUTES` | 10 | 60 | Minutes a standby test may take before it fails; values under 2 become 2 |
+| `M365_WELCOME_MAX_PER_HOUR` | 50 | 500 | Optional [welcome emails](m365-welcome-emails.md#configuration): most sends per rolling hour |
+| `M365_EXO_APP_ID`, `M365_EXO_ORGANIZATION`, `M365_PERMS_*` | unset | — | Optional [shared mailbox access](m365-mailbox-permissions.md#5-worker-settings-and-secrets); the certificate is two Worker secrets, `M365_EXO_CERT_PFX_B64` and `M365_EXO_CERT_PASSWORD` |
+| `M365_JOURNAL_ADDRESS`, `M365_JOURNAL_*` | unset | — | Optional [Exchange mirror](exchange-mirror.md#1-cmail); the journal address is a Worker secret |
 
 The three inbound hourly limits and the shared storage quota accept an exact numeric `0` to disable that one control. Invalid, negative, non-finite, or sub-one positive values don't disable protection — they fall back to the default. Positive decimals are floored, and values above the hard maximum are clamped. Keep at least one mailbox-wide control enabled in production.
 
@@ -383,11 +416,15 @@ The Worker template schedules a daily retention pass that does nothing while `RE
 | Outbound provider selection and optional REST-fallback account ID | `apps/web/.dev.vars` or local `wrangler.toml` | Cloudflare Pages variables |
 | Native Cloudflare outbound bindings | Local Wrangler configuration | Email Worker `EMAIL` send binding plus Pages `EMAIL_SERVICE` service binding |
 | Inbound sender-HMAC key | `apps/email-worker/.dev.vars` | Email Worker secret `INBOUND_SENDER_HASH_KEY` |
+| Microsoft 365 app secrets, certificate and journal address | `apps/email-worker/.dev.vars` | Email Worker secrets (see [Credentials](credentials.md#worker-and-pages-secrets)) |
 | Organisation settings | Environment defaults or Admin UI | Environment defaults or Admin UI |
 
 The email Worker always needs the shared D1 and R2 bindings, and owns the native Cloudflare outbound `EMAIL` binding. When Web Push is enabled, it also needs the same public VAPID configuration and its own stored copy of `VAPID_PRIVATE_KEY`. Never copy OAuth, session, or outbound-provider API credentials into the Worker.
 
 ## Secret handling
+
+Every credential, with its exact permissions and where it is stored, is in
+[Credentials and permissions](credentials.md).
 
 - Use different secrets for development, staging, and production.
 - Never place secrets in `.env.example`, Wrangler templates, screenshots, issues, or support logs.
