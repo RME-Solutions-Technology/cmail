@@ -10,6 +10,8 @@
 //   marker, level and no assigned_by) are ever raised, lowered or removed.
 //   Every other row is a manager's and is left as it is.
 // - Removals and downgrades only for mailboxes the snapshot fully covered.
+// - A manager account matched by address (switch on, managers.ts) is only
+//   ever given or raised access, never lowered or removed.
 import {
   M365_PERMS_BRAKE_MIN,
   M365_PERMS_REPORT_LIMIT,
@@ -33,6 +35,8 @@ export interface PersonLink {
   email: string;
   /** Linked, in scope and active or pending: may receive new access. */
   eligible: boolean;
+  /** An unlinked manager account matched by address: additions and raises only. */
+  manager?: boolean;
 }
 export interface LiveAssignment { permissions: CmailLevel; assignedAt: string; assignedBy: string | null }
 export interface LedgerRow { level: CmailLevel; assignedAt: string }
@@ -41,7 +45,7 @@ export interface DiffInput {
   snapshot: PermissionSnapshot;
   /** Entra object id -> linked cmail shared mailbox. */
   sharedLinks: Map<string, SharedLink>;
-  /** Entra object id -> linked cmail person. */
+  /** Entra object id -> linked cmail person (and, switch on, matched manager accounts). */
   personLinks: Map<string, PersonLink>;
   /** Expanded group members (user object ids) by group object id. */
   groupMembers: Map<string, Set<string>>;
@@ -134,6 +138,7 @@ export function computeDiff(input: DiffInput): DiffResult {
           continue;
         }
         const k = key(link.mailboxId, person.userId);
+        if (person.manager && !wanted.has(k)) note('managerMatched');
         const entry = wanted.get(k) ?? { mailboxId: link.mailboxId, userId: person.userId, rights: 0, mailbox: link.address, user: person.email };
         entry.rights |= rights;
         wanted.set(k, entry);
@@ -187,7 +192,10 @@ export function computeDiff(input: DiffInput): DiffResult {
       continue;
     }
     const raise = LEVEL_RANK[level] > LEVEL_RANK[live.permissions];
-    if (raise && !persons.get(entry.userId)?.eligible) {
+    if (!raise && persons.get(entry.userId)?.manager) {
+      // A manager account's access is never lowered by the sync.
+      note('managerKept', { action: 'manager_kept', mailbox: entry.mailbox, user: entry.user, reason: 'manager_account_not_lowered' });
+    } else if (raise && !persons.get(entry.userId)?.eligible) {
       note('trusteeNotLinked', { action: 'skipped', mailbox: entry.mailbox, user: entry.user, reason: 'account_not_active' });
     } else if (raise) {
       adds.push({ type: 'upgrade', mailboxId: entry.mailboxId, userId: entry.userId, from: live.permissions, level, marker: live.assignedAt, rights: entry.rights, mailbox: entry.mailbox, user: entry.user });
@@ -215,6 +223,11 @@ export function computeDiff(input: DiffInput): DiffResult {
     // the snapshot fully covered this mailbox, and only for a person still
     // linked (a lost link is not Exchange taking access away); otherwise kept.
     if (!mailbox?.covered || !persons.has(userId)) continue;
+    // A manager account's access is never removed by the sync.
+    if (persons.get(userId)?.manager) {
+      note('managerKept', { action: 'manager_kept', mailbox: mailbox.address, user, reason: 'manager_account_not_removed' });
+      continue;
+    }
     lowers.push({ type: 'remove', mailboxId, userId, from: live!.permissions, marker: live!.assignedAt, mailbox: mailbox.address, user });
   }
 

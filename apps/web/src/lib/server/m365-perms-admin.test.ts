@@ -18,7 +18,7 @@ const manager = { id: 'manager-1' };
 describe('Shared mailbox access admin', () => {
   it('is off with dry run on by default', async () => {
     const { d1 } = setup();
-    expect(await loadM365PermsSwitch(d1)).toEqual({ enabled: false, dryRun: true, requestedAt: '', approvedRound: '' });
+    expect(await loadM365PermsSwitch(d1)).toEqual({ enabled: false, dryRun: true, requestedAt: '', approvedRound: '', includeManagers: false });
   });
 
   it('asks the Worker for its configuration over the private binding', async () => {
@@ -44,6 +44,18 @@ describe('Shared mailbox access admin', () => {
     expect(ready.setting('m365_perms_enabled')).toBe('true');
     expect(await loadM365PermsSwitch(ready.d1)).toMatchObject({ enabled: true, dryRun: true });
     expect(ready.audits()).toEqual([{ event_type: 'org.m365_perms_toggled' }]);
+  });
+
+  it('turns manager matching on and off (off by default), audited, without touching the main switch', async () => {
+    const t = setup();
+    expect((await loadM365PermsSwitch(t.d1)).includeManagers).toBe(false);
+    expect(parseM365PermsAdminAction('managers_on')).toBe('managers_on');
+    expect(await applyM365PermsAdminAction(t.env, manager, 'managers_on')).toMatchObject({ ok: true });
+    expect(t.setting('m365_perms_include_managers')).toBe('true');
+    expect(await loadM365PermsSwitch(t.d1)).toMatchObject({ enabled: false, includeManagers: true });
+    expect(await applyM365PermsAdminAction(t.env, manager, 'managers_off')).toMatchObject({ ok: true });
+    expect((await loadM365PermsSwitch(t.d1)).includeManagers).toBe(false);
+    expect(t.audits()).toEqual([{ event_type: 'org.m365_perms_include_managers' }, { event_type: 'org.m365_perms_include_managers' }]);
   });
 
   it('only accepts known actions and asks for a collection only while on', async () => {
