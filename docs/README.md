@@ -10,7 +10,7 @@ related: [credentials.md, glossary.md, getting-started.md, onboarding-microsoft-
 
 # cmail documentation
 
-cmail is pre-1.0 software. Operators should read the deployment and security
+cmail is beta software (0.9, before 1.0). Operators should read the deployment and security
 guides before sending real mail through it. Words like *switch*, *dry run*
 and *standby* are defined in the [Glossary](glossary.md).
 

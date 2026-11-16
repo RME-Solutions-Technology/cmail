@@ -46,7 +46,7 @@ R2 (Cloudflare's object storage). Outbound mail uses Cloudflare Email Service
 by default, with Postmark as an alternative.
 
 > [!IMPORTANT]
-> cmail is pre-1.0 software. Review the code and threat model for your environment, test recovery procedures, and complete the [security checklist](docs/security-checklist.md) before handling sensitive or production mail.
+> cmail is beta software (0.9, before 1.0). Review the code and threat model for your environment, test recovery procedures, and complete the [security checklist](docs/security-checklist.md) before handling sensitive or production mail.
 
 ## Key features
 

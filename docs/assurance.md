@@ -12,7 +12,7 @@ related: [standards-alignment.md, privacy-and-data-handling.md, security-checkli
 
 - **Document status:** public project assurance guide
 - **Last reviewed:** 14 August 2026
-- **Applies to:** the latest supported revision of the pre-1.0 cmail project
+- **Applies to:** the latest supported revision of the cmail beta (0.9, before 1.0)
 - **Deployment owner:** the organisation operating each deployment
 
 This page gives managers, reviewers, and auditors a concise map of cmail's
