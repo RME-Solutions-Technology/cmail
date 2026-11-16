@@ -10,6 +10,7 @@ import {
   ruleNeedsHeaders,
   type InboxRuleOutcome,
 } from '@cmail/shared/inbox-rules';
+import { decideFocusAtDelivery, focusUpdateStatement, senderDomain } from '@cmail/shared/focused-inbox';
 import type { OutboundAttachment, OutboundEmail, OutboundResult } from './outbound';
 
 export type OutboundJournalState =
@@ -878,6 +879,18 @@ async function materializeTarget(
   const ruleOutcome = target.direction === 'internal' && target.folder === 'inbox'
     ? await internalRuleOutcome(db, storage, journal, target, attachments.length > 0)
     : null;
+  // Focused Inbox (docs/focused-inbox.md): mail from another mailbox of this
+  // organisation, still bound for the Inbox after inbox rules. The sender is
+  // a cmail mailbox, so its own domain is "internal". There are no headers on
+  // this path. null (switch off) stores nothing.
+  const focus = target.direction === 'internal' && (ruleOutcome?.folder ?? target.folder) === 'inbox'
+    ? await decideFocusAtDelivery(db, {
+      mailboxId: target.mailbox_id,
+      sender: journal.from_address,
+      mailDomain: senderDomain(journal.from_address),
+      headers: null,
+    })
+    : null;
   const providerIds = target.direction === 'outbound' ? journal.provider_message_ids : '[]';
   const failedRecipients = target.direction === 'outbound'
     ? await failedRecipientsWithDeliveryEvents(db, providerIds, journal.failed_recipients)
@@ -921,6 +934,7 @@ async function materializeTarget(
       journal.references_header,
       journal.thread_id || journal.message_id_header || journal.proposed_message_id_header,
     ),
+    ...(focus ? [focusUpdateStatement(db, target.message_id, focus)] : []),
     ...attachments.map((attachment, ordinal) => db.prepare(
       `INSERT INTO attachments
        (id, message_id, filename, content_type, size_bytes, r2_key, content_id, disposition)

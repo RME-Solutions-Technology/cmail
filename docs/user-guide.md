@@ -244,6 +244,27 @@ choose **Create rule**. Rules run in order on mail arriving in the Inbox, after
 your organisation's junk filtering. They never forward mail. See
 [Inbox rules](inbox-rules.md).
 
+## Focused and Other
+
+If your organisation has turned on Focused Inbox, your Inbox has two tabs.
+**Focused** holds mail from people; **Other** holds newsletters,
+notifications and other automated mail. Other is still your Inbox: nothing is
+hidden or deleted, and search always covers both tabs. Each tab shows its
+unread count.
+
+- Use the arrow keys to move between the tabs, and Enter to open one.
+- Opening a message shows which tab it is in and why.
+- To move a message, select it in the list and choose **Move to Other** or
+  **Move to Focused**, or open it and choose the same. **Always move
+  messages from this sender to …** also sends their future mail there, for
+  this mailbox only.
+- **Mail > Settings > Focused Inbox** turns the tabs off or on for each
+  mailbox you have full access to, and lists the senders and domains you
+  chose. You can add a sender (`news@example.org`) or a whole domain
+  (`example.org`) there too.
+
+How messages are sorted: [Focused Inbox](focused-inbox.md).
+
 ## New-mail alerts
 
 When your operator has set up Web Push and your browser supports it, the mail

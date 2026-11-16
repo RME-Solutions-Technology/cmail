@@ -15,6 +15,7 @@ This page is the map for all cmail documentation. cmail is pre-1.0 software: ope
 - [Manager handbook](manager-handbook.md) — for the Manager role. People, Mailboxes, Organisation, Usage policy, Mail trace, Audit log, Settings, and safe operating practice.
 - [Travel approvals](travel-approvals.md) — for Managers. Restricting sign-in to approved countries, the notification and approval flow, and the bootstrap exemption.
 - [Inbox rules](inbox-rules.md) — for anyone who wants mail filed automatically. Outlook-style rules per mailbox: conditions, exceptions, actions, ordering, and running a rule on mail that already arrived.
+- [Focused Inbox](focused-inbox.md) — for anyone with a busy Inbox, and for Managers. Outlook-style Focused and Other tabs: the switches (off by default), how each message is sorted and why, "always move" for a sender, and sorting mail that already arrived.
 - [Spam and quarantine](spam-and-quarantine.md) — for anyone whose mail lands in Spam, and for Managers. How scoring works, what quarantine means, releasing your own mail, and organisation-wide sender allow/block rules.
 - [Support process](support-process.md) — for Managers and internal support staff. L1 triage, safe evidence handling, and when to escalate to RME Solutions Technology.
 

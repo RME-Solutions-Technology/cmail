@@ -21,6 +21,7 @@ import {
   type ExchangeMirrorEnv,
 } from '@cmail/shared/exchange-mirror';
 import { decideInboundPlacement } from '@cmail/shared/inbound-risk';
+import { decideFocusAtDelivery, focusUpdateStatement, focusedInboxOrgEnabled } from '@cmail/shared/focused-inbox';
 import { parseMessageImportance } from '@cmail/shared/message-importance';
 import {
   normalizeParticipants,
@@ -425,6 +426,10 @@ async function processReport(
   const snippet = tools.extractInboundSnippet(inner.text, preparedBody.html);
   const hasAttachments = prepared.some((attachment) => attachment.disposition === 'attachment') ? 1 : 0;
   const placement = decideInboundPlacement({ spamScore: null, threshold: null, senderRule: await tools.lookupSenderRule(env.DB, headerFrom) });
+  // Focused Inbox (docs/focused-inbox.md): read the switch once per report;
+  // when it is on, each Inbox copy costs one more lookup (counted below).
+  const focusOn = placement.folder === 'inbox' && await focusedInboxOrgEnabled(env.DB);
+  const innerHeaders = inner.headers as Header[];
 
   // Ids and duplicates, then the subrequest budget.
   const ids = await Promise.all(targets.map((target) => target.role === 'inbound'
@@ -437,7 +442,7 @@ async function processReport(
     if (already.has(id)) counts.duplicates += 1;
     else pending.push({ target, id });
   });
-  const perCopy = 4 + prepared.length;
+  const perCopy = 4 + prepared.length + (focusOn ? 1 : 0);
   const allowed = Math.max(0, Math.floor((budget(env) - 20 - Math.ceil(lookups.length / IN_CHUNK) * 2 - Math.ceil(ids.length / IN_CHUNK)) / perCopy));
   let skipReason = '';
   if (pending.length > allowed) {
@@ -479,6 +484,11 @@ async function processReport(
     }
 
     const sent = target.role === 'sent';
+    // Only an Inbox copy is sorted; null stores nothing (switch off for the
+    // mailbox, or the lookup failed) and the copy is filed as before.
+    const focus = !sent && focusOn
+      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders })
+      : null;
     const to = toParticipants.length ? toParticipants : [{ address: target.address, name: '' }];
     const insert = env.DB.prepare(
       `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, from_name, to_addresses, cc_addresses, reply_to_addresses, bcc_addresses, to_participants, cc_participants, reply_to_participants, bcc_participants, subject, snippet, body_r2_key, has_attachments, size_bytes, folder, is_read, is_starred, importance, in_reply_to, references_header, thread_id, spam_score, sender_first_contact, quarantine_reason, received_at, created_at)
@@ -516,7 +526,7 @@ async function processReport(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(attachment.id, id, attachment.filename, attachment.contentType, attachment.size, attachment.key, attachment.contentId, attachment.disposition));
     try {
-      await env.DB.batch([insert, ...attachmentInserts]);
+      await env.DB.batch([insert, ...(focus ? [focusUpdateStatement(env.DB, id, focus)] : []), ...attachmentInserts]);
       return 'filed';
     } catch {
       // A concurrent delivery of the same message (another report, or the

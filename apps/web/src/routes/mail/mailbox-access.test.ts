@@ -15,7 +15,9 @@ function capturedDatabase(): CapturedDatabase {
   const queries: string[] = [];
   const db = {
     prepare(query: string) {
-      queries.push(query);
+      // The Focused Inbox switch read (off here: no row) is not an access
+      // query; leave it out so the indexes below stay the list's own queries.
+      if (query !== 'SELECT value FROM org_settings WHERE key = ?') queries.push(query);
       const statement = {
         bind() {
           return statement;
