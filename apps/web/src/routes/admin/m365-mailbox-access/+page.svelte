@@ -18,11 +18,13 @@
     conflict: ['Changed by someone else; left as is', 'Changed by someone else; left as is'],
     manager_matched: ['Manager account matched', 'Manager account would match'],
     manager_not_matched: ['Manager account not matched', 'Manager account not matched'],
+    manager_account_kept: ['Manager account; never lowered or removed', 'Manager account; would not lower or remove'],
+    unlinked_kept: ['No link or match; kept (remove in Mailboxes if unwanted)', 'No link or match; would keep'],
   };
   const COUNT_LABELS: Array<[string, string]> = [
     ['added', 'Added'], ['upgraded', 'Raised'], ['downgraded', 'Lowered'], ['removed', 'Removed'],
     ['managerKept', 'Kept (manager)'], ['notRepresentable', 'No cmail equivalent'], ['trusteeNotLinked', 'Person not in cmail'],
-    ['managerMatched', 'Matched to a manager'],
+    ['managerMatched', 'Matched to a manager'], ['managerAccountKept', 'Kept (manager account)'], ['unlinkedKept', 'Kept (no link or match)'],
     ['mailboxNotLinked', 'Mailbox not in cmail'], ['mailboxNotCovered', 'Mailbox not covered'], ['changedConcurrently', 'Changed meanwhile'], ['unchanged', 'Unchanged'],
   ];
   const BRAKE_TEXT: Record<string, string> = {
@@ -126,7 +128,7 @@
       <div class="switch-head">
         <div>
           <h2 id="managers-heading">Manager accounts</h2>
-          <p class="muted">The Microsoft 365 sync never links manager accounts, so Exchange access granted to a manager is normally skipped (Person not in cmail). Turn this on to also give a manager the shared mailbox access Exchange grants them, when their cmail address is exactly their Microsoft 365 primary email address on this mail domain, and exactly one Microsoft 365 member account and one active manager match. It only adds or raises a manager's access, never lowers or removes it; the manager account stays unlinked. Off by default; off changes nothing. Dry run shows what it would add.</p>
+          <p class="muted">The Microsoft 365 sync never links manager accounts, so Exchange access granted to a manager is normally skipped (Person not in cmail). Turn this on to also give a manager the shared mailbox access Exchange grants them, when their cmail address is exactly their Microsoft 365 primary email address on this mail domain, and exactly one Microsoft 365 member account and one active manager match. It only adds or raises a manager's access, never lowers or removes it; the manager account stays unlinked. If the match is later lost (switch off, address changed), that access is kept and listed as Kept (no link or match): remove it in Mailboxes if unwanted. Off by default; off looks nobody up. Dry run shows what it would add.</p>
         </div>
         <span class="state-badge" class:on={toggle.includeManagers}>{toggle.includeManagers ? 'On' : 'Off'}</span>
       </div>

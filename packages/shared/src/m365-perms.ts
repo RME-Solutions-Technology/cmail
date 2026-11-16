@@ -157,6 +157,15 @@ export const M365_PERMS_COUNT_KEYS = [
   'trusteeNotLinked',
   /** Exchange grants (shared mailbox, person) resolved to an unlinked manager account by address (switch on). */
   'managerMatched',
+  /** A matched manager account's sync-made access that Exchange lowered or took away: never lowered or removed. */
+  'managerAccountKept',
+  /**
+   * Sync-made access of an account with no link and no manager match this
+   * round (a manager match that is gone, a lost link) on a fully read
+   * mailbox: kept, because the sync can no longer tell whether Exchange still
+   * grants it. Remove it in Admin > Mailboxes if it is not wanted.
+   */
+  'unlinkedKept',
   /** Shared mailboxes in the snapshot that the Microsoft 365 sync has not linked yet. */
   'mailboxNotLinked',
   /** Linked shared mailboxes this snapshot did not cover (fully): their removals wait. */
@@ -239,6 +248,8 @@ export interface M365PermsRound {
    * on), resolved once before the diff. Absent = not resolved yet.
    */
   managerMatches?: M365PermsManagerMatch[];
+  /** cmail account ids of the managers looked up this round (matched or not). */
+  managerLookedAt?: string[];
 }
 
 /** One manager account matched to the Entra user whose primary SMTP address equals its address. */
@@ -285,6 +296,11 @@ export interface M365PermsState {
   /** Last round start, to space runs by the interval even when they fail. */
   lastStartedAt: string | null;
   handledRequestAt: string;
+  /**
+   * Manager matching: the last manager account id looked up. With more
+   * unlinked managers than one round looks up, the next round starts after it.
+   */
+  managerCursor?: string;
   round: M365PermsRound | null;
   lastRound: M365PermsFinishedRound | null;
 }

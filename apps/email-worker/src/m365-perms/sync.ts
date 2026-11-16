@@ -49,7 +49,7 @@ import {
 import { beginCollect, discardCollect, readCollect } from './collector';
 import { brakeCheck, computeDiff, type DiffOp, type PersonLink } from './diff';
 import { PermsGraphClient } from './groups';
-import { loadManagerLinks, resolveManagerMatches } from './managers';
+import { MAX_MANAGER_REPORT_ROWS, loadManagerLinks, loadUnlinkedLedgerAccounts, resolveManagerMatches } from './managers';
 import { groupTrustees, mergeBatches, parseSnapshot, type PermissionSnapshot } from './snapshot';
 
 const LEASE_SECONDS = 10 * 60;
@@ -356,12 +356,19 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
     // diff and apply both work from the stored snapshot, read again each tick.
     const snapshot = await loadPass(env, round, expected);
     const diffNow = async (includeManagers: boolean) => {
-      const [sharedLinks, personLinks, assignments, ledger, groupMembers, released, managerLinks] = await Promise.all([
+      const [sharedLinks, personLinks, assignments, ledger, groupMembers, released, managerLinks, unlinked] = await Promise.all([
         loadSharedLinks(ctx), loadPersonLinks(ctx), loadAssignments(ctx), loadLedger(ctx), loadGroupMembers(ctx, round.id), loadReleased(ctx),
         includeManagers && round.managerMatches ? loadManagerLinks(ctx, round.managerMatches) : Promise.resolve(new Map<string, PersonLink>()),
+        loadUnlinkedLedgerAccounts(ctx),
       ]);
       // A linked person always wins over a manager match on the same object.
       for (const [objectId, link] of managerLinks) if (!personLinks.has(objectId)) personLinks.set(objectId, link);
+      // An active manager not looked up this round (rotation, switch on) may
+      // still be granted: not reported as kept-without-a-match.
+      const lookedAt = new Set(round.managerLookedAt ?? []);
+      for (const [userId, account] of unlinked) {
+        if (includeManagers && account.activeManager && !lookedAt.has(userId)) unlinked.delete(userId);
+      }
       return computeDiff({
         snapshot,
         sharedLinks,
@@ -373,6 +380,7 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         assignments,
         ledger,
         fullAccessImpliesSend: config.fullAccessImpliesSend,
+        unlinkedAccounts: unlinked,
       });
     };
 
@@ -382,9 +390,17 @@ export async function runM365PermsTick(env: M365PermsWorkerEnv, deps: M365PermsD
         // so apply (and a resumed tick) uses the same matches.
         const sync = m365SyncConfig(env);
         const graph = graphClient(env, deps);
-        const matched = await resolveManagerMatches(ctx, graph, sync.configured ? sync.config.mailDomain : '', budgets.graph);
+        const matched = await resolveManagerMatches(ctx, graph, {
+          mailDomain: sync.configured ? sync.config.mailDomain : '',
+          graphBudget: budgets.graph,
+          cursor: state.managerCursor ?? '',
+          canContinue: withinBudget,
+        });
         round.managerMatches = matched.matches;
-        for (const item of matched.report) if (round.report.length < 200) round.report.push(item);
+        round.managerLookedAt = matched.lookedAt;
+        state.managerCursor = matched.nextCursor;
+        // Capped (MAX_MANAGER_REPORT_ROWS), so the diff's own rows keep their room.
+        for (const item of matched.report.slice(0, MAX_MANAGER_REPORT_ROWS)) if (round.report.length < 200) round.report.push(item);
         console.info('Mailbox access sync: manager accounts matched by address', matched.outcomes);
       }
       const diff = await diffNow(toggle.includeManagers);

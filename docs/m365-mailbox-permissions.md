@@ -144,7 +144,7 @@ folders, archive, delete). The rule is **never more than Exchange grants**.
 | A trustee not linked to a cmail person by the Microsoft 365 sync | skipped | `trusteeNotLinked` |
 | A manager account (never linked by the Microsoft 365 sync) | skipped, unless **Include manager accounts** is on: see [Manager accounts](#manager-accounts) | `trusteeNotLinked` or `managerMatched` |
 | A paused, offboarded or out-of-scope person | no new or raised access (existing sync-made access can still be lowered or removed when Exchange takes it away) | `account_not_active` |
-| A person whose Microsoft 365 link is gone | nothing removed (a lost link is not Exchange taking access away) | — |
+| A person whose Microsoft 365 link is gone | nothing removed (a lost link is not Exchange taking access away) | `unlinkedKept` (`account_not_linked`) |
 | A shared mailbox the Microsoft 365 sync has not linked yet | skipped until linked | `mailboxNotLinked` |
 
 Mapping is by Entra object id only (Exchange `ExternalDirectoryObjectId`, the
@@ -240,66 +240,89 @@ Full Access to every shared mailbox in Exchange and see none in cmail.
 
 **Include manager accounts** (Admin > Shared mailbox access, org setting
 `m365_perms_include_managers`) closes that gap. It is **off by default**; off,
-nothing about it runs (no Graph call, no extra write) and the sync behaves
-exactly as without it. On, once per round, before the diff:
+no manager is looked up (no Graph call, no extra write). On, once per round,
+before the diff:
 
-1. cmail lists active manager accounts with no Microsoft 365 link (at most
-   20 a round; any beyond are reported as `too_many_managers`).
+1. cmail lists active manager accounts with no Microsoft 365 link and looks
+   up at most 20 a round. With more, each round starts after the last one
+   looked up, so every manager is reached in turn; the rest are reported as
+   `too_many_managers`. Lookups also stop when the run's time or database
+   budget is used up (those managers are `lookup_failed` this round).
 2. For each manager whose address is on `MAIL_DOMAIN`, the Worker asks Graph,
-   with the Microsoft 365 sync's own app (`User.Read.All`), for users whose
-   primary SMTP address equals that address:
-   `GET /users?$filter=mail eq '<address>'&$select=id,mail,userType,accountEnabled`
+   with the Microsoft 365 sync's own app (`User.Read.All`):
+   `GET /users?$filter=mail eq '<address>'&$select=id,mail,userType,accountEnabled,proxyAddresses&$top=2`
    ([list users](https://learn.microsoft.com/en-us/graph/api/user-list)).
-   The Graph app is bound to this tenant, so any answer is a user of this
-   tenant.
+   A quote in the address is doubled (OData string literal). The Graph app is
+   bound to this tenant, so any answer is a user of this tenant. A throttled,
+   refused or failed lookup stops the lookups for this round.
 3. The manager is matched only when **exactly one** user comes back, its
-   `mail` equals the manager's cmail address exactly (case aside), it is a
-   `Member` (not a guest), its account is enabled, no cmail account or shared
-   mailbox is already linked to that user, and no other manager has the same
-   address or matched the same user. Anything else leaves the manager
-   unmatched this round, with a reason code.
+   `mail` equals the manager's cmail address exactly (case aside), its
+   `proxyAddresses` hold that address as the **primary** entry
+   (`SMTP:<address>`, capital `SMTP`), it is a `Member` (not a guest), its
+   account is enabled, no cmail account or shared mailbox is already linked
+   to that user, and no other manager has the same address or matched the
+   same user. Anything else leaves the manager unmatched this round, with a
+   reason code.
 4. The diff then treats the matched user's object id like a person link, for
-   that manager only. Direct and group grants count, with the normal mapping.
+   that manager only, while the account is still an active manager with the
+   same address and no link (checked again before every write). Direct and
+   group grants count, with the normal mapping.
 
 **Additions and raises only.** A matched manager gets new access and has
 sync-made access raised when Exchange grants more. The sync never lowers or
-removes a manager account's access, not when Exchange lowers or takes it
-away, and not after the switch is turned off (`manager_kept`,
-`manager_account_not_lowered` or `manager_account_not_removed`). Every other
+removes a matched manager account's access (`managerAccountKept`, reasons
+`manager_account_not_lowered` and `manager_account_not_removed`). Every other
 rule still applies: a manager-made row is never touched, a manager's own
 removal of sync-given access sticks (`manager_removed`), and each addition is
 audited like any other. No person link is created and the Microsoft 365 sync
 still never adopts a manager.
 
+**When the match is gone** (the switch is off, the manager's address changed,
+the Entra account was disabled or its address moved, the account was paused
+or is no longer a manager), the sync can no longer tell whether Exchange
+still grants that account anything, because it has no object id for it. Its
+sync-made rows are then **kept and reported** on every fully read mailbox
+(`unlinkedKept`, action `unlinked_kept`, reason
+`manager_account_not_matched`), never removed: a removal needs proof that
+Exchange took the access away, and without an identity there is none (the
+same rule as for a person whose link is gone, reported as
+`account_not_linked`). Remove unwanted rows in Admin > Mailboxes; once a
+matched manager is found again, the normal rules for matched managers apply.
+An active manager that a rotating round did not look up is not reported.
+
 **Why the primary SMTP address and not the UPN.** cmail's account address is a
 mailbox address on `MAIL_DOMAIN`, and the Microsoft 365 sync already
-identifies people by Graph `mail` (their primary SMTP address). Exchange keeps
-every primary SMTP address and proxy address unique across the tenant's
-recipients, so one address can name only one mailbox user. The UPN is a
-sign-in name: it is often on another domain (for example
-`<name>.onmicrosoft.com`) or differs from the mailbox address, and matching it
-to a mailbox address would be a guess. The match is by exact string, never by
-display name or a partial address.
+identifies people by Graph `mail`. The UPN is a sign-in name: it is often on
+another domain (for example `<name>.onmicrosoft.com`) or differs from the
+mailbox address, and matching it to a mailbox address would be a guess. Graph
+`mail` alone is not proof either: it is usually the primary SMTP address, but
+it can be set separately and Microsoft does not document it as unique. The
+proxy address list is what Exchange routes by, and Exchange Online refuses an
+SMTP proxy address that another recipient already holds; the entry with the
+capital `SMTP:` prefix is the primary one. So the match needs both, and an
+exact string, never a display name or a partial address.
 
 **Risk.** Address matching is weaker than an object id link, so it is limited
 to managers, who can already assign themselves any shared mailbox in
 Admin > Mailboxes, and it only ever adds access Exchange grants to that same
-user. Someone who could set another user's primary address to a manager's
-address would need Exchange administration rights already, and would only give
-the manager more access, not themselves.
+user. Making another user's primary SMTP address equal to a manager's address
+needs Exchange recipient administration rights, and would only give the
+manager more access, not the person who changed it.
 
 **Report.** `managerMatched` counts the (shared mailbox, manager) pairs
 Exchange grants that were resolved to a manager account. Each manager looked
-at gets a report row, `manager_matched` or `manager_not_matched` with one of:
+at gets a report row (at most 21 a round, so the diff's own rows keep their
+room), `manager_matched` or `manager_not_matched` with one of:
 `graph_not_configured`, `not_on_mail_domain`, `no_entra_user`, `ambiguous`,
-`address_mismatch`, `not_member`, `account_disabled`, `object_linked`,
-`lookup_failed`. Dry run reports what it would add, as for anyone else. Logs
-carry outcome counts only, never addresses.
+`address_mismatch`, `not_primary_smtp`, `not_member`, `account_disabled`,
+`object_linked`, `lookup_failed`, `too_many_managers`. Dry run reports what it
+would add, as for anyone else. Logs carry outcome counts only, never
+addresses.
 
 **Turn it on:** Admin > Shared mailbox access > **Include manager accounts**,
 ideally with dry run on first, and check the next report. **Turn it off:** the
-same button; access already given stays as it is (remove it in
-Admin > Mailboxes if you do not want it).
+same button; access already given stays as it is and is reported as
+`unlinked_kept` (remove it in Admin > Mailboxes if you do not want it).
 
 ## Troubleshoot shared mailbox access
 

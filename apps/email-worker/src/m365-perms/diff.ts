@@ -60,6 +60,13 @@ export interface DiffInput {
   /** `${mailboxId}|${userId}` -> ledger row. */
   ledger: Map<string, LedgerRow>;
   fullAccessImpliesSend: boolean;
+  /**
+   * Accounts with sync-made access, no person link and no manager match this
+   * round whose state the sync can still judge (managers not looked up this
+   * round are left out): their rows on a fully read mailbox are kept and
+   * reported, never removed.
+   */
+  unlinkedAccounts?: Map<string, { email: string; manager: boolean; activeManager: boolean }>;
 }
 
 export type DiffOp =
@@ -194,7 +201,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     const raise = LEVEL_RANK[level] > LEVEL_RANK[live.permissions];
     if (!raise && persons.get(entry.userId)?.manager) {
       // A manager account's access is never lowered by the sync.
-      note('managerKept', { action: 'manager_kept', mailbox: entry.mailbox, user: entry.user, reason: 'manager_account_not_lowered' });
+      note('managerAccountKept', { action: 'manager_account_kept', mailbox: entry.mailbox, user: entry.user, reason: 'manager_account_not_lowered' });
     } else if (raise && !persons.get(entry.userId)?.eligible) {
       note('trusteeNotLinked', { action: 'skipped', mailbox: entry.mailbox, user: entry.user, reason: 'account_not_active' });
     } else if (raise) {
@@ -222,10 +229,25 @@ export function computeDiff(input: DiffInput): DiffResult {
     // Exchange no longer grants it (or grants only Send As). Removed only when
     // the snapshot fully covered this mailbox, and only for a person still
     // linked (a lost link is not Exchange taking access away); otherwise kept.
-    if (!mailbox?.covered || !persons.has(userId)) continue;
+    if (!mailbox?.covered) continue;
+    if (!persons.has(userId)) {
+      // No link and no manager match: the sync cannot tell whether Exchange
+      // still grants this account anything, so the row stays, but it is
+      // reported rather than kept silently.
+      const unlinked = input.unlinkedAccounts?.get(userId);
+      if (unlinked) {
+        note('unlinkedKept', {
+          action: 'unlinked_kept',
+          mailbox: mailbox.address,
+          user: unlinked.email,
+          reason: unlinked.manager ? 'manager_account_not_matched' : 'account_not_linked',
+        });
+      }
+      continue;
+    }
     // A manager account's access is never removed by the sync.
     if (persons.get(userId)?.manager) {
-      note('managerKept', { action: 'manager_kept', mailbox: mailbox.address, user, reason: 'manager_account_not_removed' });
+      note('managerAccountKept', { action: 'manager_account_kept', mailbox: mailbox.address, user, reason: 'manager_account_not_removed' });
       continue;
     }
     lowers.push({ type: 'remove', mailboxId, userId, from: live!.permissions, marker: live!.assignedAt, mailbox: mailbox.address, user });
