@@ -1,3 +1,13 @@
+---
+title: "Standards and service-management alignment"
+summary: "How cmail maps to ISO 27001, ISO 20000-1, ISO 27701 and ITIL, and what the operator must establish."
+applies_to: both
+audience: [reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [assurance.md]
+---
+
 # Standards and service-management alignment
 
 - **Document status:** public alignment guide
@@ -21,6 +31,15 @@ Do not copy ISO control text or ITIL practice guides into this repository.
 They are licensed publications. The descriptions below are independently
 written summaries. An organisation seeking formal conformity must obtain the
 current standards and qualified advice.
+
+**In this article**
+
+- [Primary alignment targets](#primary-alignment-targets)
+- [Conditional and supporting references](#conditional-and-supporting-references)
+- [ITIL service-management practice map](#itil-service-management-practice-map)
+- [Support tiers and accountability](#support-tiers-and-accountability)
+- [Evidence an operator should retain](#evidence-an-operator-should-retain)
+- [Review triggers](#review-triggers)
 
 ## Primary alignment targets
 

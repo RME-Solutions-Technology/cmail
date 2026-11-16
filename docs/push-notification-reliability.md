@@ -1,3 +1,13 @@
+---
+title: "Push notification reliability blueprint"
+summary: "A design, not built, for a more durable notification pipeline."
+applies_to: both
+audience: [developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [mobile-pwa.md]
+---
+
 # Push notification reliability blueprint
 
 > Design blueprint only — this is not implemented in cmail today.

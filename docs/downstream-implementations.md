@@ -1,3 +1,13 @@
+---
+title: "Downstream and private implementations"
+summary: "How to keep a private fork separate from public cmail while tracking upstream."
+applies_to: both
+audience: [developer, operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [upgrading.md]
+---
+
 # Downstream and private implementations
 
 Use the public cmail repository as the reusable product, and keep organisation-specific work in a separate private repository. GitHub repository visibility is all-or-nothing: a branch in a public repository is public too. Never put a proprietary implementation on a "private branch" of public `cmail`.

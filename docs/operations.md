@@ -1,8 +1,27 @@
+---
+title: "Running cmail"
+summary: "How to upgrade, back up, restore, roll back, monitor and rotate secrets on a live instance."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, upgrading.md, deployment.md]
+---
+
 # Running cmail
 
 The repeatable jobs for a live deployment, in one place: upgrading, backing up, restoring, rolling back, watching for trouble, and rotating secrets. Most procedures already live in [Deployment and verification](deployment.md); this page gives the order and links to them, and adds monitoring and secret rotation. Tick off the [Operations checklist](operations-checklist.md) as you go.
 
 Examples use the default resource names (`cmail-web`, `cmail-db`, `cmail-storage`, `cmail-backup`). Use your own.
+
+**In this article**
+
+- [Upgrade](#upgrade)
+- [Back up](#back-up)
+- [Restore](#restore)
+- [Roll back](#roll-back)
+- [Monitor](#monitor)
+- [Rotate secrets](#rotate-secrets)
 
 ## Upgrade
 
@@ -59,7 +78,7 @@ cmail has no built-in alerting. These are the places to look, and what should ma
 | Email Worker: link list | `7 * * * *` | Shards update, or nothing changed | `Link blocklist refresh failed` or `kept the previous copy` for more than a day (links still open; checks go stale after two days). On Workers Free every refresh fails by design: the feature needs Workers Paid |
 | Email Worker: standby copy-back | `*/15 * * * *` (only while switched on and a job runs) | Admin > Copy back to Exchange shows the job `running` with Copied rising, then `done` | Result `error` (`unauthorized`, `credentials_rejected`), a long `backoff`, or a growing Failed count. See the [runbook](copy-back.md#runbook) |
 | Email Worker: Microsoft 365 sync | `*/15 * * * *` (only once turned on in Admin) | Admin > Microsoft 365 sync shows result `ok` or `running` and a recent last check | Result `error` or `not_configured`, a delta link older than two days, or a growing conflicts count. See the [runbook](m365-sync.md#runbook) |
-| Email Worker: standby probe | `*/10 * * * *` (only once turned on in Admin) | Admin > Standby test is green | Amber or red: see [failure modes](standby-probe.md#failure-modes-and-what-to-do) |
+| Email Worker: standby probe | `*/10 * * * *` (only once turned on in Admin) | Admin > Standby test is green | Amber or red: see [failure modes](standby-probe.md#troubleshoot-the-standby-test) |
 | Backup Worker | `23 * * * *` | Run succeeds; the day's manifest says `complete: true`; `d1/<date>/complete.json` exists | Any failed run. A **paused** run means objects vanished from the mail bucket: check the `SOURCE` binding before acknowledging (see [Automated backups](deployment.md#automated-backups-optional)) |
 
 **Mail flow.**
@@ -87,6 +106,13 @@ Rotate on a schedule your organisation sets, and immediately if a value is print
 | `POSTMARK_API_KEY`, `CLOUDFLARE_EMAIL_API_TOKEN` | Pages | Outbound fails while the provider and cmail disagree | Create the new key, set it, redeploy, send a test, then revoke the old key |
 | `CLOUDFLARE_SUPPRESSIONS_API_TOKEN` | Pages | Unblock and send again is unavailable until the new token is set | Create a new account-owned token with **Email Sending: Edit** only, set it, redeploy, then delete the old token |
 | `BOOTSTRAP_ADMIN_TOKEN`, `BOOTSTRAP_ADMIN_EMAIL` | Pages | Should not exist after the first manager is set up | If still present, delete both (see [Bootstrap](deployment.md#9-bootstrap-and-lock-down-administration)) |
+| `M365_CLIENT_SECRET` (sync app) | Email Worker | The sync stops with `unauthorized` while the secret and Entra disagree | Add a new client secret in Entra, `wrangler secret put` it, press **Sync now** in Admin > Microsoft 365 sync, then delete the old secret in Entra |
+| `M365_COPYBACK_CLIENT_SECRET` (copy-back app) | Email Worker | Copy-back jobs fail while the secret and Entra disagree | Same as the sync secret; check with a copy-back dry run |
+| `M365_EXO_CERT_PFX_B64`, `M365_EXO_CERT_PASSWORD` (permission reader) | Email Worker | The collector fails with `credentials_rejected`; access already in cmail stays | Make a new certificate, upload its `.cer` to the app, set both secrets, run the collector in dry run, then remove the old certificate |
+| `M365_JOURNAL_ADDRESS` | Email Worker | Reports to the old address are refused | Follow [Rotating the journal token](exchange-mirror.md#how-to-rotate-the-journal-token) |
+| Cloudflare deploy and standby switch tokens | Operator's session only | None at run time | Create the new token with the same permissions ([Credentials](credentials.md#cloudflare-api-tokens)), test, then delete the old one |
+
+Keep the old value until the new one is verified, so you can put it back. Never put a secret on a command line saved in shell history, or in a ticket or chat. Which permissions each credential needs is in [Credentials and permissions](credentials.md).
 
 Also review who holds Cloudflare, identity-provider and DNS access, and remove anyone who no longer needs it.
 

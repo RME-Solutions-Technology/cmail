@@ -1,3 +1,13 @@
+---
+title: "Support process"
+summary: "How to triage a support request, handle evidence safely and escalate."
+applies_to: both
+audience: [manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [manager-handbook.md]
+---
+
 # Support process
 
 This is a practical support model for organisations running cmail. It describes a workflow — it is not a service-level agreement, and it does not promise response or resolution times or certify cmail against any standard.

@@ -1,8 +1,28 @@
+---
+title: "Spam and quarantine"
+summary: "How spam scoring and quarantine work, and how to release mail or set sender rules."
+applies_to: both
+audience: [user, manager]
+switch: "Management > Quarantine"
+last_reviewed: 2026-11-16
+related: [receiving.md, inbox-rules.md]
+---
+
 # Spam and quarantine
 
 cmail can score inbound mail and file the worst of it into the **Spam**
 folder instead of Inbox. Filing is off until a Manager turns it on, and
 quarantine never deletes anything — it just chooses a folder.
+
+**In this article**
+
+- [How scoring works](#how-scoring-works)
+- [What quarantine means](#what-quarantine-means)
+- [Getting your own mail back](#getting-your-own-mail-back)
+- [Organisation-wide sender rules](#organisation-wide-sender-rules)
+- [The quarantine page](#the-quarantine-page)
+- [Choosing a threshold](#choosing-a-threshold)
+- [What this is not](#what-this-is-not)
 
 ## How scoring works
 

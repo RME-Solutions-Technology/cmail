@@ -113,7 +113,7 @@ $addressPattern = '^journal-[0-9a-f]{32,}@' + [regex]::Escape($StandbySubdomain)
 
 # ---- Mode 1: new journal address ------------------------------------------
 if ($NewJournalAddress) {
-  if (Test-Path -LiteralPath $JournalAddressFile) { throw "$JournalAddressFile already exists. To rotate the address, follow docs/exchange-mirror.md#rotating-the-journal-token." }
+  if (Test-Path -LiteralPath $JournalAddressFile) { throw "$JournalAddressFile already exists. To rotate the address, follow docs/exchange-mirror.md#how-to-rotate-the-journal-token." }
   if (-not $dryRun) { $WranglerConfig = Resolve-WranglerConfig $WranglerConfig }
   if ($PSCmdlet.ShouldProcess($JournalAddressFile, "write a new journal address on $StandbySubdomain and store it as Worker secret M365_JOURNAL_ADDRESS")) {
     $address = "journal-$(New-RandomHex 20)@$StandbySubdomain"
@@ -230,7 +230,7 @@ try {
     if (-not $existing) {
       New-JournalRule -Name $RuleName -JournalEmailAddress $journal -Scope Global -Enabled $false -ErrorAction Stop | Out-Null
     } elseif ([string]$existing.JournalEmailAddress -ine $journal) {
-      Write-Warning "Journal rule '$RuleName' already exists and its address does not look like the one in the file. Check it by hand (docs/exchange-mirror.md#rotating-the-journal-token)."
+      Write-Warning "Journal rule '$RuleName' already exists and its address does not look like the one in the file. Check it by hand (docs/exchange-mirror.md#how-to-rotate-the-journal-token)."
     }
     Write-Note (Get-JournalRule -Identity $RuleName -ErrorAction Stop | Select-Object Name, Enabled, Scope | Format-List | Out-String).Trim()
   }

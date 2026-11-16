@@ -1,3 +1,13 @@
+---
+title: "How receiving works"
+summary: "How inbound mail goes from Email Routing to the Inbox: rejects, limits, parsing, spam and storage."
+applies_to: both
+audience: [operator, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [spam-and-quarantine.md, cloudflare-platform.md]
+---
+
 # How receiving works
 
 This page follows one message from Cloudflare Email Routing to a user's

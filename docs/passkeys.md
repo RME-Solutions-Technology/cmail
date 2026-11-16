@@ -1,3 +1,13 @@
+---
+title: "Passkey break-glass sign-in"
+summary: "How to sign in with a passkey when Microsoft or Cloudflare Access is down."
+applies_to: both
+audience: [manager, operator, user]
+switch: "Admin > Passkey sign-in"
+last_reviewed: 2026-11-16
+related: [staff-sign-in.md, onboarding-microsoft-365.md]
+---
+
 # Passkey break-glass sign-in
 
 **Status:** built, off by default, not yet tested against a real tenant, a
@@ -15,6 +25,18 @@ This is layer 2 of "what if Entra itself is down". Layer 1 is long sessions:
 anyone who used cmail recently stays signed in through an outage
 (`SESSION_TTL_HOURS` and the Access application session). Passkeys cover the
 people whose sessions have lapsed.
+
+**In this article**
+
+- [How it works](#how-it-works)
+- [Threat model](#threat-model)
+- [Cloudflare Access](#cloudflare-access)
+- [How to set up passkeys](#how-to-set-up-passkeys)
+- [Recovery](#recovery)
+- [Audit events](#audit-events)
+- [Code](#code)
+- [References](#references)
+- [Not yet verified](#not-yet-verified)
 
 ## How it works
 
@@ -242,7 +264,7 @@ Prepare it: write the policy as a reusable policy in advance and practise
 adding and removing it, so the step takes a minute. Opening the gate is the
 last resort; layer 1 (long sessions) covers most outages without it.
 
-## Set up
+## How to set up passkeys
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#7-passkeys), step 7.
 

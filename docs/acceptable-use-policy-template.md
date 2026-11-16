@@ -1,3 +1,13 @@
+---
+title: "Acceptable-use policy template"
+summary: "A starting point for an organisation usage policy that managers publish in cmail."
+applies_to: both
+audience: [manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [manager-handbook.md]
+---
+
 # Acceptable-use policy template
 
 > [!NOTE]

@@ -1,3 +1,13 @@
+---
+title: "Copy standby mail back into Exchange"
+summary: "How to copy mail cmail received during an Exchange outage back into each Exchange Online mailbox."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Copy back to Exchange"
+last_reviewed: 2026-11-16
+related: [standby-switch.md, credentials.md, onboarding-microsoft-365.md]
+---
+
 # Copy standby mail back into Exchange
 
 Optional and off by default. When cmail has stood in for Exchange Online
@@ -37,6 +47,19 @@ without a link are never copied (the dry run counts them as "not linked").
   `standby_copyback_items`); the switch and last dry run live in `org_settings`.
 - Tests: `apps/email-worker/src/copy-back/*.test.ts` (fake Graph and R2 over
   every real migration) and `apps/web/src/lib/server/copy-back-admin.test.ts`.
+
+**In this article**
+
+- [How it works](#how-it-works)
+- [Choosing the Graph method](#choosing-the-graph-method)
+- [What a copy keeps](#what-a-copy-keeps)
+- [Never twice, and safe to stop at any point](#never-twice-and-safe-to-stop-at-any-point)
+- [Troubleshoot failures and throttling](#troubleshoot-failures-and-throttling)
+- [How to set up copy-back (least privilege)](#how-to-set-up-copy-back-least-privilege)
+- [How to run a copy-back](#how-to-run-a-copy-back)
+- [Runbook](#runbook)
+- [What is not verified yet](#what-is-not-verified-yet)
+- [Sources](#sources)
 
 ## How it works
 
@@ -188,7 +211,7 @@ fault.
   invocation that holds it) stops overlapping cron
   invocations from working it twice.
 
-## Failures, throttling and bounded work
+## Troubleshoot failures and throttling
 
 | Answer | What happens |
 |---|---|
@@ -211,7 +234,7 @@ a halted or cancelled job). Because items are worked fewest attempts first,
 one item that keeps failing never holds up the others.
 **Cancel** stops a running job; copies already made stay in Exchange.
 
-## Setup (least privilege)
+## How to set up copy-back (least privilege)
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#12-standby-test-switch-and-copy-back-optional), step 12.
 
@@ -353,7 +376,7 @@ Apply migration `0024` (additive: two tables, three indexes including one on
 **Admin > Copy back to Exchange**, check that no settings are listed as
 missing and turn the switch on.
 
-## Using it
+## How to run a copy-back
 
 1. Make sure the sync has linked the mailboxes (Admin > Microsoft 365 sync).
 2. Enter the window in UTC, from when Exchange stopped receiving to when mail

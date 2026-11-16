@@ -1,3 +1,13 @@
+---
+title: "Security, privacy, and assurance"
+summary: "The responsibility boundary, control matrix, limitations and evidence checklist for security and privacy reviewers."
+applies_to: both
+audience: [reviewer, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [standards-alignment.md, privacy-and-data-handling.md, security-checklist.md]
+---
+
 # Security, privacy, and assurance
 
 - **Document status:** public project assurance guide
