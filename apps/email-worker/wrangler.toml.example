@@ -138,6 +138,27 @@ M365_WELCOME_MAX_PER_HOUR = "50"
 # MAIL_DOMAIN. Only Microsoft 365 users whose primary address is on it sync.
 MAIL_DOMAIN = ""
 
+# Optional shared mailbox access from Exchange Online
+# (docs/m365-mailbox-permissions.md). Copies Full Access and Send As on
+# shared mailboxes into cmail once a day. Nothing runs until a manager turns
+# it on in Admin > Shared mailbox access, and it also needs the container
+# block further down (Workers Paid plan, Docker on the deploying machine).
+# Uses a SEPARATE Entra app with Exchange.ManageAsApp and a read-only Exchange
+# role, signed in with a certificate. Shares M365_TENANT_ID; group grants are
+# expanded with the Microsoft 365 sync app above. Secrets, never vars:
+#   wrangler secret put M365_EXO_CERT_PFX_B64 --config apps/email-worker/wrangler.toml
+#   wrangler secret put M365_EXO_CERT_PASSWORD --config apps/email-worker/wrangler.toml
+M365_EXO_APP_ID = ""
+# The tenant's primary <name>.onmicrosoft.com domain.
+M365_EXO_ORGANIZATION = ""
+# Hours between full collections (6 to 24).
+M365_PERMS_INTERVAL_HOURS = "24"
+# Removal brake: removals plus downgrades above this percent of the grants the
+# sync made (and at least 5) wait for a manager's approval.
+M365_PERMS_MAX_REMOVE_PERCENT = "20"
+# "true" maps Full Access without Send As to cmail Full instead of Read.
+M365_PERMS_FULLACCESS_IMPLIES_SEND = "false"
+
 # Optional standby copy-back into Exchange Online (docs/copy-back.md). Uses a
 # SEPARATE Entra app from the sync, whose Mail.ReadWrite is granted only
 # through Exchange RBAC for Applications, scoped to a group (never consented
@@ -190,6 +211,24 @@ M365_JOURNAL_SUBREQUEST_BUDGET = "8000"
 # unless switched on in Admin).
 # */10 * * * *: standby probe (returns at once unless switched on in Admin).
 crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *", "*/10 * * * *"]
+
+# Optional: the shared mailbox access collector (Cloudflare Container, read
+# only). Uncomment to use it; `wrangler deploy` then builds the image with
+# Docker. Needs Workers Paid. The durable_object scheduling policy is in
+# public beta. See docs/m365-mailbox-permissions.md.
+# [[containers]]
+# class_name = "M365PermsCollector"
+# scheduling_policy = "durable_object"
+# [containers.images.base]
+# dockerfile = "./container/m365-perms/Dockerfile"
+#
+# [[durable_objects.bindings]]
+# name = "M365_PERMS_COLLECTOR"
+# class_name = "M365PermsCollector"
+#
+# [exports.M365PermsCollector]
+# type = "durable-object"
+# storage = "sqlite"
 
 # Email Routing — configure a catch-all in the Cloudflare dashboard
 # pointing all inbound mail at this worker.

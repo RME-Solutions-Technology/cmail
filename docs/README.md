@@ -35,7 +35,10 @@ To keep accounts in step with a Microsoft 365 tenant (read-only, off by
 default, with a manager switch and dry run), see
 [Microsoft 365 mailbox sync](m365-sync.md). To email each person the sync
 creates once with first sign-in steps (off by default), see
-[Microsoft 365 welcome emails](m365-welcome-emails.md). After an Exchange outage, mail
+[Microsoft 365 welcome emails](m365-welcome-emails.md). To copy Full Access and Send As
+on shared mailboxes from Exchange Online into cmail daily (off by default,
+read-only, needs a Cloudflare Container), see
+[Shared mailbox access from Exchange Online](m365-mailbox-permissions.md). After an Exchange outage, mail
 that arrived in cmail meanwhile can be copied into each person's Exchange
 mailbox: see [Copy standby mail back into Exchange](copy-back.md). To move
 a domain's incoming mail to cmail and back in one DNS change each, see

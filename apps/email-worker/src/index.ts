@@ -4,6 +4,10 @@
 // this worker is inbound-only.
 import { LINK_BLOCKLIST_CRON, refreshLinkBlocklist } from './link-blocklist-refresh';
 import { M365_SYNC_CRON, m365SyncConfigDiagnostic, runM365SyncTick, type M365SyncWorkerEnv } from './m365-sync/sync';
+import { m365PermsConfigDiagnostic, runM365PermsTick, type M365PermsWorkerEnv } from './m365-perms/sync';
+// The shared mailbox access collector (Durable Object + Container); bound only
+// when the optional container block in wrangler.toml is enabled.
+export { M365PermsCollector } from './m365-perms/collector';
 import { copyBackConfigDiagnostic, runCopyBackTick, type CopyBackWorkerEnv } from './copy-back/run';
 import {
   STANDBY_PROBE_CRON,
@@ -67,7 +71,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
   /** Subrequests one Exchange journal report may use for filing (docs/exchange-mirror.md). */
   M365_JOURNAL_SUBREQUEST_BUDGET?: string | number;
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
@@ -803,6 +807,10 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/m365-sync/config' && request.method === 'GET') {
     return Response.json(m365SyncConfigDiagnostic(env));
   }
+  // Read-only, same rules: whether the shared mailbox access collector is set up.
+  if (url.pathname === '/internal/m365-perms/config' && request.method === 'GET') {
+    return Response.json(m365PermsConfigDiagnostic(env));
+  }
   // Read-only, same rules: whether the copy-back app settings are present.
   if (url.pathname === '/internal/copy-back/config' && request.method === 'GET') {
     return Response.json(copyBackConfigDiagnostic(env));
@@ -933,6 +941,15 @@ export default {
         else if (result.status !== 'off' && result.status !== 'idle') console.warn('Microsoft 365 sync', { status: result.status });
       }, (caught: unknown) => {
         console.error('Microsoft 365 sync failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      // Shared mailbox access from Exchange Online shares this schedule:
+      // returns at once unless switched on. See docs/m365-mailbox-permissions.md.
+      ctx.waitUntil(runM365PermsTick(env).then((result) => {
+        // Codes only, never addresses.
+        if (result.status === 'failed') console.warn('Mailbox access sync', { status: result.status, code: result.code });
+        else if (result.status !== 'off' && result.status !== 'idle') console.log('Mailbox access sync', { status: result.status });
+      }, (caught: unknown) => {
+        console.error('Mailbox access sync failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
       }));
       // Microsoft 365 alias import for the Exchange mirror: returns at once
       // unless a manager turned it on (and the sync is on, not in dry run).
