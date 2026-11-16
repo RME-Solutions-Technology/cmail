@@ -71,11 +71,15 @@ usual reason a step stalls halfway.
   If you work with several accounts, set `CLOUDFLARE_ACCOUNT_ID` in the
   session before every Wrangler command.
 - **Microsoft 365 roles, active:** Application Administrator (or Cloud
-  Application Administrator) to create apps (step 3); Global Administrator,
-  or Privileged Role Administrator plus Application Administrator, to grant
-  application permissions (steps 5 and 11); Exchange Administrator (or Global
-  Administrator) for steps 10 and 11. The scripts check these first and stop
-  before creating anything. Note the **tenant ID** (Entra admin center >
+  Application Administrator) to create apps (step 3); **Global
+  Administrator** for admin consent, as the
+  [az ad app permission admin-consent](https://learn.microsoft.com/en-us/cli/azure/ad/app/permission#az-ad-app-permission-admin-consent)
+  documentation requires (steps 5 and 11; also step 3 with
+  `-GrantAdminConsent`); Exchange Administrator (or Global Administrator)
+  for steps 10 and 11. The scripts also accept Privileged Role Administrator
+  plus Application Administrator for steps 5 and 11; that combination is
+  not verified, so use Global Administrator where you can. The scripts check
+  roles first and stop before creating anything. Note the **tenant ID** (Entra admin center >
   Overview) and the **initial domain** (`<name>.onmicrosoft.com`).
 - **Tools:** Node and pnpm with `pnpm install` done in this repository;
   PowerShell 7.2+ (`pwsh`); Azure CLI signed in to the tenant with
@@ -390,6 +394,14 @@ Settings > **Subdomains** > add `standby` (giving `standby.example.com`)
 dig +short MX example.com            # still only Exchange Online
 dig +short MX standby.example.com    # Cloudflare (route*.mx.cloudflare.net)
 dig +short TXT standby.example.com   # v=spf1 ... include:_spf.mx.cloudflare.net ...
+```
+
+On Windows without `dig`:
+
+```powershell
+Resolve-DnsName example.com -Type MX
+Resolve-DnsName standby.example.com -Type MX
+Resolve-DnsName standby.example.com -Type TXT
 ```
 
 Expected: the apex MX and SPF are untouched; the subdomain has Cloudflare MX

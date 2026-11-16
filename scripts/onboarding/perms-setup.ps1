@@ -52,7 +52,7 @@
 .PARAMETER Organization
   The tenant's initial domain, <name>.onmicrosoft.com (used for app-only sign-in).
 .PARAMETER WranglerConfig
-  The email Worker's wrangler.toml (the instance's own).
+  The email Worker's wrangler.toml (the instance's own). Required except with -Rollback.
 .PARAMETER AppName
   Entra app display name; also the certificate subject.
 .PARAMETER RoleName
@@ -87,7 +87,7 @@
 param(
   [Parameter(Mandatory)][string]$TenantId,
   [Parameter(Mandatory)][string]$Organization,
-  [Parameter(Mandatory)][string]$WranglerConfig,
+  [string]$WranglerConfig = '',
   [string]$AppName = 'cmail Exchange permission reader',
   [string]$RoleName = 'cmail Mailbox Access Reader (Mail Recipients)',
   [string]$RoleGroupName = 'cmail Mailbox Access Readers',
@@ -106,6 +106,8 @@ param(
 Assert-Guid $TenantId 'TenantId'
 if ($Organization -notmatch '^[a-z0-9-]+\.onmicrosoft\.com$') { throw 'Organization must be the tenant''s <name>.onmicrosoft.com domain.' }
 if (-not $RepoRoot) { $RepoRoot = Get-RepoRoot }
+if (-not $Rollback -and -not $WranglerConfig) { throw 'Setup needs -WranglerConfig: the email Worker''s wrangler.toml.' }
+$ownWorkDir = -not $WorkDir
 if (-not $WorkDir) { $WorkDir = Join-Path ([IO.Path]::GetTempPath()) ("cmail-perms-{0}" -f [guid]::NewGuid().ToString('N').Substring(0, 8)) }
 $dryRun = [bool]$WhatIfPreference
 $readCmdlets = 'Get-Mailbox', 'Get-MailboxPermission', 'Get-RecipientPermission', 'Get-Recipient', 'Get-User', 'Get-Group'
@@ -129,8 +131,11 @@ if ($dryRun) {
   if ($Rollback) { Assert-AdminRoles -Need AppRegistration, Exchange }
   else { Assert-AdminRoles -Need AppRegistration, AppRoleConsent, Exchange }
   Import-ExchangeModule $ExchangeModuleVersion
-  $WranglerConfig = Resolve-WranglerConfig $WranglerConfig
+  if (-not $Rollback) { $WranglerConfig = Resolve-WranglerConfig $WranglerConfig }
 }
+
+# Removes the temporary work folder when this script made it.
+function Remove-WorkDir { if ($ownWorkDir -and (Test-Path -LiteralPath $WorkDir)) { Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue } }
 
 # ---- Rollback -------------------------------------------------------------
 if ($Rollback) {
@@ -144,8 +149,14 @@ if ($Rollback) {
     if ($PSCmdlet.ShouldProcess("management role '$RoleName'", 'remove')) {
       if (Get-ExoOrNull { Get-ManagementRole -Identity $RoleName -ErrorAction Stop }) { Remove-ManagementRole -Identity $RoleName -Confirm:$false -ErrorAction Stop }
     }
-    if ($appId -and $PSCmdlet.ShouldProcess("Exchange service principal for $appId", 'remove')) {
-      if (Get-ExoOrNull { Get-ServicePrincipal -Identity $appId -ErrorAction Stop }) { Remove-ServicePrincipal -Identity $appId -Confirm:$false -ErrorAction Stop }
+    # By app id when the Entra app still exists; otherwise by display name, so an
+    # Exchange service principal left behind by a deleted app is removed too.
+    $exoSps = if ($dryRun) { @() }
+              elseif ($appId) { @(Get-ExoOrNull { Get-ServicePrincipal -Identity $appId -ErrorAction Stop }) }
+              else { @(Get-ServicePrincipal -ErrorAction Stop | Where-Object DisplayName -EQ $AppName) }
+    $label = if ($appId) { $appId } else { "'$AppName'" }
+    if ($PSCmdlet.ShouldProcess("Exchange service principal for $label", 'remove')) {
+      foreach ($sp in @($exoSps | Where-Object { $_ })) { Remove-ServicePrincipal -Identity $sp.AppId -Confirm:$false -ErrorAction Stop }
     }
   } finally { if (-not $dryRun) { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue } }
   if ($appId -and $PSCmdlet.ShouldProcess("Entra app $appId", 'delete')) { Invoke-Az ad app delete --id $appId | Out-Null }
@@ -210,10 +221,15 @@ if ($PSCmdlet.ShouldProcess("Entra app $appId", "reuse a valid certificate on th
     try {
       Export-Certificate -Cert $cert -FilePath $cerFile | Out-Null
       Invoke-Az ad app credential reset --id $appId --cert "@$cerFile" --append | Out-Null
-    } finally { Remove-Item -LiteralPath $cerFile -Force -ErrorAction SilentlyContinue }
+    } finally {
+      Remove-Item -LiteralPath $cerFile -Force -ErrorAction SilentlyContinue
+      Remove-WorkDir
+    }
     Write-Note "Certificate $($cert.Thumbprint) expires $($cert.NotAfter.ToString('yyyy-MM-dd')). Record it and renew before then."
   }
 }
+
+if (-not $cert -and -not $dryRun) { Write-Warning 'Stopped: no certificate (the step was declined). Nothing else was done.'; return }
 
 # ---- 3. Exchange role, role group, service principal ----------------------
 Write-Step '3. Exchange: read-only role, role group, service principal'
@@ -278,6 +294,7 @@ if ($go -and $PSCmdlet.ShouldProcess("Worker ($WranglerConfig)", 'store M365_EXO
     Set-WranglerSecret -Name M365_EXO_CERT_PASSWORD -Value $passwordPlain -WranglerConfig $WranglerConfig -RepoRoot $RepoRoot
   } finally {
     Remove-Item -LiteralPath $pfxFile -Force -ErrorAction SilentlyContinue
+    Remove-WorkDir
     Remove-Variable passwordPlain, password, pfxB64 -ErrorAction SilentlyContinue
   }
   Write-Note 'The temporary PFX was deleted.'
