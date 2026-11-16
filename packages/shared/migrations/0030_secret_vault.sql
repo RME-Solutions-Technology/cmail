@@ -8,8 +8,10 @@
 -- D1. A D1 export, Time Travel restore or backup therefore holds no usable
 -- secret; restoring vault rows needs the same CMAIL_VAULT_KEY.
 --   id:          random UUID, bound into the additional authenticated data
---                (AAD) together with name, version and purpose, so a row's
---                ciphertext cannot be moved to another row or name.
+--                (AAD) together with the instance id, name, version and
+--                purpose, so a row's ciphertext cannot be moved to another
+--                row, name or instance. status is not bound (retiring a row
+--                must not need the key).
 --   name:        one of the registered names (packages/shared/src/secret-vault.ts).
 --   version:     1, 2, 3 ... per name; a new value is a new version.
 --   purpose:     the registered purpose, also bound into the AAD.
@@ -22,13 +24,18 @@
 --                certificate's notAfter; informational in this release.
 --   Times are epoch milliseconds; created_by is a cMail user id, never a value.
 --
+-- secret_vault_instance is a single row with this instance's random vault id,
+-- created by the Worker on the first vault write (INSERT OR IGNORE) and bound
+-- into every AAD, so a row copied to another instance that shares the same
+-- key does not decrypt.
+--
 -- setup_run is one Microsoft 365 setup-wizard session (filled by a later
 -- release): the manager who started it, the step state machine and plans
 -- (no secrets), and the session's delegated tokens as one encrypted blob
--- under the same vault key (AAD = run id + purpose), deleted at finish,
+-- under the same vault key (AAD = instance id + run id + purpose), deleted at finish,
 -- disconnect or expiry (at most 90 minutes).
 --
--- Upgrade note: additive only (two new tables and their indexes). Apply with
+-- Upgrade note: additive only (three new tables and their indexes). Apply with
 -- the normal `pnpm db:migrate`. No existing row changes. Does not depend on
 -- 0022 to 0029.
 
@@ -51,6 +58,12 @@ CREATE TABLE IF NOT EXISTS secret_vault (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_secret_vault_one_active
   ON secret_vault(name) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_secret_vault_kek ON secret_vault(kek_id);
+
+CREATE TABLE IF NOT EXISTS secret_vault_instance (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  instance_id TEXT NOT NULL CHECK (length(instance_id) BETWEEN 1 AND 64),
+  created_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS setup_run (
   id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 64),

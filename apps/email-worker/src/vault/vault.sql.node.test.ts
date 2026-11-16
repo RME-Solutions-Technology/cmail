@@ -163,7 +163,7 @@ describe('vault store', () => {
     await expect(resolveSecret(env, 'm365.sync.client_secret')).rejects.toMatchObject({ code: 'key_unavailable' });
     // Without the previous key, old rows are counted as unreadable, never dropped.
     sqlite.exec(`UPDATE secret_vault SET kek_id = 'v1-0000000000000000' WHERE version = 1`);
-    expect(await rewrapVault(after, MANAGER)).toMatchObject({ rewrapped: 0, unreadable: 1, remaining: 1 });
+    expect(await rewrapVault(after, MANAGER)).toMatchObject({ rewrapped: 0, unreadable: 1, remaining: 0 });
     expect(Number((sqlite.prepare('SELECT COUNT(*) AS n FROM secret_vault').get() as { n: number }).n)).toBe(2);
   });
 
@@ -241,5 +241,70 @@ describe('vault RPC over the private binding', () => {
     const retire = await rpc(env, 'retire', { actorId: MANAGER, name: 'm365.sync.client_secret' });
     expect(await retire.json()).toEqual({ ok: true, retired: 1 });
     expect(logged.join('\n')).not.toContain(SECRET);
+  });
+});
+
+describe('vault review follow-ups', () => {
+  it('binds the instance: a row copied to another instance with the same key does not decrypt', async () => {
+    const a = setup();
+    const b = setup();
+    await putSecret(a.env, { name: 'm365.sync.client_secret', value: SECRET, actorId: MANAGER });
+    await putSecret(b.env, { name: 'm365.copyback.client_secret', value: OTHER, actorId: MANAGER });
+    const row = a.sqlite.prepare(`SELECT * FROM secret_vault WHERE name = 'm365.sync.client_secret'`).get() as Record<string, string | number | null>;
+    b.sqlite.prepare(`INSERT INTO secret_vault (id, name, version, purpose, kek_id, iv, ciphertext, status, not_after, created_at, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.version, row.purpose, row.kek_id, row.iv, row.ciphertext, row.status, row.not_after, row.created_at, row.created_by);
+    await expect(resolveSecret(b.env, 'm365.sync.client_secret')).rejects.toMatchObject({ code: 'decrypt_failed' });
+    // Without an instance row nothing decrypts either.
+    a.sqlite.exec('DELETE FROM secret_vault_instance');
+    await expect(resolveSecret(a.env, 'm365.sync.client_secret')).rejects.toMatchObject({ code: 'decrypt_failed' });
+  });
+
+  it('refuses a nonce of the wrong length', async () => {
+    const ring = await loadKeyring({ CMAIL_VAULT_KEY: KEY_A });
+    const aad = additionalData('test', ['row-1']);
+    const sealed = await seal(ring, aad, SECRET);
+    await expect(open(ring, aad, { ...sealed, iv: btoa('short') })).rejects.toMatchObject({ code: 'decrypt_failed' });
+  });
+
+  it('reports a lost race for the same version as write_conflict and keeps the winner', async () => {
+    const { env } = setup();
+    await putSecret(env, { name: 'm365.sync.client_secret', value: SECRET, actorId: MANAGER });
+    // The loser read MAX(version) before the winner wrote: simulate that read.
+    const real = env.DB.prepare.bind(env.DB);
+    const racing = { ...env, DB: { ...env.DB, batch: env.DB.batch.bind(env.DB), prepare: (sql: string) => (/MAX\(version\)/.test(sql)
+      ? { bind: () => ({ first: async () => ({ v: null }) }) } as unknown as D1PreparedStatement
+      : real(sql)) } as unknown as D1Database };
+    await expect(putSecret(racing, { name: 'm365.sync.client_secret', value: OTHER, actorId: MANAGER })).rejects.toMatchObject({ code: 'write_conflict' });
+    expect(await resolveSecret(env, 'm365.sync.client_secret')).toEqual({ source: 'vault', value: SECRET, version: 1 });
+  });
+
+  it('says not_installed before migration 0030', async () => {
+    const missing = { prepare: () => ({ bind: () => ({ first: async () => { throw new Error('D1_ERROR: no such table: secret_vault'); } }) }) } as unknown as D1Database;
+    await expect(putSecret({ DB: missing, CMAIL_VAULT_KEY: KEY_A }, { name: 'm365.sync.client_secret', value: SECRET, actorId: MANAGER })).rejects.toMatchObject({ code: 'not_installed' });
+    expect((await vaultStatus({ DB: { prepare: () => ({ all: async () => { throw new Error('D1_ERROR: no such table: secret_vault'); } }) } as unknown as D1Database, CMAIL_VAULT_KEY: KEY_A })).installed).toBe(false);
+  });
+
+  it('refuses a paused manager and audits the refusal by code only', async () => {
+    const { env, sqlite } = setup();
+    sqlite.exec(`INSERT INTO users (id, email, role, status) VALUES ('user-paused-1', 'paused@example.test', 'manager', 'paused')`);
+    const response = await rpc(env, 'put', { actorId: 'user-paused-1', name: 'm365.sync.client_secret', value: SECRET });
+    expect(response.status).toBe(400);
+    const rows = sqlite.prepare(`SELECT actor_id, event_type, target, detail FROM audit_log WHERE event_type = 'vault.request_refused'`).all() as Array<Record<string, string | null>>;
+    expect(rows).toEqual([{ actor_id: null, event_type: 'vault.request_refused', target: 'put', detail: 'Refused vault put: not_manager' }]);
+    expect(logged.join('\n')).toContain('not_manager');
+    expect(logged.join('\n')).not.toContain('user-paused-1');
+    expect(logged.join('\n')).not.toContain(SECRET);
+  });
+
+  it('rewrap skips rows that fail under the previous key, so remaining reaches 0', async () => {
+    const { env, sqlite } = setup();
+    await putSecret(env, { name: 'm365.sync.client_secret', value: SECRET, actorId: MANAGER });
+    await putSecret(env, { name: 'm365.copyback.client_secret', value: OTHER, actorId: MANAGER });
+    // Corrupt one row's ciphertext (still under the previous key).
+    sqlite.exec(`UPDATE secret_vault SET ciphertext = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAA' WHERE name = 'm365.sync.client_secret'`);
+    const rotating = { ...env, CMAIL_VAULT_KEY: KEY_B, CMAIL_VAULT_KEY_PREVIOUS: KEY_A };
+    expect(await rewrapVault(rotating, MANAGER)).toMatchObject({ rewrapped: 1, unreadable: 1, remaining: 0 });
+    expect(await rewrapVault(rotating, MANAGER)).toMatchObject({ rewrapped: 0, unreadable: 1, remaining: 0 });
+    expect(Number((sqlite.prepare('SELECT COUNT(*) AS n FROM secret_vault').get() as { n: number }).n)).toBe(2);
   });
 });

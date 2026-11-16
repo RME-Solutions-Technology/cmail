@@ -1,6 +1,8 @@
 // Private vault RPC for the web app (docs/secret-vault.md), reached only over
 // the EMAIL_SERVICE service binding (the caller in index.ts already refuses
-// every public hostname). Only the allow-listed operations exist; there is no
+// every public hostname). The binding is the trust boundary: the Worker cannot
+// see the browser session, so the web route that calls it (setup wizard,
+// PR 2+) must itself require a signed-in manager session and a CSRF check. Only the allow-listed operations exist; there is no
 // operation that returns a value. Every write names a cMail user id that must
 // be an active manager, checked here again in D1. Responses and logs carry
 // codes, names, versions and key ids only.
@@ -11,7 +13,7 @@ import {
   type VaultRpcOperation,
 } from '@cmail/shared/secret-vault';
 import { VaultError } from './crypto';
-import { putSecret, retireSecret, rewrapVault, vaultStatus, type VaultEnv } from './store';
+import { auditVaultRefusal, putSecret, retireSecret, rewrapVault, vaultStatus, type VaultEnv } from './store';
 
 const PREFIX = '/internal/vault/';
 const MAX_BODY_BYTES = 64 * 1024;
@@ -72,7 +74,12 @@ export async function handleVaultRpc(request: Request, env: VaultEnv): Promise<R
     if (operation === 'status') return Response.json({ ok: true, status: await vaultStatus(env) });
     const body = await readBody(request);
     if (!body) return fail('invalid_request');
-    if (!(await isActiveManager(env.DB, body.actorId))) return fail('invalid_request');
+    if (!(await isActiveManager(env.DB, body.actorId))) {
+      // Code only: never the supplied actor id, name or value.
+      console.warn('Vault RPC refused', { operation, code: 'not_manager' });
+      await auditVaultRefusal(env.DB, operation, 'not_manager');
+      return fail('invalid_request');
+    }
     const actorId = body.actorId as string;
     if (operation === 'rewrap') return Response.json({ ok: true, ...(await rewrapVault(env, actorId)) });
     if (!isVaultSecretName(body.name)) return fail('unknown_name');
