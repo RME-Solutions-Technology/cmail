@@ -64,7 +64,8 @@ import {
   suppressionApiAvailable,
   unblockRecipient,
 } from '#lib/server/suppressions.js';
-import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from '#lib/server/recipient-delivery.js';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery, sendingDomainRefusal } from '#lib/server/recipient-delivery.js';
+import { addressDomain, orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
 import {
   deriveReplyThreading,
   safeMessageId,
@@ -597,6 +598,18 @@ export const actions: Actions = {
        WHERE m.address = ? AND ma.user_id = ? AND ma.permissions IN ('send-as', 'full') AND m.status = 'active'`,
     ).bind(from, locals.user.id).first<{ id: string; address: string; display_name: string }>();
     if (!mailbox) return fail(403, { error: 'You don\'t have permission to send from this address' });
+    let domains: OrgDomains;
+    try {
+      domains = await orgDomains(env, env.DB);
+    } catch (caught) {
+      console.error('Organisation domains could not be read for a send', caught instanceof Error ? caught.message : 'unknown');
+      return fail(503, { error: 'Delivery settings are temporarily unavailable. Your draft is safe; try again shortly.' });
+    }
+    if (!domains.primary) {
+      return fail(503, { error: 'Mail domain is not configured. Contact an administrator.' });
+    }
+    const sendingRefused = sendingDomainRefusal(mailbox.address, domains);
+    if (sendingRefused) return fail(403, { error: sendingRefused });
     const fromName = sanitizeSenderDisplayName(
       mailbox.display_name.trim() || locals.user.display_name.trim(),
     );
@@ -666,11 +679,11 @@ export const actions: Actions = {
       `SELECT address, id FROM mailboxes WHERE status = 'active' AND address IN (${allRecipients.map(() => '?').join(',')})`,
     ).bind(...allRecipients).all<{ address: string; id: string }>();
     // With the Exchange mirror and "Send colleague mail through Exchange" on,
-    // recipients on the Exchange-hosted domain go through the provider so
-    // Exchange (and Outlook) gets the message too.
+    // recipients on the organisation's domains (all Exchange-hosted) go through
+    // the provider so Exchange (and Outlook) gets the message too.
     let hostedDomains: ReadonlySet<string>;
     try {
-      hostedDomains = await exchangeHostedDomains(env.DB, normalizeDomain(env.MAIL_DOMAIN) || '');
+      hostedDomains = await exchangeHostedDomains(env.DB, domains.domains);
     } catch (caught) {
       console.error('Exchange mirror switches could not be read for a send', caught instanceof Error ? caught.message : 'unknown');
       return fail(503, { error: 'Delivery settings are temporarily unavailable. Your draft is safe; try again shortly.' });
@@ -714,12 +727,12 @@ export const actions: Actions = {
       signature.text,
       preparedBody.quotedText,
     ].filter(Boolean).join('\n\n');
-    const mailDomain = normalizeDomain(env.MAIL_DOMAIN);
-    if (!mailDomain) {
-      return fail(503, { error: 'Mail domain is not configured. Contact an administrator.' });
-    }
+    // The Message-ID uses the From domain when it is an organisation domain
+    // (today always the primary: see the check above), else MAIL_DOMAIN.
+    const fromDomain = addressDomain(mailbox.address);
+    const messageIdDomain = domains.domains.includes(fromDomain) ? fromDomain : domains.primary;
     const messageId = generateId();
-    const localMessageIdHeader = `<${messageId}@${mailDomain}>`;
+    const localMessageIdHeader = `<${messageId}@${messageIdDomain}>`;
 
     const outboundEmail: OutboundEmail | null = hasExternalRecipients ? {
       from,

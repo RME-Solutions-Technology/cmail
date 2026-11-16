@@ -1,8 +1,8 @@
-// Test-only fake of the three Microsoft endpoints the sync uses: the token
-// endpoint, users/delta and $batch (checkMemberGroups, and
+// Test-only fake of the Microsoft endpoints the sync uses: the token
+// endpoint, users/delta, domains and $batch (checkMemberGroups, and
 // mailboxSettings/userPurpose reads for shared mailbox detection). Fixture data only:
 // placeholder GUIDs and example.test addresses.
-import { GRAPH_ROOT, INITIAL_DELTA_URL, type GraphUser } from '../graph';
+import { DOMAINS_URL, GRAPH_ROOT, INITIAL_DELTA_URL, type GraphUser } from '../graph';
 
 export const TENANT_ID = '00000000-0000-0000-0000-000000000000';
 export const CLIENT_ID = '00000000-0000-0000-0000-000000000001';
@@ -52,6 +52,8 @@ export interface FakeGraph {
   /** Object ids whose userPurpose was read, in order (one entry per batch item). */
   purposeReads: string[];
   tokenReplies: Reply[];
+  /** The tenant's domains (GET /domains). Default: DOMAIN and an initial domain, both verified. */
+  domains: Array<{ id: string; isVerified: boolean; isInitial?: boolean }>;
 }
 
 export function deltaUrl(token: string) {
@@ -66,6 +68,10 @@ export function fakeGraph(): FakeGraph {
   const purposeReads: string[] = [];
   const calls: string[] = [];
   const tokenReplies: Reply[] = [];
+  const domains: FakeGraph['domains'] = [
+    { id: DOMAIN, isVerified: true },
+    { id: 'tenant.onmicrosoft.com', isVerified: true, isInitial: true },
+  ];
 
   function chain(start: string, data: GraphUser[][], prefix: string, finalToken: string) {
     data.forEach((value, index) => {
@@ -126,6 +132,7 @@ export function fakeGraph(): FakeGraph {
         },
       });
     }
+    if (url === DOMAINS_URL) return respond({ status: 200, body: { value: domains } });
     const page = pages.get(url);
     if (page) return respond(page);
     return respond({ status: 404, body: { error: { code: 'Request_ResourceNotFound' } } });
@@ -138,6 +145,7 @@ export function fakeGraph(): FakeGraph {
     purposes,
     purposeReads,
     tokenReplies,
+    domains,
     setReconcile(data, deltaToken = 'delta-1') {
       chain(INITIAL_DELTA_URL, data, `full-${deltaToken}`, deltaToken);
     },

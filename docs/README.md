@@ -67,6 +67,7 @@ All off by default, each with its own Admin switch. Order and setup:
 with scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
 
 - [Microsoft 365 sync](m365-sync.md): keep accounts and shared mailboxes in step with the tenant.
+- [Multiple mail domains](multi-domain.md): every verified domain of the tenant, found by the sync, no setup.
 - [Microsoft 365 welcome emails](m365-welcome-emails.md): first sign-in steps for each new synced person.
 - [Shared mailbox access from Exchange Online](m365-mailbox-permissions.md): copy Full Access and Send As daily.
 - [Exchange mirror](exchange-mirror.md): a live copy of every mailbox from one journal rule.

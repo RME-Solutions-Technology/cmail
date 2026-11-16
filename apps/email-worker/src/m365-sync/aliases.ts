@@ -5,8 +5,9 @@
 // Each run (at most once per M365_SYNC_INTERVAL_MINUTES, on the sync's cron)
 // reads every user's proxyAddresses from Microsoft Graph (the same read-only
 // app and User.Read.All permission as the sync), keeps the smtp: entries on
-// MAIL_DOMAIN of objects the sync has linked to a cmail mailbox, and makes
-// mailbox_aliases match. Rules:
+// the organisation's domains (orgDomains: MAIL_DOMAIN plus the tenant's
+// verified domains the sync discovered) of objects the sync has linked to a
+// cmail mailbox, and makes mailbox_aliases match. Rules:
 // - An alias is never another mailbox's own address (any status): such an
 //   address is refused and counted as a conflict. The database enforces the
 //   same (migration 0027 triggers).
@@ -34,6 +35,8 @@ import {
   type AliasSyncCounts,
   type AliasSyncState,
 } from '@cmail/shared/exchange-mirror';
+import { domainIn, orgDomains } from '@cmail/shared/org-domains';
+import type { OrgDomainSet } from './classify';
 import { ALIAS_USERS_URL, GraphClient, GraphError } from './graph';
 import type { M365SyncWorkerEnv } from './sync';
 
@@ -59,15 +62,15 @@ interface LinkRow {
   mailbox_id: string | null;
 }
 
-/** The on-domain smtp addresses in a proxyAddresses list, lower case, unique. */
-export function smtpAliases(proxyAddresses: readonly string[], mailDomain: string): string[] {
+/** The smtp addresses on the organisation's domains in a proxyAddresses list, lower case, unique. */
+export function smtpAliases(proxyAddresses: readonly string[], domains: OrgDomainSet): string[] {
   const out = new Set<string>();
   for (const entry of proxyAddresses) {
     const match = /^smtp:(.+)$/i.exec(entry.trim());
     if (!match) continue;
     const address = (match[1] || '').trim().toLowerCase();
     if (address.length > 320 || !ADDRESS.test(address)) continue;
-    if (address.slice(address.lastIndexOf('@') + 1) !== mailDomain) continue;
+    if (!domainIn(address.slice(address.lastIndexOf('@') + 1), domains)) continue;
     out.add(address);
   }
   return [...out];
@@ -127,6 +130,8 @@ export async function runAliasSyncTick(env: M365SyncWorkerEnv, deps: AliasSyncDe
     const config = check.config;
 
     try {
+      // The organisation's domains, as the sync last discovered them.
+      const domains = new Set((await orgDomains(env, db)).domains);
       // 1. Read every user's proxyAddresses (whole listing or nothing).
       const graph = new GraphClient({
         tenantId: config.tenantId,
@@ -146,7 +151,7 @@ export async function runAliasSyncTick(env: M365SyncWorkerEnv, deps: AliasSyncDe
         pages += 1;
         usersSeen += page.users.length;
         for (const user of page.users) {
-          const aliases = smtpAliases(user.proxyAddresses, config.mailDomain);
+          const aliases = smtpAliases(user.proxyAddresses, domains);
           if (aliases.length) byObject.set(user.id.toLowerCase(), aliases);
         }
         url = page.nextLink;

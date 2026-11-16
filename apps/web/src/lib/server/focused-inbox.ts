@@ -21,6 +21,7 @@ import {
   type FocusClass,
   type FocusDecision,
 } from '@cmail/shared/focused-inbox';
+import { loadOrgDomainsCache } from '@cmail/shared/org-domains';
 import { messageOwnershipPredicate } from './message-access';
 
 export { focusedInboxOrgEnabled };
@@ -474,6 +475,9 @@ export async function runFocusBackfill(
       const correspondent = new Set((correspondents.results || []).map((row) => row.address));
       const counts = new Map((frequent.results || []).map((row) => [row.address, Number(row.n) || 0]));
       const mailDomain = (options.mailDomain || '').trim().toLowerCase();
+      // The organisation's other domains (docs/multi-domain.md); a failed read
+      // fails this run like any other lookup here.
+      const orgDomains = (await loadOrgDomainsCache(db)).domains;
 
       const groups = new Map<string, { decision: FocusDecision; ids: string[] }>();
       for (const row of rows) {
@@ -485,6 +489,7 @@ export async function runFocusBackfill(
         const decision = classifyFocus({
           sender,
           mailDomain,
+          orgDomains,
           signals: null,
           senderAuthenticated: row.authenticated,
           sharedMailbox,

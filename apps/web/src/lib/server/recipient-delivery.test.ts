@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from './recipient-delivery';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery, sendingDomainRefusal } from './recipient-delivery';
 
 describe('recipient delivery planning', () => {
   it('keeps purely internal delivery on the direct local path', () => {
@@ -172,24 +172,25 @@ describe('Exchange-hosted recipients (mirror and "Send colleague mail through Ex
       { exchange_mirror_enabled: 'true', exchange_mirror_colleague_send: 'false' },
       { exchange_mirror_enabled: 'false', exchange_mirror_colleague_send: 'true' },
     ]) {
-      expect([...await exchangeHostedDomains(switchDb(settings).db, 'example.com')]).toEqual([]);
+      expect([...await exchangeHostedDomains(switchDb(settings).db, ['example.com'])]).toEqual([]);
     }
   });
 
-  it('reads the mail domain as Exchange-hosted while both switches are on', async () => {
+  it('reads every organisation domain as Exchange-hosted while both switches are on', async () => {
     const { db, binds } = switchDb(BOTH_ON);
-    expect([...await exchangeHostedDomains(db, 'example.com')]).toEqual(['example.com']);
+    expect([...await exchangeHostedDomains(db, ['example.com'])]).toEqual(['example.com']);
+    expect([...await exchangeHostedDomains(db, ['example.com', 'example.org'])]).toEqual(['example.com', 'example.org']);
     expect(binds[0]?.slice(1)).toEqual(['exchange_mirror_enabled', 'exchange_mirror_colleague_send']);
   });
 
   it('never reads the switches without a mail domain', async () => {
     const { db, binds } = switchDb(BOTH_ON);
-    expect([...await exchangeHostedDomains(db, '')]).toEqual([]);
+    expect([...await exchangeHostedDomains(db, [])]).toEqual([]);
     expect(binds).toEqual([]);
   });
 
   it('passes a switch read failure to the caller (the send fails closed, never delivers locally by guess)', async () => {
-    await expect(exchangeHostedDomains(switchDb(new Error('D1 down')).db, 'example.com')).rejects.toThrow('D1 down');
+    await expect(exchangeHostedDomains(switchDb(new Error('D1 down')).db, ['example.com'])).rejects.toThrow('D1 down');
   });
   const rows = [
     { address: 'alice@example.com', id: 'm1' },
@@ -230,5 +231,24 @@ describe('Exchange-hosted recipients (mirror and "Send colleague mail through Ex
       providerRecipients: ['alice@example.com'],
       localRecipients: [],
     });
+  });
+});
+
+describe('sending domain (multi-domain phase 1)', () => {
+  const domains = { primary: 'example.com', domains: ['example.com', 'example.org'] };
+  it('allows the primary domain, case-insensitively', () => {
+    expect(sendingDomainRefusal('pat@example.com', domains)).toBeNull();
+    expect(sendingDomainRefusal('Pat@Example.COM', domains)).toBeNull();
+  });
+
+  it('refuses another organisation domain with a clear message', () => {
+    expect(sendingDomainRefusal('desk@example.org', domains)).toBe(
+      "Sending from @example.org isn't set up yet. You can read and file this mailbox's mail; send from an @example.com address for now.",
+    );
+  });
+
+  it('leaves any domain that is not a discovered one to the old checks (single-domain unchanged)', () => {
+    expect(sendingDomainRefusal('legacy@example.net', domains)).toBeNull();
+    expect(sendingDomainRefusal('legacy@example.net', { primary: 'example.com', domains: ['example.com'] })).toBeNull();
   });
 });

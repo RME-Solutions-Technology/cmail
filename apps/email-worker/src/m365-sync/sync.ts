@@ -14,6 +14,8 @@
 //    - delta: the saved delta link, every M365_SYNC_INTERVAL_MINUTES.
 //    With M365_DETECT_SHARED_MAILBOXES on, each fetched page also gets
 //    Exchange's mailbox type for its on-domain objects (purpose.ts, cached).
+//    'On-domain' means on any organisation domain: MAIL_DOMAIN plus the
+//    tenant's verified domains (domains.ts, docs/multi-domain.md).
 //    Each round runs fetch -> (sweep) -> pauses. Pauses are queued until the
 //    end and pass the mass-pause brake first: a round that would pause too
 //    many linked people, or a reconciliation that returned nothing, is held
@@ -38,7 +40,9 @@ import {
   type M365SyncState,
 } from '@cmail/shared/m365-sync';
 import { applyEntries, applyQueuedPause, linkedPeopleInScope, sweepUnseen, type ApplyContext } from './apply';
-import { classify, needsGroupCheck } from './classify';
+import { orgDomainsFrom } from '@cmail/shared/org-domains';
+import { classify, needsGroupCheck, type OrgDomainSet } from './classify';
+import { refreshOrgDomains } from './domains';
 import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser } from './graph';
 import { clearPurposes, prunePurposes, purposeCacheInstalled, resolvePurposes, type ResolvedPurpose } from './purpose';
 
@@ -146,6 +150,7 @@ async function saveState(db: D1Database, state: M365SyncState): Promise<void> {
 function toPending(
   users: GraphUser[],
   config: M365SyncConfig,
+  domains: OrgDomainSet,
   memberships: Map<string, Set<string>>,
   purposes: Map<string, ResolvedPurpose> | null = null,
 ): M365PendingEntry[] {
@@ -156,7 +161,7 @@ function toPending(
     const id = user.id.toLowerCase();
     const cls = classify(
       user,
-      config.mailDomain,
+      domains,
       groups,
       memberships.get(user.id) ?? memberships.get(id) ?? null,
       config.mailboxPlanIds,
@@ -313,6 +318,22 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
       sleep: deps.sleep,
       now,
     });
+    // The organisation's domains (docs/multi-domain.md): MAIL_DOMAIN plus the
+    // tenant's verified domains, read at most daily (or on Sync now). A failed
+    // read keeps the last good list, so a Graph problem never shrinks scope.
+    // Its own client, so this daily read never uses the page budget below.
+    const domainReader = {
+      verifiedDomains: () => new GraphClient({
+        tenantId: config.tenantId,
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        fetcher: deps.fetcher,
+        sleep: deps.sleep,
+        now,
+      }).verifiedDomains(),
+    };
+    const domainCache = await refreshOrgDomains(db, domainReader, now(), { force: requested });
+    const domains: ReadonlySet<string> = new Set(orgDomainsFrom(config.mailDomain, domainCache).domains);
     const groupIds = [config.scopeGroupId, config.sharedGroupId].filter((id): id is string => Boolean(id));
     let d1Ops = 0;
     let finished = false;
@@ -347,7 +368,7 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
           throw caught;
         }
         const needCheck = groupIds.length
-          ? page.users.filter((user) => needsGroupCheck(user, config.mailDomain, { scope: config.scopeGroupId, shared: config.sharedGroupId })).map((user) => user.id)
+          ? page.users.filter((user) => needsGroupCheck(user, domains, { scope: config.scopeGroupId, shared: config.sharedGroupId })).map((user) => user.id)
           : [];
         // If this throttles, the page is not saved and is fetched again on
         // resume (one extra page request; nothing is applied twice).
@@ -365,7 +386,7 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
           // twice the per-page budget so a full page (999 objects at most)
           // always fits in one run, even in dry run, which keeps no answers.
           const resolved = await resolvePurposes({
-            db, graph, round: current, users: page.users, mailDomain: config.mailDomain, exclude: inSharedGroup,
+            db, graph, round: current, users: page.users, domains, exclude: inSharedGroup,
             maxRequests: budgets.graph * 2,
           });
           d1Ops += resolved.ops;
@@ -374,7 +395,7 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
           if (!resolved.complete) break;
           purposes = resolved.purposes;
         }
-        current.pending = toPending(page.users, config, memberships, purposes);
+        current.pending = toPending(page.users, config, domains, memberships, purposes);
         current.fetched += page.users.length;
         current.nextLink = page.nextLink;
         if (page.deltaLink) current.finalDeltaLink = page.deltaLink;

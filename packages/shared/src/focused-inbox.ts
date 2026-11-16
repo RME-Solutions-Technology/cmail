@@ -24,6 +24,29 @@
 /** org_settings key of the manager switch. Absent or anything but 'true' = off. */
 export const ORG_SETTING_FOCUSED_INBOX = 'focused_inbox_enabled';
 
+/**
+ * org_settings key of the organisation's discovered domains: the same key as
+ * ORG_DOMAINS_SETTING in org-domains.ts (a test keeps them equal; this file
+ * has no imports).
+ */
+export const FOCUS_ORG_DOMAINS_SETTING = 'm365_verified_domains';
+
+/** The domains from that setting's JSON, lower case; [] for anything malformed. */
+export function focusOrgDomains(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as { domains?: unknown } | null;
+    if (!parsed || !Array.isArray(parsed.domains)) return [];
+    return parsed.domains
+      .filter((value): value is string => typeof value === 'string' && value.length <= 253)
+      .map((value) => value.toLowerCase())
+      .slice(0, 200);
+  } catch {
+    // A corrupt value only means no extra domains (MAIL_DOMAIN alone).
+    return [];
+  }
+}
+
 export const FOCUS_CLASSES = ['focused', 'other'] as const;
 export type FocusClass = (typeof FOCUS_CLASSES)[number];
 
@@ -210,11 +233,26 @@ export function focusHeaderSignals(headers: readonly HeaderLike[] | null | undef
 // ---------------------------------------------------------------------------
 // The classifier
 
+/**
+ * The sender's domain is MAIL_DOMAIN or another organisation domain. Only
+ * ever used together with a proven From (senderAuthenticated).
+ */
+export function isOrgSender(sender: string, mailDomain: string, orgDomains: readonly string[] = []): boolean {
+  const domain = senderDomain(sender);
+  if (!domain) return false;
+  return (Boolean(mailDomain) && domain === mailDomain) || orgDomains.includes(domain);
+}
+
 export interface FocusFacts {
   /** Header From address, lower-cased. */
   sender: string;
   /** MAIL_DOMAIN, lower-cased; '' when not configured. */
   mailDomain: string;
+  /**
+   * The organisation's other mail domains (docs/multi-domain.md), lower
+   * case. Absent or empty: MAIL_DOMAIN alone, as before.
+   */
+  orgDomains?: readonly string[];
   /** null when headers were not available (internal delivery, one-off sort). */
   signals: FocusHeaderSignals | null;
   /**
@@ -251,7 +289,7 @@ export interface FocusDecision {
  *     even when their mail carries list headers;
  *  5. list and bulk mail goes to Other (List-Id or List-Unsubscribe,
  *     Precedence bulk/list/junk);
- *  6. an authenticated colleague (same MAIL_DOMAIN) stays in Focused;
+ *  6. an authenticated colleague (any organisation domain) stays in Focused;
  *  7. automated-looking senders, then (personal mailboxes only) senders who
  *     write very often without ever being written to, go to Other;
  *  8. everything else stays in Focused.
@@ -266,7 +304,7 @@ export function classifyFocus(facts: FocusFacts): FocusDecision {
   if (facts.senderAuthenticated && facts.correspondent) return { focusClass: 'focused', reason: 'correspondent' };
   if (signals?.mailingList) return { focusClass: 'other', reason: 'mailing_list' };
   if (signals?.bulkPrecedence) return { focusClass: 'other', reason: 'bulk_precedence' };
-  if (facts.senderAuthenticated && facts.mailDomain && senderDomain(facts.sender) === facts.mailDomain) {
+  if (facts.senderAuthenticated && isOrgSender(facts.sender, facts.mailDomain, facts.orgDomains)) {
     return { focusClass: 'focused', reason: 'internal' };
   }
   if (isAutomatedSender(facts.sender)) return { focusClass: 'other', reason: 'automated_sender' };
@@ -284,12 +322,13 @@ export function classifyFocus(facts: FocusFacts): FocusDecision {
 export function focusScansNeeded(input: {
   sender: string;
   mailDomain: string;
+  orgDomains?: readonly string[];
   signals: FocusHeaderSignals | null;
   senderAuthenticated: boolean;
 }): { correspondent: boolean; frequent: boolean } {
   const s = input.signals;
   const headerDecides = Boolean(s && (s.deliveryReport || s.autoSubmitted || s.mailingList || s.bulkPrecedence));
-  const internal = input.senderAuthenticated && Boolean(input.mailDomain) && senderDomain(input.sender) === input.mailDomain;
+  const internal = input.senderAuthenticated && isOrgSender(input.sender, input.mailDomain, input.orgDomains);
   return {
     correspondent: input.senderAuthenticated && !(s && (s.deliveryReport || s.autoSubmitted)),
     frequent: !headerDecides && !internal && !isAutomatedSender(input.sender),
@@ -308,7 +347,9 @@ const jsonOrEmpty = (column: string) => `CASE WHEN json_valid(${column}) THEN ${
  * when it is taken, so with either switch off this reads two small rows, and
  * a scan the headers already made pointless (?5, ?6 = 0) is skipped.
  * ?1 mailbox id, ?2 sender address, ?3 JSON array of domain candidates,
- * ?4 the org_settings key, ?5 run the Sent scan, ?6 run the frequency count.
+ * ?4 the org_settings key, ?5 run the Sent scan, ?6 run the frequency count,
+ * ?7 the org_settings key of the organisation's discovered domains (read only
+ * while sorting is on, so multi-domain costs no extra statement).
  */
 export const FOCUS_LOOKUP_SQL = `
 WITH cfg AS (
@@ -328,6 +369,7 @@ SELECT
     WHERE mailbox_id = ?1 AND kind = 'domain' AND pattern IN (SELECT value FROM json_each(?3))
     ORDER BY length(pattern) DESC LIMIT 1
   ) END AS domain_class,
+  CASE WHEN cfg.active THEN (SELECT value FROM org_settings WHERE key = ?7) END AS org_domains,
   CASE WHEN cfg.active THEN (SELECT type = 'shared' FROM mailboxes WHERE id = ?1) ELSE 0 END AS shared_mailbox,
   CASE WHEN cfg.active AND ?5 THEN EXISTS (
     SELECT 1 FROM (
@@ -353,6 +395,7 @@ interface FocusLookupRow {
   active: number | null;
   address_class: string | null;
   domain_class: string | null;
+  org_domains: string | null;
   shared_mailbox: number | null;
   correspondent: number | null;
   recent_from_sender: number | null;
@@ -396,12 +439,14 @@ export async function decideFocusAtDelivery(db: D1Database, input: DeliveryFocus
         ORG_SETTING_FOCUSED_INBOX,
         scans.correspondent ? 1 : 0,
         scans.frequent ? 1 : 0,
+        FOCUS_ORG_DOMAINS_SETTING,
       )
       .first<FocusLookupRow>();
     if (!row || Number(row.active) !== 1) return null;
     return classifyFocus({
       sender,
       mailDomain,
+      orgDomains: focusOrgDomains(row.org_domains),
       signals,
       senderAuthenticated,
       addressOverride: isFocusClass(row.address_class) ? row.address_class : null,

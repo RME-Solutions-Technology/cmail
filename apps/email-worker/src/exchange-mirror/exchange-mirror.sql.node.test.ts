@@ -176,6 +176,34 @@ describe('Exchange mirror: filing', () => {
     expect(t.waitUntil).not.toHaveBeenCalled();
   });
 
+  it('files by address exactly as before until other domains are discovered, then only on organisation domains', async () => {
+    // docs/multi-domain.md. desk@example.org exists; example.org is an
+    // organisation domain only once the sync has discovered it.
+    const report = (n: number) => journalReport({
+      envelope: ['Sender: alice@example.test', 'Subject: Hello', `Message-Id: <multi-${n}@example.test>`, 'To: desk@example.org', 'To: carol@example.test'],
+      inner: innerMessage({ messageId: `<multi-${n}@example.test>` }),
+    });
+    const discover = (domains: string[]) => t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify({ domains, refreshedAt: 1, attemptedAt: 1, problem: '' }));
+    const inboundFor = (n: number) => t.messages()
+      .filter((row) => row.direction === 'inbound' && row.message_id_header === `<multi-${n}@example.test>`)
+      .map((row) => row.mailbox_id);
+    const t = setup();
+    t.sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('mbx-desk', 'desk@example.org', 'shared', 'active')`).run();
+
+    await t.deliver(report(1));
+    expect(inboundFor(1)).toEqual(['mbx-carol', 'mbx-desk']);
+
+    discover(['example.net']);
+    await t.deliver(report(2));
+    expect(inboundFor(2)).toEqual(['mbx-carol']);
+    expect(t.days()[0]).toMatchObject({ unmatched: 1, last_problem: 'unmatched_domain' });
+
+    discover(['example.org']);
+    await t.deliver(report(3));
+    expect(inboundFor(3)).toEqual(['mbx-carol', 'mbx-desk']);
+    t.assertNothingSent();
+  });
   it('files to fresh imported aliases only, never to an alias of a disabled mailbox', async () => {
     const report = () => journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'To: Robert@example.test', 'To: ollie@example.test', 'To: carol@example.test'] });
     const withAliases = (options: { importOn: boolean; lastOkAgeMs: number | null }) => {

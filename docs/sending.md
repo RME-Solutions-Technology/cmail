@@ -5,7 +5,7 @@ applies_to: both
 audience: [operator, developer]
 switch: none
 last_reviewed: 2026-11-16
-related: [delivery-and-bounces.md, credentials.md]
+related: [delivery-and-bounces.md, credentials.md, multi-domain.md]
 ---
 
 # How sending works
@@ -73,8 +73,12 @@ before anything leaves cmail, unless the step says otherwise.
    carries its `draft_version`. Together they form an idempotency key. If a
    send with that key already exists, cmail resumes or reports it instead of
    sending again.
-4. **Permission.** The user needs **Send as** or **Full access** on the
-   sending mailbox. See [Shared mailboxes](shared-mailboxes.md).
+4. **Permission and From domain.** The user needs **Send as** or **Full
+   access** on the sending mailbox. See [Shared mailboxes](shared-mailboxes.md).
+   A mailbox on another of the organisation's discovered domains
+   ([Multiple mail domains](multi-domain.md)) can be read and filed, but a
+   send from it is refused with "Sending from @domain isn't set up yet"
+   until sending for that domain is built.
 5. **Attachments.** Up to 25 files and 20 MiB in total (but see the
    provider's size limit in step 9). Executable and script
    types (for example `.exe`, `.js`, `.ps1`) are refused. File names are
@@ -92,7 +96,7 @@ before anything leaves cmail, unless the step says otherwise.
 
    With the [Exchange mirror](exchange-mirror.md#mail-sent-from-cmail-to-colleagues)
    and its **Send colleague mail through Exchange** switch on (off by
-   default), recipients on the mail domain count as external: they go through
+   default), recipients on the organisation's mail domains count as external: they go through
    the provider to Exchange (and Outlook), and the mirror files their cmail
    copy from the journal report, once.
 
@@ -100,7 +104,9 @@ before anything leaves cmail, unless the step says otherwise.
 7. **Body.** HTML is the authored text, then the signature, then any quoted
    message, wrapped in the organisation's default font. A plain-text part is
    built alongside it. See [Email signatures](signatures.md).
-8. **Headers.** The Message-ID is `<uuid@MAIL_DOMAIN>`. Replies get
+8. **Headers.** The Message-ID is `<uuid@domain>`: the From domain when it
+   is an organisation domain (today always `MAIL_DOMAIN`, see step 4), else
+   `MAIL_DOMAIN`. Replies get
    `In-Reply-To` and `References` so threads stay together. Bcc is never
    written as a header; it travels only in the envelope.
 9. **Provider preflight.** cmail estimates the final message size before it

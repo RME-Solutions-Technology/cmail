@@ -5,7 +5,7 @@ applies_to: standby
 audience: [operator, manager]
 switch: "Admin > Exchange mirror"
 last_reviewed: 2026-11-16
-related: [onboarding-microsoft-365.md, credentials.md, standby-switch.md]
+related: [onboarding-microsoft-365.md, credentials.md, standby-switch.md, multi-domain.md]
 ---
 
 # Exchange mirror (warm standby from Exchange Online journaling)
@@ -119,7 +119,9 @@ Not mirrored:
 - Calendar items as calendar entries (an invitation is filed as a message
   only), contacts and drafts.
 - Recipients with no active cmail mailbox: they are counted as "unmatched"
-  and ignored.
+  and ignored. So is a mailbox left on a domain that is no longer one of the
+  organisation's domains ([Multiple mail domains](multi-domain.md)); the
+  day's latest problem then reads `unmatched_domain`.
 - Exchange's own spam verdict. A cmail organisation-wide sender **block**
   rule still files the copy to Spam, as on the normal path.
 - Messages larger than the limits in [Size limits](#size-limits).
@@ -140,12 +142,12 @@ checks below.
 
 By default, mail from cmail to a colleague who also has a cmail mailbox is
 filed straight into that mailbox, as on any instance. While Exchange holds
-the mail domain, that copy never reaches Exchange, so the colleague does not
-see it in Outlook.
+the organisation's mail domains ([Multiple mail domains](multi-domain.md)),
+that copy never reaches Exchange, so the colleague does not see it in Outlook.
 
 **Send colleague mail through Exchange** (Admin > Exchange mirror, **off by
-default**, acts only while the mirror is on) changes that: recipients on the
-mail domain are sent through the outbound provider like any external
+default**, acts only while the mirror is on) changes that: recipients on any
+of the organisation's mail domains are sent through the outbound provider like any external
 address. Exchange delivers the message to Outlook, the journal report comes
 back, and the mirror files the cmail copy once (the copy's id comes from the
 Message-ID, so a repeated report or a second delivery path files nothing
@@ -378,8 +380,11 @@ off by default) adds them:
   `SMTP:` is the primary address, `smtp:` the others, "Requires `$select` to
   retrieve"). Shared mailboxes are user objects too.
 - It needs the sync on and **out of dry run**; in dry run it only counts.
-- Only `smtp:` addresses on `MAIL_DOMAIN`, of objects the sync has linked to
-  a cmail mailbox (a person's own mailbox, or a shared mailbox), are kept.
+- Only `smtp:` addresses on the organisation's mail domains (`MAIL_DOMAIN`,
+  plus the tenant's verified domains the sync discovered:
+  [Multiple mail domains](multi-domain.md)), of objects the sync has linked
+  to a cmail mailbox (a person's own mailbox, or a shared mailbox), are kept.
+  `*.onmicrosoft.com` addresses are never kept.
 - An alias is **never** another mailbox's own address: such an address is
   refused and counted. An address claimed by two objects is refused for
   both. A database trigger enforces the same rule for any writer, and

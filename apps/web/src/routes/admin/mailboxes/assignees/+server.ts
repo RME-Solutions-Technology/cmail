@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { searchEligibleMailboxAssignees } from '#lib/server/mailbox-assignees.js';
+import { orgDomainsForDisplay } from '#lib/server/org-domains.js';
 import { normalizeDomain } from '#lib/server/validation.js';
 
 const PRIVATE_NO_STORE = { 'Cache-Control': 'private, no-store' };
@@ -14,8 +15,7 @@ export const GET: RequestHandler = async ({ locals, platform, url }) => {
   }
 
   const env = platform?.env;
-  const mailDomain = normalizeDomain(env?.MAIL_DOMAIN);
-  if (!env?.DB || !mailDomain) {
+  if (!env?.DB || !normalizeDomain(env?.MAIL_DOMAIN)) {
     return json({ error: 'Mailbox configuration is unavailable' }, { status: 503, headers: PRIVATE_NO_STORE });
   }
 
@@ -28,6 +28,9 @@ export const GET: RequestHandler = async ({ locals, platform, url }) => {
     );
   }
 
-  const assignees = await searchEligibleMailboxAssignees(env.DB, mailDomain, query, 8);
+  // Every organisation domain (docs/multi-domain.md); MAIL_DOMAIN alone if
+  // the list cannot be read (narrower, never wider).
+  const { domains } = await orgDomainsForDisplay(env);
+  const assignees = await searchEligibleMailboxAssignees(env.DB, domains, query, 8);
   return json(assignees, { headers: PRIVATE_NO_STORE });
 };
