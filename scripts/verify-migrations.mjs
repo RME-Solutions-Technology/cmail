@@ -461,10 +461,10 @@ try {
         WHERE name IN ('payload_hash', 'html_sha256', 'text_sha256')
           AND "notnull" = 1) AS outbound_digest_column_count,
       (SELECT COUNT(*) FROM signature_templates
-        WHERE id = 'sig-default' AND applies_to = '*') AS default_signature_count,
+        WHERE id = 'sig-default' AND applies_to = '*' AND is_enabled = 0) AS default_signature_count,
       (SELECT COUNT(*) FROM pragma_table_info('signature_templates')
         WHERE name = 'is_enabled' AND "notnull" = 1
-          AND dflt_value = '1') AS organisation_signature_enabled_column_count,
+          AND dflt_value = '0') AS organisation_signature_enabled_column_count,
       (SELECT COUNT(*) FROM pragma_table_info('personal_signatures')
         WHERE name IN ('user_id', 'html_body', 'plain_text_body', 'is_locked', 'updated_at', 'updated_by')) AS personal_signature_column_count,
       (SELECT COUNT(*) FROM pragma_table_info('compose_preferences')
