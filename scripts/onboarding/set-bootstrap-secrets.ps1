@@ -75,7 +75,7 @@ if ($PSCmdlet.ShouldProcess("Pages project $PagesProject", 'generate and store B
     Set-WranglerSecret -Name BOOTSTRAP_ADMIN_TOKEN -Value $token -PagesProject $PagesProject -RepoRoot $RepoRoot
     if ($TokenOutput -eq 'Clipboard') {
       Set-Clipboard -Value $token
-      Write-Note 'The token is on your clipboard. Paste it into the /bootstrap form only, then copy something else over it.'
+      Write-Note 'The token is on your clipboard. Paste it into the /bootstrap form only. Clipboard history (Windows Win+V, or a clipboard manager) may keep a copy: delete it there if history is on.'
     } else {
       Write-Warning 'Showing the one-time token once. Do not paste it into a URL, chat or ticket.'
       [Console]::Out.WriteLine($token)

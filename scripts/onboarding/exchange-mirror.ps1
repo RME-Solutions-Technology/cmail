@@ -123,7 +123,9 @@ if ($NewJournalAddress) {
       # Secret first, file second: a failed upload leaves no file, so a rerun starts clean.
       Set-WranglerSecret -Name M365_JOURNAL_ADDRESS -Value $address -WranglerConfig $WranglerConfig -RepoRoot $RepoRoot
       Set-Content -LiteralPath $JournalAddressFile -Value $address -Encoding ascii -NoNewline
-      if (-not $IsWindows) { & chmod 600 $JournalAddressFile }
+      # Only the current user may read it.
+      if ($IsWindows) { Invoke-Native -Command 'icacls' -Arguments @($JournalAddressFile, '/inheritance:r', '/grant:r', "$([Security.Principal.WindowsIdentity]::GetCurrent().Name):F") -Label 'icacls on the journal address file' | Out-Null }
+      else { Invoke-Native -Command 'chmod' -Arguments @('600', $JournalAddressFile) -Label 'chmod on the journal address file' | Out-Null }
     } finally { Remove-Variable address -ErrorAction SilentlyContinue }
   }
   Write-Step 'Next'

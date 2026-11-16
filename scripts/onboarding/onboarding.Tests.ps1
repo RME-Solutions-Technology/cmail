@@ -46,10 +46,15 @@ $global:MockGranted = @()
 $global:MockRoles = @('Global Administrator')
 $global:MockConsentApplies = $true
 $global:MockSecretMissing = $false
+$global:MockPutFails = $false
+$global:MockScopes = @()
+$global:MockFailRemote = $false
+$global:MockExoSps = @()
 
 function Reset-Mocks {
   $global:MockCalls.Clear(); $global:MockAppExists = $false; $global:MockGranted = @()
   $global:MockRoles = @('Global Administrator'); $global:MockConsentApplies = $true; $global:MockSecretMissing = $false
+  $global:MockPutFails = $false; $global:MockScopes = @(); $global:MockFailRemote = $false; $global:MockExoSps = @()
 }
 function Get-MockRoleId([string]$Value) { "00000000-0000-0000-0000-00000000$([Math]::Abs($Value.GetHashCode()) % 9000 + 1000)" }
 function Get-CallsOf([string]$Tool) { @($global:MockCalls | Where-Object Tool -EQ $Tool) }
@@ -60,6 +65,11 @@ function az {
   $global:LASTEXITCODE = 0
   switch -Regex ($line) {
     '^rest --method GET --url https://graph.microsoft.com/v1.0/me/transitiveMemberOf' { return $global:MockRoles }
+    '^rest --method GET --url \S+/oauth2PermissionGrants' { return ($global:MockScopes -join ' ') }
+    '^rest --method POST --url https://graph.microsoft.com/v1.0/oauth2PermissionGrants --body @(\S+)' {
+      $global:MockScopes = @((Get-Content -LiteralPath $Matches[1] -Raw | ConvertFrom-Json).scope -split ' ')
+      return
+    }
     '^rest --method POST --url \S+/appRoleAssignedTo --body @(\S+)' {
       $body = Get-Content -LiteralPath $Matches[1] -Raw | ConvertFrom-Json
       $global:MockGranted = @($global:MockGranted) + $body.appRoleId
@@ -77,6 +87,7 @@ function az {
     '^ad sp create' { return $global:Mock_spId }
     '^ad app permission admin-consent' {
       # Live, admin-consent once did not apply an app role: MockConsentApplies = $false copies that.
+      if ($global:MockConsentApplies) { $global:MockScopes = @('openid', 'email', 'profile') }
       if ($global:MockConsentApplies) {
         $global:MockGranted = @($global:MockCalls | Where-Object { $_.Tool -eq 'az' -and $_.Args -match '^ad sp show --id \S+ --query appRoles' } |
           ForEach-Object { Get-MockRoleId ([regex]::Match($_.Args, "value=='([^']+)'").Groups[1].Value) })
@@ -94,6 +105,7 @@ function pnpm {
   $line = $args -join ' '
   $global:MockCalls.Add([pscustomobject]@{ Tool = 'pnpm'; Args = $line; Stdin = $stdin })
   if ($global:MockSecretMissing -and $line -match 'secret delete') { $global:LASTEXITCODE = 1; return 'X [ERROR] Secret not found' }
+  if ($global:MockPutFails -and $line -match 'secret put') { $global:LASTEXITCODE = 1; return 'X [ERROR] Authentication error' }
   $global:LASTEXITCODE = 0
   'Success! Uploaded secret'
 }
@@ -206,6 +218,12 @@ try { $null = Invoke-Script 'new-signin-app.ps1' @{ TenantId = $global:Mock_tena
 Assert-True $threw 'sign-in app: did not stop without an app admin role'
 Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^ad app create').Count -eq 0) 'sign-in app: created an app before the role check'
 
+Reset-Mocks
+$global:MockConsentApplies = $false
+$null = Invoke-Script 'new-signin-app.ps1' @{ TenantId = $global:Mock_tenant; AppUrl = 'https://mail.example.com'; PagesProject = 'cmail-web'; GrantAdminConsent = $true; SkipSecret = $true; RepoRoot = $work }
+Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^rest --method POST --url https://graph.microsoft.com/v1.0/oauth2PermissionGrants').Count -eq 1) 'sign-in app: -GrantAdminConsent did not grant directly when admin-consent did not apply'
+Assert-True ((($global:MockScopes | Sort-Object) -join ' ') -eq 'email openid profile') 'sign-in app: delegated consent not openid email profile'
+
 # ---- Bootstrap ----------------------------------------------------------------
 Reset-Mocks
 $out = Invoke-Script 'set-bootstrap-secrets.ps1' @{ PagesProject = 'cmail-web'; AdminEmail = 'admin@example.com'; RepoRoot = $work }
@@ -256,7 +274,7 @@ function Get-TransportConfig { [pscustomobject]@{ JournalingReportNdrTo = $globa
 function Set-TransportConfig { param($JournalingReportNdrTo) $global:MockNdr = $JournalingReportNdrTo; $global:MockCalls.Add([pscustomobject]@{ Tool = 'exo'; Args = "Set-TransportConfig $JournalingReportNdrTo"; Stdin = '' }) }
 function Get-RemoteDomain { $global:MockRemote }
 function New-RemoteDomain { param($Name, $DomainName) $global:MockRemote = [pscustomobject]@{ Name = $Name; DomainName = $DomainName; TNEFEnabled = $null } }
-function Set-RemoteDomain { param($Identity, $TNEFEnabled) $global:MockRemote.TNEFEnabled = $TNEFEnabled }
+function Set-RemoteDomain { param($Identity, $TNEFEnabled) if ($global:MockFailRemote) { throw 'remote domain failed' }; $global:MockRemote.TNEFEnabled = $TNEFEnabled }
 function Remove-RemoteDomain { $global:MockRemote = $null }
 function Get-JournalRule { $global:MockRule }
 function New-JournalRule { param($Name, $JournalEmailAddress, $Scope, $Enabled) $global:MockRule = [pscustomobject]@{ Name = $Name; JournalEmailAddress = $JournalEmailAddress; Scope = $Scope; Enabled = $Enabled } }
@@ -277,7 +295,21 @@ try { $null = Invoke-Script 'exchange-mirror.ps1' @{ StandbySubdomain = 'standby
 Assert-True $threw 'mirror: -NewJournalAddress overwrote an existing address file'
 
 Reset-Mocks
+$global:MockPutFails = $true
+$failFile = Join-Path $work 'private' 'journal-fail.txt'
+$threw = $false
+try { $null = Invoke-Script 'exchange-mirror.ps1' @{ StandbySubdomain = 'standby.example.com'; JournalAddressFile = $failFile; NewJournalAddress = $true; WranglerConfig = $wranglerToml; RepoRoot = $work } } catch { $threw = $true }
+Assert-True ($threw -and -not (Test-Path $failFile)) 'mirror: a failed Worker secret upload left a journal address file (or did not stop)'
+
+Reset-Mocks
 $mirrorArgs = @{ StandbySubdomain = 'standby.example.com'; JournalAddressFile = $newFile; NdrAddress = 'journal-ndr@standby.example.com' }
+$global:MockFailRemote = $true
+$threw = $false
+try { $null = Invoke-Script 'exchange-mirror.ps1' $mirrorArgs } catch { $threw = "$_" -match 'remote domain failed' }
+Assert-True ($threw -and $null -eq $global:MockRule) 'mirror: an Exchange cmdlet failure did not stop the script before the journal rule'
+Remove-Item -LiteralPath "$newFile.ndr-before.txt" -Force -ErrorAction SilentlyContinue
+$global:MockNdr = 'old-ndr@example.test'
+$global:MockFailRemote = $false
 $null = Invoke-Script 'exchange-mirror.ps1' $mirrorArgs
 $state = "$newFile.ndr-before.txt"
 Assert-True ((Test-Path $state) -and (Get-Content -LiteralPath $state -Raw) -eq 'old-ndr@example.test') 'mirror: previous NDR address not saved'
@@ -306,13 +338,16 @@ function Get-ManagementRoleEntry { $global:MockRoleEntries | ForEach-Object { [p
 function Remove-ManagementRoleEntry { param($Identity) $n = ($Identity -split '\\')[-1]; $global:MockRoleEntries = @($global:MockRoleEntries | Where-Object { $_ -ne $n }) }
 function Get-RoleGroup { }
 function New-RoleGroup { $global:MockCalls.Add([pscustomobject]@{ Tool = 'exo'; Args = 'New-RoleGroup'; Stdin = '' }) }
-function Get-ServicePrincipal { }
+function Get-ServicePrincipal { if ($args -notcontains '-Identity') { $global:MockExoSps } }
+function Remove-ManagementRole { $global:MockRoleEntries = @() }
+function Remove-RoleGroup { }
+function Remove-ServicePrincipal { param($Identity) $global:MockCalls.Add([pscustomobject]@{ Tool = 'exo'; Args = "Remove-ServicePrincipal $Identity"; Stdin = '' }) }
 function New-ServicePrincipal { $global:MockCalls.Add([pscustomobject]@{ Tool = 'exo'; Args = 'New-ServicePrincipal'; Stdin = '' }) }
 function Add-RoleGroupMember { }
 function Get-EXOMailbox { [pscustomobject]@{ PrimarySmtpAddress = 'shared@example.test' } }
 function Get-EXOMailboxPermission { [pscustomobject]@{ User = 'person@example.test'; IsInherited = $false } }
 
-$permsArgs = @{ TenantId = $global:Mock_tenant; Organization = 'example.onmicrosoft.com'; WranglerConfig = $wranglerToml; WorkDir = (Join-Path $work 'perms'); PropagationWaitSeconds = 0; RepoRoot = $work }
+$permsArgs = @{ AppName = 'cmail onboarding test only'; TenantId = $global:Mock_tenant; Organization = 'example.onmicrosoft.com'; WranglerConfig = $wranglerToml; WorkDir = (Join-Path $work 'perms'); PropagationWaitSeconds = 0; RepoRoot = $work }
 Reset-Mocks
 $out = Invoke-Script 'perms-setup.ps1' $permsArgs
 Assert-True (($global:MockRoleEntries | Sort-Object) -join ',' -eq 'Get-Group,Get-Mailbox,Get-MailboxPermission,Get-Recipient,Get-RecipientPermission,Get-User') 'perms: role not trimmed to the six read cmdlets'
@@ -357,6 +392,13 @@ if (Get-Module -ListAvailable PSScriptAnalyzer) {
 } else {
   Write-Output 'PSScriptAnalyzer not installed: skipped.'
 }
+
+Reset-Mocks
+$global:MockExoSps = @([pscustomobject]@{ DisplayName = 'cmail onboarding test only'; AppId = '00000000-0000-0000-0000-000000000005' })
+$threw = $false
+try { $null = Invoke-Script 'perms-setup.ps1' @{ AppName = 'cmail onboarding test only'; TenantId = $global:Mock_tenant; Organization = 'example.onmicrosoft.com'; Rollback = $true; RepoRoot = $work } } catch { $threw = "$_" }
+Assert-True (-not $threw) "perms -Rollback: failed without -WranglerConfig: $threw"
+Assert-True (@(Get-CallsOf 'exo' | Where-Object Args -EQ 'Remove-ServicePrincipal 00000000-0000-0000-0000-000000000005').Count -eq 1) 'perms -Rollback: orphaned Exchange service principal not removed'
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 if ($failures.Count) {
