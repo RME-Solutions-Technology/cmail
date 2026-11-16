@@ -393,6 +393,10 @@ DNS, and at least twice a year.
 5. Note the time and the path it printed as "Rollback snapshot saved and
    checked". You need both to switch back and to copy mail back. Check the
    exit code against [Exit codes](#exit-codes).
+6. In **Admin > Exchange mirror**, turn **Send colleague mail through
+   Exchange** off, then the **Exchange mirror** off. With cmail holding the
+   mail, colleagues must be delivered straight into cmail, and no journal
+   reports come while Exchange is down. Note which were on.
 
 ## How to verify mail is arriving
 
@@ -418,6 +422,8 @@ switch back.
    node scripts/standby/switch-back.mjs --domain example.com --snapshot standby-snapshots/<file>-switch-apply.json
    ```
 2. The owner's yes, then the same with `--apply`, typing the domain.
+   Then turn the **Exchange mirror** (and **Send colleague mail through
+   Exchange**, if it was on) back on in Admin > Exchange mirror.
 3. Verify: `dig +short MX example.com @1.1.1.1` shows the original hosts; an
    outside test message reaches Exchange (Outlook); Admin > Standby test is
    still green (the standby address keeps working for next time).

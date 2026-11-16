@@ -91,9 +91,10 @@ before anything leaves cmail, unless the step says otherwise.
      mailbox quota to be working.
 
    With the [Exchange mirror](exchange-mirror.md#mail-sent-from-cmail-to-colleagues)
-   on, Exchange holds the mail domain, so recipients on it count as external:
-   they go through the provider to Exchange (and Outlook), and the mirror
-   files their cmail copy from the journal report, once.
+   and its **Send colleague mail through Exchange** switch on (off by
+   default), recipients on the mail domain count as external: they go through
+   the provider to Exchange (and Outlook), and the mirror files their cmail
+   copy from the journal report, once.
 
    See [Architecture: outbound mail](architecture.md#outbound-mail).
 7. **Body.** HTML is the authored text, then the signature, then any quoted

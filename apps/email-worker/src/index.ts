@@ -1014,7 +1014,9 @@ export default {
     // switched on, is handled there. With M365_JOURNAL_ADDRESS empty this is
     // a string comparison and nothing else; with the switch off the address
     // continues below like any other (and is refused as unknown).
-    if (isJournalAddress(env, recipientAddress) && await handleJournalDelivery(message, env, INBOUND_TOOLS)) return;
+    if (isJournalAddress(env, recipientAddress) && await handleJournalDelivery(message, env, INBOUND_TOOLS, {
+      notify: (mailboxId, messageId) => ctx.waitUntil(sendNewMailNotifications(env, mailboxId, messageId)),
+    })) return;
 
     // Trusted transport facts come only from the parsed header list (below).
     // The joined message.headers value is not used: sender text could hide the

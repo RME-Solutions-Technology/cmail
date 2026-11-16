@@ -143,16 +143,16 @@ describe('recipient delivery planning', () => {
   });
 });
 
-function switchDb(value: string | null | Error) {
+function switchDb(settings: Record<string, string> | Error) {
   const binds: unknown[][] = [];
   const db = {
     prepare: (sql: string) => ({
       bind: (...args: unknown[]) => {
         binds.push([sql, ...args]);
         return {
-          first: async () => {
-            if (value instanceof Error) throw value;
-            return value === null ? null : { value };
+          all: async () => {
+            if (settings instanceof Error) throw settings;
+            return { results: Object.entries(settings).filter(([key]) => args.includes(key)).map(([key, value]) => ({ key, value })) };
           },
         };
       },
@@ -161,20 +161,29 @@ function switchDb(value: string | null | Error) {
   return { db, binds };
 }
 
-describe('Exchange-hosted recipients (Exchange mirror on)', () => {
-  it('reads no domain as Exchange-hosted while the mirror switch is off or absent', async () => {
-    expect([...await exchangeHostedDomains(switchDb(null).db, 'example.com')]).toEqual([]);
-    expect([...await exchangeHostedDomains(switchDb('false').db, 'example.com')]).toEqual([]);
+const BOTH_ON = { exchange_mirror_enabled: 'true', exchange_mirror_colleague_send: 'true' };
+
+describe('Exchange-hosted recipients (mirror and "Send colleague mail through Exchange" on)', () => {
+  it('reads no domain as Exchange-hosted unless both switches are on (exactly today otherwise)', async () => {
+    for (const settings of <Array<Record<string, string>>>[
+      {},
+      { exchange_mirror_enabled: 'true' },
+      { exchange_mirror_colleague_send: 'true' },
+      { exchange_mirror_enabled: 'true', exchange_mirror_colleague_send: 'false' },
+      { exchange_mirror_enabled: 'false', exchange_mirror_colleague_send: 'true' },
+    ]) {
+      expect([...await exchangeHostedDomains(switchDb(settings).db, 'example.com')]).toEqual([]);
+    }
   });
 
-  it('reads the mail domain as Exchange-hosted while the mirror switch is on', async () => {
-    const { db, binds } = switchDb('true');
+  it('reads the mail domain as Exchange-hosted while both switches are on', async () => {
+    const { db, binds } = switchDb(BOTH_ON);
     expect([...await exchangeHostedDomains(db, 'example.com')]).toEqual(['example.com']);
-    expect(binds[0]?.[1]).toBe('exchange_mirror_enabled');
+    expect(binds[0]?.slice(1)).toEqual(['exchange_mirror_enabled', 'exchange_mirror_colleague_send']);
   });
 
-  it('never reads the switch without a mail domain', async () => {
-    const { db, binds } = switchDb('true');
+  it('never reads the switches without a mail domain', async () => {
+    const { db, binds } = switchDb(BOTH_ON);
     expect([...await exchangeHostedDomains(db, '')]).toEqual([]);
     expect(binds).toEqual([]);
   });
@@ -182,7 +191,6 @@ describe('Exchange-hosted recipients (Exchange mirror on)', () => {
   it('passes a switch read failure to the caller (the send fails closed, never delivers locally by guess)', async () => {
     await expect(exchangeHostedDomains(switchDb(new Error('D1 down')).db, 'example.com')).rejects.toThrow('D1 down');
   });
-
   const rows = [
     { address: 'alice@example.com', id: 'm1' },
     { address: 'Carol@Example.com', id: 'm2' },

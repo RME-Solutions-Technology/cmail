@@ -128,6 +128,35 @@ describe('Exchange mirror: filing', () => {
     t.assertNothingSent();
   });
 
+  it('files cmail\'s own colleague mail (a recorded send) unread with a notification, only for the recorded recipients', async () => {
+    const t = setup();
+    const hex = 'a'.repeat(64);
+    t.sqlite.prepare(`INSERT INTO outbound_send_journal (id, user_id, mailbox_id, idempotency_key, payload_hash, html_sha256, text_sha256,
+        state, provider, from_address, to_addresses, cc_addresses, envelope_recipients, subject, snippet, proposed_message_id_header,
+        html_r2_key, text_r2_key, persisted_bytes, provider_payload_bytes)
+      VALUES ('j1', 'alice', 'mbx-alice', 'k1', ?, ?, ?, 'materialized', 'cloudflare', 'alice@example.test', '["bob@example.test"]', '[]',
+        '["bob@example.test"]', 'Quarterly plan', '', '<plan-1@example.test>', 'h', 't', 1, 1)`).run(hex, hex, hex);
+    // Internet mail to Exchange (no internal-submission headers), as from the provider.
+    await t.deliver(journalReport({
+      inner: innerMessage({ internal: false, to: 'bob@example.test, carol@example.test' }),
+      envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test', 'Recipient: carol@example.test'],
+    }));
+    const read = Object.fromEntries(t.messages().filter((row) => row.direction === 'inbound').map((row) => [row.mailbox_id, row.is_read]));
+    expect(read).toEqual({ 'mbx-bob': 0, 'mbx-carol': 1 });
+    expect(t.waitUntil).toHaveBeenCalledTimes(1);
+    t.assertNothingSent();
+  });
+
+  it('treats a copy as ordinary mirrored mail when the Message-ID matches no recorded send', async () => {
+    const t = setup();
+    await t.deliver(journalReport({
+      inner: innerMessage({ internal: false }),
+      envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test'],
+    }));
+    expect(t.messages().filter((row) => row.direction === 'inbound').map((row) => row.is_read)).toEqual([1]);
+    expect(t.waitUntil).not.toHaveBeenCalled();
+  });
+
   it('files to fresh imported aliases only, never to an alias of a disabled mailbox', async () => {
     const report = () => journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'To: Robert@example.test', 'To: ollie@example.test', 'To: carol@example.test'] });
     const withAliases = (options: { importOn: boolean; lastOkAgeMs: number | null }) => {
