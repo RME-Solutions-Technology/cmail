@@ -173,6 +173,13 @@
           </div>
         {/if}
 
+        {#if welcome.senderRefused}
+          <div class="notice notice-error" role="alert">
+            <strong>Sending is not set up.</strong> Cloudflare Email Sending refused the From address on the last run (<code>{welcome.senderRefused}</code>). Onboard <strong>{welcome.sender.mailDomain || 'MAIL_DOMAIN'}</strong> in Cloudflare Email Sending (it adds the DKIM and DMARC records). Waiting emails are retried every hour.
+          </div>
+        {/if}
+        <p class="muted">Sent from <strong>{welcome.sender.fromEmail || 'no address'}</strong>. It must be on {welcome.sender.mailDomain || 'MAIL_DOMAIN'}, and that domain must be onboarded to Cloudflare Email Sending so the message passes DMARC (Cloudflare's DKIM signature matches the From domain). Otherwise Exchange may junk or reject it.</p>
+
         {#if welcome.toggle.enabled}
           <p class="muted">
             {welcome.toggle.since === '1970-01-01 00:00:00' ? 'Including people who were already waiting when it was turned on.' : `For people created from ${welcome.toggle.since} UTC on.`}

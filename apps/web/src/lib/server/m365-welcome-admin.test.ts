@@ -13,7 +13,7 @@ const DOMAIN = 'example.test';
 const NOW = new Date('2026-11-16T03:04:05Z');
 let objects = 0;
 
-function setup(options: { canSend?: boolean | 'down' | 'none'; access?: boolean; outbound?: string } = {}) {
+function setup(options: { canSend?: boolean | 'down' | 'none'; signIn?: 'microsoft' | 'access' | 'none'; outbound?: string } = {}) {
   const { d1, sqlite } = createTestDatabase();
   sqlite.prepare(`INSERT INTO users (id, email, role, status) VALUES ('manager-1', 'manager@example.test', 'manager', 'active')`).run();
   const canSend = options.canSend ?? true;
@@ -33,7 +33,14 @@ function setup(options: { canSend?: boolean | 'down' | 'none'; access?: boolean;
     SUPPORT_EMAIL: `desk@${DOMAIN}`,
     BRAND_PRIMARY_COLOR: '#0078d4',
     OUTBOUND_PROVIDER: options.outbound ?? 'cloudflare',
-    ...(options.access === false ? {} : { ACCESS_TEAM_DOMAIN: 'example.cloudflareaccess.com', ACCESS_AUD: 'aud-tag-0000000000000000' }),
+    ...((options.signIn ?? 'microsoft') === 'microsoft' ? {
+      SESSION_SECRET: 'test-session-value-0123456789abcdefghijklmnop',
+      MICROSOFT_CLIENT_ID: '00000000-0000-4000-8000-0000000000cc',
+      MICROSOFT_CLIENT_SECRET: 'test-client-value',
+      MICROSOFT_TENANT_ID: 'organizations',
+      M365_TENANT_ID: '00000000-0000-4000-8000-0000000000aa',
+    } : {}),
+    ...(options.signIn === 'access' ? { ACCESS_TEAM_DOMAIN: 'example.cloudflareaccess.com', ACCESS_AUD: 'aud-tag-0000000000000000' } : {}),
     ...(canSend === 'none' ? {} : { EMAIL_SERVICE: { fetch } as unknown as Fetcher }),
   };
   const person = (id: string, extra: { linkedAt?: string; status?: string; signedIn?: boolean } = {}) => {
@@ -71,11 +78,25 @@ describe('welcome emails admin: defaults and readiness', () => {
     }
   });
 
-  it('cannot send without the Access bridge, because synced people cannot sign in without it', async () => {
-    const t = setup({ access: false });
+  it('works with Microsoft sign-in for the sync tenant, or the Access bridge, and refuses when synced people cannot sign in', async () => {
+    expect((await loadWelcomeOverview(setup({ signIn: 'microsoft' }).env, 'manager-1')).problems).toEqual([]);
+    expect((await loadWelcomeOverview(setup({ signIn: 'access' }).env, 'manager-1')).problems).toEqual([]);
+    const t = setup({ signIn: 'none' });
     const overview = await loadWelcomeOverview(t.env, 'manager-1');
-    expect(overview.problems).toContain('access_bridge_off');
+    expect(overview.problems).toContain('sign_in_not_ready');
     expect(await applyWelcomeAdminAction(t.env, t.manager, 'welcome_enable', {}, NOW)).toMatchObject({ ok: false, status: 409 });
+    // Microsoft sign-in on, but no tenant for the sync: not ready either.
+    const noTenant = setup();
+    delete noTenant.env.M365_TENANT_ID;
+    expect((await loadWelcomeOverview(noTenant.env, 'manager-1')).problems).toContain('sign_in_not_ready');
+  });
+
+  it('shows what sending needs, and a refusal of the sender from the last run', async () => {
+    const t = setup();
+    t.sqlite.prepare('UPDATE m365_welcome_state SET state = ? WHERE id = 1').run(JSON.stringify({ lastProblem: 'E_SENDER_NOT_VERIFIED' }));
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.sender).toEqual({ fromEmail: `noreply@${DOMAIN}`, mailDomain: DOMAIN });
+    expect(overview.senderRefused).toBe('E_SENDER_NOT_VERIFIED');
   });
 
   it('asks the Worker over the private binding only; unknown means cannot send', async () => {
@@ -92,7 +113,7 @@ describe('welcome emails admin: defaults and readiness', () => {
     const row = t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_welcome_profile'`).get() as { value: string };
     expect(parseWelcomeProfile(row.value)).toEqual({
       v: 1, appUrl: 'https://mail.example.test', appName: 'cmail', orgName: 'Example Org', fromEmail: `noreply@${DOMAIN}`,
-      fromName: 'Example Org Mail', contactEmail: `desk@${DOMAIN}`, brandColor: '#0078d4', accessBridge: true,
+      fromName: 'Example Org Mail', contactEmail: `desk@${DOMAIN}`, brandColor: '#0078d4', signInReady: true,
     });
     const offDomain = await buildWelcomeProfile({ ...t.env, SYSTEM_EMAIL: 'someone@other.test' });
     expect(offDomain.profile.fromEmail).toBe(`noreply@${DOMAIN}`);

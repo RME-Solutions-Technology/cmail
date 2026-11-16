@@ -23,6 +23,7 @@ import { normalizeDomain, normalizeEmail } from '#lib/server/validation.js';
 import { audit } from '#lib/server/db.js';
 import { providerPreferenceCookie } from '#lib/server/provider-preference.js';
 import { MCP_AUTHORIZE_COOKIE, mcpResumeLocation } from '#lib/server/mcp/resume.js';
+import { bindSyncLinkedMicrosoftIdentity } from '#lib/server/m365-sync-signin.js';
 
 async function denySignIn(
   db: D1Database,
@@ -70,6 +71,7 @@ export const GET: RequestHandler = async ({ params, url, platform, cookies, requ
   if (!redirectUri) throw redirect(303, '/?error=configuration');
 
   let userInfo;
+  let idToken: string | undefined;
   try {
     const tokens = await exchangeCode(
       provider,
@@ -78,6 +80,7 @@ export const GET: RequestHandler = async ({ params, url, platform, cookies, requ
       redirectUri,
       verifier,
     );
+    idToken = tokens.id_token;
     userInfo = await fetchUserInfo(
       provider,
       env as unknown as Record<string, string | undefined>,
@@ -159,6 +162,22 @@ export const GET: RequestHandler = async ({ params, url, platform, cookies, requ
       detail: `Enrolled ${provider} identity using a manager invitation`,
       ip_address: clientIp,
     });
+  }
+
+  // A person the Microsoft 365 sync created signs in for the first time with
+  // their own Microsoft account: bound by the verified ID token's tenant and
+  // object id, only while the sync is on (docs/m365-sync.md, "First sign-in").
+  if (!user && !enrollmentToken && !bootstrapProof && provider === 'microsoft') {
+    const linked = await bindSyncLinkedMicrosoftIdentity(
+      env.DB,
+      env as unknown as Record<string, unknown>,
+      { idToken, subject: userInfo.subject, clientIp },
+    );
+    if (linked.status === 'refused') return denySignIn(env.DB, linked.deny, provider, clientIp, linked.userId);
+    if (linked.status === 'bound') {
+      user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(linked.userId).first<User>();
+      if (!user) return denySignIn(env.DB, 'identity_conflict', provider, clientIp);
+    }
   }
 
   // A fresh deployment must never be able to lock out its own first

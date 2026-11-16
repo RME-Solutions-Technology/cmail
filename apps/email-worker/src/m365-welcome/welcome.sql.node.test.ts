@@ -26,7 +26,7 @@ const PROFILE: WelcomeProfile = {
   fromName: 'Example Org Mail',
   contactEmail: `desk@${DOMAIN}`,
   brandColor: '#0078d4',
-  accessBridge: true,
+  signInReady: true,
 };
 
 interface Sent { from: { email: string; name: string }; to: string; subject: string; text: string; html: string }
@@ -379,8 +379,8 @@ describe('welcome emails: rate limit and bounded runs', () => {
 });
 
 describe('welcome emails: cannot send', () => {
-  it('sends nothing without the EMAIL binding, a profile, or the Access bridge', async () => {
-    for (const options of [{ email: false }, { profile: null }, { profile: { accessBridge: false } }, { profile: { fromEmail: 'noreply@other.test' } }] as const) {
+  it('sends nothing without the EMAIL binding, a profile, a sign-in path, or a From address exactly on MAIL_DOMAIN', async () => {
+    for (const options of [{ email: false }, { profile: null }, { profile: { signInReady: false } }, { profile: { fromEmail: 'noreply@other.test' } }, { profile: { fromEmail: `noreply@mail.${DOMAIN}` } }] as const) {
       const t = setup(options);
       t.person('alice');
       const result = await t.tick();

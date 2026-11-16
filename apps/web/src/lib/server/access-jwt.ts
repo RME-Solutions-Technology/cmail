@@ -86,7 +86,7 @@ export function accessMode(env: Record<string, unknown>): AccessMode {
   };
 }
 
-function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> | null {
+export function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> | null {
   if (!/^[A-Za-z0-9_-]*$/.test(value)) return null;
   const padded = value.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
   try {
@@ -99,7 +99,7 @@ function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> | null {
   }
 }
 
-function decodeJsonSegment(segment: string): Record<string, unknown> | null {
+export function decodeJsonSegment(segment: string): Record<string, unknown> | null {
   const bytes = base64UrlDecode(segment);
   if (!bytes) return null;
   try {
@@ -190,7 +190,8 @@ export class AccessKeyStore {
       this.sets.set(certsUrl, set);
       return set;
     } catch (error) {
-      console.error('Access certs fetch failed', {
+      // Also used for Microsoft ID token keys (m365-sync-signin.ts).
+      console.error('Signing keys fetch failed', {
         errorType: error instanceof Error ? error.name : 'UnknownError',
       });
       return null;

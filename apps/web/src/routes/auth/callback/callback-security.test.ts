@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   requestCountry: vi.fn(),
   signInCountryGate: vi.fn(),
   recordTravelRequest: vi.fn(),
+  bindSyncLinkedMicrosoftIdentity: vi.fn(),
 }));
 
 vi.mock('#lib/server/auth.js', () => ({
@@ -59,6 +60,8 @@ vi.mock('#lib/server/travel.js', () => ({
   signInCountryGate: mocks.signInCountryGate,
   recordTravelRequest: mocks.recordTravelRequest,
 }));
+
+vi.mock('#lib/server/m365-sync-signin.js', () => ({ bindSyncLinkedMicrosoftIdentity: mocks.bindSyncLinkedMicrosoftIdentity }));
 
 import { GET } from './[provider]/+server';
 
@@ -150,6 +153,7 @@ beforeEach(() => {
   mocks.requestCountry.mockReturnValue('AU');
   mocks.signInCountryGate.mockResolvedValue({ allowed: true });
   mocks.recordTravelRequest.mockResolvedValue(undefined);
+  mocks.bindSyncLinkedMicrosoftIdentity.mockResolvedValue({ status: 'not_applicable' });
 });
 
 describe('OAuth callback authorization branches', () => {
@@ -442,5 +446,50 @@ describe('sign-in country gate', () => {
     expect(response.status).toBe(303);
     expect(response.headers.get('Location')).toBe('/mail');
     expect(mocks.recordTravelRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('Microsoft 365 sync first sign-in in the callback', () => {
+  const syncedUser: User = { ...returningUser, id: 'synced-1', email: 'alice@example.com', status: 'pending', auth_provider: '' as never };
+
+  it('signs in the synced account the verified ID token links to, with the ID token from the token exchange', async () => {
+    mocks.exchangeCode.mockResolvedValue({ access_token: 'access-token', id_token: 'id-token-value', expires_in: 3600 });
+    mocks.fetchUserInfo.mockResolvedValue({ subject: 'ms-sub', email: 'alice@example.com', name: 'Alice', provider: 'microsoft', emailVerified: true });
+    mocks.bindSyncLinkedMicrosoftIdentity.mockResolvedValue({ status: 'bound', userId: 'synced-1' });
+    const { event } = callbackEvent({}, fakeDb({ enrolledUser: syncedUser }), 'microsoft');
+    const response = await GET(event as never) as Response;
+    expect(mocks.bindSyncLinkedMicrosoftIdentity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { idToken: 'id-token-value', subject: 'ms-sub', clientIp: '192.0.2.10' },
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get('Location')).toBe('/mail');
+    expect(mocks.createSessionToken).toHaveBeenCalledWith('synced-1', expect.anything(), expect.anything());
+  });
+
+  it('denies with the refusal code and signs no one in', async () => {
+    mocks.bindSyncLinkedMicrosoftIdentity.mockResolvedValue({ status: 'refused', reason: 'manager', deny: 'identity_conflict', userId: 'synced-1' });
+    const { event } = callbackEvent({}, fakeDb(), 'microsoft');
+    await expect(GET(event as never)).rejects.toMatchObject({ status: 303, location: '/?error=identity_conflict' });
+    expect(mocks.createSessionToken).not.toHaveBeenCalled();
+  });
+
+  it('changes nothing when not applicable (sync off): the old enrollment_required answer', async () => {
+    const { event } = callbackEvent({}, fakeDb(), 'microsoft');
+    await expect(GET(event as never)).rejects.toMatchObject({ location: '/?error=enrollment_required' });
+    expect(mocks.createSessionToken).not.toHaveBeenCalled();
+  });
+
+  it('is never tried for Google, for an already bound identity, or with an invitation', async () => {
+    const google = callbackEvent({}, fakeDb(), 'google');
+    await expect(GET(google.event as never)).rejects.toMatchObject({ location: '/?error=enrollment_required' });
+    mocks.findBoundUser.mockResolvedValue(returningUser);
+    await GET(callbackEvent({}, fakeDb(), 'microsoft').event as never);
+    mocks.findBoundUser.mockResolvedValue(null);
+    mocks.findEnrollment.mockResolvedValue(null);
+    mocks.enrollmentFailure.mockReturnValue('enrollment_required');
+    await expect(GET(callbackEvent({ cmail_enrollment: 'invite' }, fakeDb(), 'microsoft').event as never)).rejects.toMatchObject({ status: 303 });
+    expect(mocks.bindSyncLinkedMicrosoftIdentity).not.toHaveBeenCalled();
   });
 });

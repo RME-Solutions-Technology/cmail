@@ -40,25 +40,23 @@ mailboxes with no account, so they never match rule 1; rule 3 also excludes
 an account whose address is a shared mailbox. Managers, paused, offboarded and
 out-of-scope people, and accounts the sync did not create, never match.
 
-## Why it needs the Cloudflare Access bridge
+## How they sign in (no link token)
 
-A synced account is pending with **no sign-in identity**. cmail's own
-"Sign in with Microsoft" button only lets in a person who already has a bound
-identity, or who carries a manager invitation link (a single-use token). So
-without the bridge, "open cmail and sign in with Microsoft" would fail with
-`enrollment_required`.
+A synced account is pending with **no sign-in identity**. While the sync is
+on, the person signs in for the first time with **Sign in with Microsoft** on
+cmail's own sign-in page: cmail verifies the Microsoft ID token and binds the
+person's Microsoft identity to the account the sync created for them, by the
+token's tenant (`tid`) and Entra object id (`oid`), never by email. Details
+and rules: [Microsoft 365 sync: First sign-in](m365-sync.md#first-sign-in).
+The [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge), if
+used, also adopts such accounts. Either way the email carries **no token or
+magic link**: only the address of cmail.
 
-The [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge)
-signs people in from the Access token (Access signs them in with Entra ID) and,
-on a first visit, adopts a pending account that has no sign-in identity by its
-verified email. That is exactly a synced account. So with the bridge on, the
-email can say "open cmail and sign in with Microsoft" with **no token or magic
-link** in it.
-
-Without the bridge, the switch shows "Cannot send: people created by the sync
-can only sign in through the Cloudflare Access bridge" and stays off. Use
-**Admin > People > Send invitation** for those people instead (it carries a
-72-hour single-use link).
+So the switch needs one of: Microsoft sign-in configured on the web app with
+the sync's tenant known (`M365_TENANT_ID` on the web app, or a tenant GUID in
+`MICROSOFT_TENANT_ID`), or the Access bridge. Without either, Admin shows
+"Cannot send: people created by the sync cannot sign in yet" and the switch
+stays off.
 
 ## Which address it is sent to
 
@@ -90,9 +88,30 @@ explains how Exchange Online treats a message from your own domain that fails
 it). On the first live run, check one welcome email in Exchange message trace
 and in the person's Inbox (not Junk) before sending to everyone.
 
+### The From address must pass DMARC
+
 The From address is the same one manager invitations use: the system email
 from Admin > Settings when it is on `MAIL_DOMAIN`, else `noreply@MAIL_DOMAIN`.
-It must be on a domain onboarded to Cloudflare Email Sending.
+Requirements, checked or shown in Admin:
+
+- It must be **exactly on `MAIL_DOMAIN`** (not another domain, not a
+  subdomain). The Worker refuses to send otherwise (`from_not_on_mail_domain`).
+- `MAIL_DOMAIN` must be **onboarded to Cloudflare Email Sending**. Onboarding
+  adds Cloudflare's DKIM key and a DMARC record
+  ([Send emails: set up your domain](https://developers.cloudflare.com/email-service/get-started/send-emails/));
+  Cloudflare then DKIM-signs with `d=MAIL_DOMAIN`, which aligns with the From
+  domain, so DMARC passes. SPF is set on the `cf-bounce` subdomain
+  ([Postmaster](https://developers.cloudflare.com/email-service/reference/postmaster/)),
+  so it does not align and DKIM is what carries DMARC. An existing DMARC
+  record for the domain is kept as is; the DKIM alignment is what matters.
+- Admin always shows the From address and this requirement. If Cloudflare
+  refuses the sender on a run (`E_SENDER_NOT_VERIFIED` or
+  `E_SENDER_DOMAIN_NOT_AVAILABLE`), Admin shows **"Sending is not set up"**
+  in red with the code; the emails stay queued and are retried hourly.
+
+cmail cannot read your DNS or Cloudflare account, so it cannot prove DMARC
+passes before the first send: check the first welcome email's headers
+(`Authentication-Results: dmarc=pass`) in Exchange.
 
 ## The switch (Admin > Microsoft 365 sync > Welcome emails)
 
@@ -102,8 +121,9 @@ Managers only. Off by default.
 is true: migration `0029` is missing; the web app has no outbound provider
 (`OUTBOUND_PROVIDER` resolves to none); the email Worker has no `EMAIL` send
 binding or cannot be asked ("Cannot send: outbound mail not configured");
-the Access bridge is off; `APP_URL`, the organisation name or a valid From
-address on `MAIL_DOMAIN` is missing. An unknown answer from the Worker counts
+synced people cannot sign in (no Microsoft sign-in for the sync's tenant and
+no Access bridge); `APP_URL`, the organisation name or a valid From address
+exactly on `MAIL_DOMAIN` is missing. An unknown answer from the Worker counts
 as "cannot send".
 
 **Turning it on shows a warning first**, with the number of people who would
@@ -225,8 +245,8 @@ Sent by Example Org with cmail.
 | Standby sentence | Admin > Microsoft 365 sync > Welcome emails |
 | Wording | `renderWelcomeEmail` in `packages/shared/src/m365-welcome.ts`, in your own fork or deployment branch (keep the tests in `welcome.sql.node.test.ts` passing: no images, no external links, passkey step only when on) |
 
-The web app owns the organisation details, `APP_URL` and the Access bridge
-settings, so it saves a snapshot of them (`m365_welcome_profile` in
+The web app owns the organisation details, `APP_URL` and the sign-in
+settings (Microsoft sign-in and tenant, or the Access bridge), so it saves a snapshot of them (`m365_welcome_profile` in
 `org_settings`) for the Worker every time a manager opens **Admin >
 Microsoft 365 sync** and when the switch is turned on. After changing them in
 Admin > Settings or redeploying with new values, open that page once; the
@@ -242,7 +262,9 @@ Email Worker (`apps/email-worker/wrangler.toml`, `[vars]`):
 | `EMAIL` (`[[send_email]]` binding) | — | Required. The same binding the web app's outbound mail uses through `EMAIL_SERVICE` |
 | `MAIL_DOMAIN` | — | Required. The From address must be on it or a subdomain |
 
-Web app: `APP_URL`, `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` (the bridge),
+Web app: `APP_URL`; `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` and
+`M365_TENANT_ID` (or a tenant GUID in `MICROSOFT_TENANT_ID`) for first
+sign-in, or `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` for the Access bridge;
 `OUTBOUND_PROVIDER`, the organisation settings above, and the
 `EMAIL_SERVICE` binding (Admin asks the Worker over it whether it can send).
 
@@ -252,7 +274,7 @@ No new cron: it runs on the sync's `*/15 * * * *` schedule.
 
 1. Apply migration `0029` (`pnpm db:migrate`; owner's yes for a live
    database). Deploy the email Worker, then the web app.
-2. Make sure the Access bridge, the sync and Cloudflare Email Sending for the
+2. Make sure first sign-in works (see [First sign-in](m365-sync.md#first-sign-in): try it with one synced test account), the sync and Cloudflare Email Sending for the
    From domain all work. Send yourself a normal test message first.
 3. Open Admin > Microsoft 365 sync. Read the preview; set the standby sentence
    if you want one.
@@ -276,7 +298,7 @@ to Email Sending.
 - English text only.
 - No logo (see above).
 - One email per person; no reminders.
-- The Access bridge adopts the account by the email in the Access token. If a
+- Only when the Access bridge is used instead of Microsoft sign-in: it adopts the account by the email in the Access token. If a
   tenant's sign-in name (UPN) differs from people's primary SMTP address,
   check which one Access passes before turning this on; the email names the
   primary address as "your work account".

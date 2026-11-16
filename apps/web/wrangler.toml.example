@@ -109,6 +109,14 @@ OTP_SESSION_TTL_HOURS = "168"
 # created this way.
 # ACCESS_AUTO_PROVISION = "false"
 
+# Optional, with the Microsoft 365 sync (docs/m365-sync.md, "First sign-in"):
+# the sync's directory (tenant) ID, the same value as the email Worker's
+# M365_TENANT_ID. While the sync is on, a person it created can then sign in
+# with "Sign in with Microsoft" without an invitation (bound by the verified
+# ID token's tenant and object id). Not needed when MICROSOFT_TENANT_ID above
+# is already that tenant's GUID; if both are GUIDs they must match.
+# M365_TENANT_ID = "00000000-0000-0000-0000-000000000000"
+
 # Inbound-only limits are mirrored here for one visible deployment manifest;
 # enforcement and INBOUND_SENDER_HASH_KEY belong only to the email Worker.
 INBOUND_MAILBOX_MESSAGES_PER_HOUR = "120"

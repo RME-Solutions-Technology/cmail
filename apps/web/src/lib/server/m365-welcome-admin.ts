@@ -4,7 +4,7 @@
 //   sentence to org_settings;
 // - writes the branding snapshot (WelcomeProfile) the Worker renders from,
 //   because APP_URL, the organisation details, the From address and the
-//   Access bridge settings live only here;
+//   sign-in settings (Microsoft sign-in, tenant, Access bridge) live only here;
 // - asks the email Worker over the private EMAIL_SERVICE binding whether it
 //   can send (by setting name only);
 // - reads the once-only records and the status row the Worker writes, and
@@ -34,6 +34,8 @@ import {
   type WelcomeProfile,
 } from '@cmail/shared/m365-welcome';
 import { accessMode } from './access-jwt';
+import { getEnabledProviders } from './auth';
+import { syncSignInTenant } from './m365-sync-signin';
 import { publicRuntimeConfig } from './config';
 import { audit } from './db';
 import { loadOrgSettings } from './org-settings';
@@ -49,10 +51,10 @@ export const WELCOME_PROBLEM_TEXT: Record<string, string> = {
   outbound_not_configured: 'outbound mail not configured.',
   worker_unknown: 'outbound mail not configured (the email Worker could not be asked whether it can send).',
   no_send_binding: 'outbound mail not configured (the email Worker has no Cloudflare Email Sending binding).',
-  access_bridge_off: 'people created by the sync can only sign in through the Cloudflare Access bridge, which is not set up on this deployment (ACCESS_TEAM_DOMAIN and ACCESS_AUD). Without it they need an invitation (Admin > People > Send invitation).',
+  sign_in_not_ready: 'people created by the sync cannot sign in yet: turn on Microsoft sign-in (MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET) and set M365_TENANT_ID on the web app to the sync tenant (or a single-tenant MICROSOFT_TENANT_ID), or use the Cloudflare Access bridge.',
   app_url_missing: 'APP_URL is not set to an https address.',
   from_missing: 'there is no valid system From address on MAIL_DOMAIN (Admin > Settings).',
-  from_not_on_mail_domain: 'the system From address is not on MAIL_DOMAIN.',
+  from_not_on_mail_domain: 'the system From address must be exactly on MAIL_DOMAIN (the domain onboarded to Cloudflare Email Sending), so it passes DMARC.',
   org_name_missing: 'the organisation name is not set (Admin > Settings).',
   profile_missing: 'the organisation details have not been saved for the email Worker yet. Reload this page.',
 };
@@ -104,13 +106,14 @@ export async function buildWelcomeProfile(env: Record<string, unknown>): Promise
     fromName: settings.systemFromName,
     contactEmail: isWelcomeEmailAddress(contact) ? contact : '',
     brandColor: runtime.brandPrimaryColor,
-    accessBridge: accessMode(env).mode === 'on',
+    signInReady: accessMode(env).mode === 'on'
+      || (getEnabledProviders(env as Record<string, string | undefined>).includes('microsoft') && syncSignInTenant(env) !== null),
   };
   const problems: string[] = [];
   if (!appUrl) problems.push('app_url_missing');
   if (!settings.orgName) problems.push('org_name_missing');
   if (!isWelcomeEmailAddress(fromEmail)) problems.push('from_missing');
-  if (!profile.accessBridge) problems.push('access_bridge_off');
+  if (!profile.signInReady) problems.push('sign_in_not_ready');
   return { profile, problems };
 }
 
@@ -159,6 +162,10 @@ export interface WelcomeOverview {
   people: WelcomePerson[];
   state: M365WelcomeState;
   preview: { subject: string; text: string; from: string } | null;
+  /** What sending needs, always shown: the From address and the domain that must be onboarded to Email Sending. */
+  sender: { fromEmail: string; mailDomain: string };
+  /** Not blocking: Cloudflare refused the sender on the last run (domain not onboarded to Email Sending). */
+  senderRefused: string;
 }
 
 async function readinessProblems(env: WelcomeEnv, profileProblems: string[], profile: WelcomeProfile): Promise<string[]> {
@@ -211,8 +218,11 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
     : null;
   const previewView = sample && preview ? { subject: sample.subject, text: sample.text, from: `${preview.fromName || preview.orgName} <${preview.fromEmail}>` } : null;
 
+  const mailDomainNow = normalizeDomain(publicRuntimeConfig(env).mailDomain) || '';
+  const sender = { fromEmail: built.profile.fromEmail, mailDomain: mailDomainNow };
+  const senderRefused = /^E_SENDER_[A-Z_]+$/.test(state.lastProblem) ? state.lastProblem : '';
   if (!installed) {
-    return { ...base, installed, problems, canSend: false, waitingNow: 0, counts: { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 }, people: [], state, preview: previewView };
+    return { ...base, sender, senderRefused, installed, problems, canSend: false, waitingNow: 0, counts: { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 }, people: [], state, preview: previewView };
   }
 
   let waitingNow = 0;
@@ -263,7 +273,7 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
   } catch {
     // Migration 0022 missing: the sync page already says so.
   }
-  return { ...base, installed, problems, canSend: problems.length === 0, waitingNow, counts, people, state, preview: previewView };
+  return { ...base, sender, senderRefused, installed, problems, canSend: problems.length === 0, waitingNow, counts, people, state, preview: previewView };
 }
 
 export type WelcomeAdminAction = 'welcome_enable' | 'welcome_disable' | 'welcome_note' | 'welcome_resend';

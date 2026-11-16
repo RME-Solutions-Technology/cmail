@@ -70,7 +70,7 @@ export function parseM365WelcomeSwitch(rows: Array<{ key: string; value: string 
 
 /**
  * The web app owns APP_URL, the organisation name and contact, the system
- * From address and whether the Cloudflare Access bridge is on. It writes
+ * From address and whether synced people can sign in. It writes
  * this snapshot to org_settings (when Admin > Microsoft 365 sync is opened
  * and when welcome emails are turned on); the Worker renders from it.
  */
@@ -85,8 +85,12 @@ export interface WelcomeProfile {
   contactEmail: string;
   /** #rrggbb */
   brandColor: string;
-  /** True when ACCESS_TEAM_DOMAIN and ACCESS_AUD are set and valid on the web app. */
-  accessBridge: boolean;
+  /**
+   * True when people the sync created can sign in on their own: Microsoft
+   * sign-in with the sync's tenant configured (docs/m365-sync.md, First
+   * sign-in), or the Cloudflare Access bridge.
+   */
+  signInReady: boolean;
 }
 
 const EMAIL = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
@@ -135,7 +139,7 @@ export function parseWelcomeProfile(raw: string | null | undefined): WelcomeProf
     fromName: cleanLine(parsed.fromName, 120),
     contactEmail: typeof parsed.contactEmail === 'string' ? parsed.contactEmail.trim().toLowerCase() : '',
     brandColor: typeof parsed.brandColor === 'string' && HEX.test(parsed.brandColor) ? parsed.brandColor.toLowerCase() : '#2563eb',
-    accessBridge: parsed.accessBridge === true,
+    signInReady: parsed.signInReady === true,
   };
   if (parsed.v !== 1 || !profile.appUrl || !profile.orgName || !isWelcomeEmailAddress(profile.fromEmail)) return null;
   if (profile.contactEmail && !isWelcomeEmailAddress(profile.contactEmail)) profile.contactEmail = '';
@@ -149,11 +153,13 @@ export function parseWelcomeProfile(raw: string | null | undefined): WelcomeProf
 export function welcomeProfileProblems(profile: WelcomeProfile | null, mailDomain = ''): string[] {
   if (!profile) return ['profile_missing'];
   const problems: string[] = [];
-  if (!profile.accessBridge) problems.push('access_bridge_off');
+  if (!profile.signInReady) problems.push('sign_in_not_ready');
   const domain = mailDomain.trim().toLowerCase();
   if (domain) {
     const fromDomain = profile.fromEmail.split('@')[1] ?? '';
-    if (fromDomain !== domain && !fromDomain.endsWith(`.${domain}`)) problems.push('from_not_on_mail_domain');
+    // Exactly MAIL_DOMAIN: the domain onboarded to Cloudflare Email Sending,
+    // whose DKIM signature then aligns with the From domain so DMARC passes.
+    if (fromDomain !== domain) problems.push('from_not_on_mail_domain');
   }
   return problems;
 }
@@ -256,7 +262,7 @@ function firstName(displayName: string, address: string): string {
 
 /**
  * The welcome email: plain, short, no images, no tracking, no token. Sign-in
- * goes through Microsoft (via the Cloudflare Access bridge), so the link is
+ * goes through Microsoft (the sync's first sign-in, or the Access bridge), so the link is
  * only the app's address.
  */
 export function renderWelcomeEmail(input: WelcomeEmailInput): WelcomeEmail {
