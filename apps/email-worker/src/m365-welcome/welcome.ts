@@ -37,9 +37,11 @@ import {
   M365_WELCOME_SETTING_SINCE,
   PASSKEY_SIGNIN_SETTING,
   WELCOME_ELIGIBLE_SQL,
+  WELCOME_SIGNIN_NAME_NO_UPN_SQL,
   WELCOME_SIGNIN_NAME_SQL,
   WELCOME_STANDBY_SETTINGS,
   WELCOME_WAITING_SQL,
+  hasUpnColumn,
   parseM365WelcomeState,
   parseM365WelcomeSwitch,
   parseWelcomeProfile,
@@ -213,9 +215,11 @@ export async function runWelcomeTick(env: WelcomeWorkerEnv, deps: WelcomeDeps = 
     let limited = budget <= 0;
 
     if (!limited) {
+      // Before migration 0032 there is no UPN: name the account address.
+      const signInName = await hasUpnColumn(db) ? WELCOME_SIGNIN_NAME_SQL : WELCOME_SIGNIN_NAME_NO_UPN_SQL;
       const due = await db.prepare(
         `SELECT w.user_id, w.attempts, u.email, u.display_name,
-                ${WELCOME_SIGNIN_NAME_SQL} AS sign_in_name
+                ${signInName} AS sign_in_name
          FROM m365_welcome_emails w JOIN users u ON u.id = w.user_id
          LEFT JOIN m365_sync_links l ON l.user_id = u.id
          WHERE w.status = 'queued' AND w.next_attempt_at <= ?

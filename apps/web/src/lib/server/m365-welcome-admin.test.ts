@@ -345,3 +345,40 @@ describe('welcome emails admin: Send a test to me', () => {
     expect(failing.audits().at(-1)).toMatchObject({ event_type: 'm365_welcome.test_failed' });
   });
 });
+
+describe('welcome emails admin: review follow-ups', () => {
+  it('counts only people at or after the cut-off as sent automatically, and lists the rest as Send', async () => {
+    const t = setup();
+    t.person('early', { linkedAt: '2026-11-10 00:00:00' });
+    t.person('late', { linkedAt: '2026-11-16 03:30:00' });
+    await applyWelcomeAdminAction(t.env, t.manager, 'welcome_enable', {}, NOW);
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.recipients).toMatchObject({ total: 2, auto: 1 });
+    // Switch off: everyone counts.
+    await applyWelcomeAdminAction(t.env, t.manager, 'welcome_disable', {}, NOW);
+    expect((await loadWelcomeOverview(t.env, 'manager-1')).recipients).toMatchObject({ total: 2, auto: 2 });
+  });
+
+  it('extra form fields cannot change who the test goes to', async () => {
+    const t = setup();
+    t.person('alice');
+    vi.mocked(sendEmail).mockClear();
+    const input = { to: 'evil@example.test', userId: 'alice', email: 'evil@example.test', scope: 'include_waiting' } as never;
+    expect(await applyWelcomeAdminAction(t.env, { ...t.manager, email: 'manager@example.test' }, 'welcome_test', input, NOW)).toMatchObject({ ok: true });
+    expect(vi.mocked(sendEmail).mock.calls).toHaveLength(1);
+    expect(vi.mocked(sendEmail).mock.calls[0][0].to).toBe('manager@example.test');
+    expect(vi.mocked(sendEmail).mock.calls[0][0].text).not.toContain('alice');
+  });
+
+  it('keeps working before migration 0032 is applied: sign-in name falls back to the address', async () => {
+    const t = setup();
+    t.person('alice');
+    t.sqlite.exec('ALTER TABLE m365_sync_links DROP COLUMN upn');
+    vi.mocked(sendEmail).mockClear();
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.recipients.people.map((person) => person.signInName)).toEqual([`alice@${DOMAIN}`]);
+    expect(overview.people[0]?.signInName).toBe(`alice@${DOMAIN}`);
+    expect(await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: true });
+    expect(vi.mocked(sendEmail).mock.calls[0][0].text).toContain(`use your work account (manager@${DOMAIN}).`);
+  });
+});

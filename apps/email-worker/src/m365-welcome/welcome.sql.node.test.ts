@@ -504,10 +504,32 @@ Sent by RME Solutions Technology with RME Mail.
     expect(email.text).not.toMatch(/small organisation/i);
   });
 
+  it.each([
+    '<img src=x onerror=alert(1)>@evil.test',
+    `alice@${DOMAIN}\nBcc: evil@example.test`,
+    'not an address',
+    `a@b.test <script>`,
+  ])('falls back to the account address for a hostile sign-in name %j', (signInName) => {
+    const email = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: '', displayName: 'Alice', address: `alice@${DOMAIN}`, signInName });
+    expect(email.text).toContain(`use your work account (alice@${DOMAIN}).`);
+    expect(email.text).not.toMatch(/evil|<script|<img/);
+    expect(email.html).not.toMatch(/evil|<script|<img/);
+  });
+
   it('prefixes a test email subject with [Test] and nothing else changes', () => {
     const real = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: '', displayName: '', address: `a@${DOMAIN}` });
     const test = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: '', displayName: '', address: `a@${DOMAIN}`, test: true });
     expect(test.subject).toBe(`[Test] ${real.subject}`);
     expect(test.text).toBe(real.text);
+  });
+});
+
+describe('welcome emails: before migration 0032 is applied', () => {
+  it('still sends, naming the account address as the sign-in name', async () => {
+    const t = setup();
+    t.person('alice', { upn: `alice@corp.${DOMAIN}` });
+    t.sqlite.exec('ALTER TABLE m365_sync_links DROP COLUMN upn');
+    expect(await t.tick()).toMatchObject({ status: 'worked', sent: 1 });
+    expect(t.sent[0].text).toContain(`use your work account (alice@${DOMAIN}).`);
   });
 });

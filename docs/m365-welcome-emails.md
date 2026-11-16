@@ -209,7 +209,7 @@ one else, with the subject prefixed `[Test] `. It:
   as the once-only email, and it turns nothing on;
 - names the manager's UPN when the sync has one for them, else their address;
 - is audited (`m365_welcome.test_sent`, or `m365_welcome.test_failed`) without
-  the address, and limited to **5 an hour per manager**.
+  the address, and limited to about **5 an hour per manager**.
 
 ## Exactly once, retries and limits
 
@@ -321,10 +321,16 @@ Sent by Example Org with cmail.
 
 ## The help page
 
-`https://<APP_URL>/help/first-sign-in` is a public page (no sign-in), on the
-instance's own address, with the same steps (Sign in with Microsoft, accept the
+`https://<APP_URL>/help/first-sign-in` is a page cmail serves without a cmail
+session, on the instance's own address, with the same steps (Sign in with Microsoft, accept the
 IT policy, Settings > Passkeys > Add passkey), what a passkey is and who to
-contact (the support email). It shows the passkey part only while passkey
+contact (the support email). **If Cloudflare Access covers the whole hostname,
+Access asks for its login first, so the page is not reachable by someone who
+has not signed in: add an Access Bypass policy for `/help/*`** (see
+[Staff portal sign-in contract](staff-sign-in.md#public-help-pages-access-bypass-for-help)).
+With Microsoft sign-in and no Access it is open to anyone. It sends a one
+minute cache header (shared for anonymous visitors, private for a signed-in
+one). It shows the passkey part only while passkey
 sign-in is on, and the Access wording when the Access bridge is on. It reads
 only those two settings and the organisation details every public page shows.
 
@@ -373,6 +379,10 @@ Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](o
 1. Apply migrations `0029` and `0032` (`pnpm db:migrate`; owner's yes for a
    live database). `0032` adds one column and is additive; the sync fills in
    each person's UPN on its next pass (the daily reconciliation covers everyone). Deploy the email Worker, then the web app.
+   **Migrate first is a hard step.** If new code does run before `0032` (a
+   deploy window), the sync, the Worker's sender and Admin notice the missing
+   column and fall back to the account address as the sign-in name instead of
+   failing, but the UPN is not recorded until the column exists.
 2. Make sure first sign-in works (see [First sign-in](m365-sync.md#first-sign-in): try it with one synced test account), the sync and Cloudflare Email Sending for the
    From domain all work. Send yourself a normal test message first.
 3. Open Admin > Microsoft 365 sync. Read the preview; set the standby sentence

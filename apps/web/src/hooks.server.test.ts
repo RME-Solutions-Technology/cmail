@@ -279,6 +279,13 @@ describe('central ICT policy gate', () => {
       expect(resolve).toHaveBeenCalledOnce();
     },
   );
+
+  it.each(['/help/first-sign-in', '/help', '/help/getting-started'])('serves the public help page %s with no session: 200, not a redirect to sign-in', async (path) => {
+    const { response, resolve } = await invoke({ path });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+    expect(resolve).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Cloudflare edge rewriting', () => {

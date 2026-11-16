@@ -209,6 +209,31 @@ export const WELCOME_ELIGIBLE_SQL = `
  */
 export const WELCOME_SIGNIN_NAME_SQL = `COALESCE(NULLIF(l.upn, ''), u.email)`;
 
+/** What the sign-in name is before migration 0032 (no UPN column): the account address. */
+export const WELCOME_SIGNIN_NAME_NO_UPN_SQL = 'u.email';
+
+const upnColumnCache = new WeakMap<object, boolean>();
+
+/**
+ * Whether migration 0032 (m365_sync_links.upn) has been applied. Deploys
+ * migrate first, but a deploy window can run new code on the old schema: the
+ * sync, the Worker's sender and Admin then fall back to the account address
+ * instead of failing. Only a positive answer is cached.
+ */
+export async function hasUpnColumn(db: D1Database): Promise<boolean> {
+  if (upnColumnCache.get(db) === true) return true;
+  let present = false;
+  try {
+    await db.prepare('SELECT upn FROM m365_sync_links LIMIT 0').all();
+    present = true;
+  } catch (error) {
+    // Only "no such column" means "not migrated yet"; anything else is a real failure.
+    if (!/no such column/i.test(error instanceof Error ? error.message : String(error))) throw error;
+  }
+  if (present) upnColumnCache.set(db, true);
+  return present;
+}
+
 /** Eligible and never queued or sent: the "N people already waiting". */
 export const WELCOME_WAITING_SQL = `${WELCOME_ELIGIBLE_SQL}
     AND NOT EXISTS (SELECT 1 FROM m365_welcome_emails w WHERE w.user_id = u.id)`;

@@ -406,3 +406,19 @@ describe('Microsoft 365 sync: sign-in name (UPN) for the welcome email', () => {
     expect(t.links().map((link) => link.object_id)).toEqual([oid(1)]);
   });
 });
+
+describe('Microsoft 365 sync: before migration 0032 is applied', () => {
+  it('still creates, adopts and updates people, without recording a UPN', async () => {
+    const t = setup();
+    t.sqlite.exec('ALTER TABLE m365_sync_links DROP COLUMN upn');
+    t.sqlite.prepare(`INSERT INTO users (id, email, role, status) VALUES ('u-old', 'blair@example.test', 'standard', 'pending')`).run();
+    t.fake.setReconcile([[person(1, 'alex'), person(2, 'blair')]], 'tok-1');
+    expect(await t.tick()).toMatchObject({ status: 'worked', finished: true });
+    expect(t.users().map((user) => user.email)).toEqual(['alex@example.test', 'blair@example.test']);
+    expect(t.links().map((link) => link.object_id)).toEqual([oid(1), oid(2)]);
+    t.advance(60 * 60 * 1000);
+    t.fake.setDelta('tok-1', [[person(1, 'alex', { userPrincipalName: 'alex@new.example.test', displayName: 'Alex Renamed' })]], 'tok-2');
+    expect(await t.tick()).toMatchObject({ status: 'worked' });
+    expect(t.users().find((user) => user.email === 'alex@example.test')?.display_name).toBe('Alex Renamed');
+  });
+});

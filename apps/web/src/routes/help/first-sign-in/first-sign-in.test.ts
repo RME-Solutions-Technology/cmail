@@ -4,10 +4,12 @@ import { load } from './+page.server';
 
 // The public first-sign-in help page: no sign-in needed, so its load reads
 // nothing about the visitor. It only mirrors the passkey and Access settings.
-function run(env: Record<string, unknown> | undefined) {
+const headers: Record<string, string> = {};
+function run(env: Record<string, unknown> | undefined, user: unknown = null) {
   return (load as unknown as (event: unknown) => Promise<{ passkeys: boolean; viaAccess: boolean }>)({
     platform: env ? { env } : undefined,
-    locals: { user: null },
+    locals: { user },
+    setHeaders: (value: Record<string, string>) => Object.assign(headers, value),
   });
 }
 
@@ -25,6 +27,14 @@ describe('first sign-in help page loader', () => {
       .toEqual({ passkeys: false, viaAccess: true });
     expect(await run(undefined)).toEqual({ passkeys: false, viaAccess: false });
     expect(await run({})).toEqual({ passkeys: false, viaAccess: false });
+  });
+
+  it('caches for a minute: shared for an anonymous visitor, private for a signed-in one', async () => {
+    const { d1 } = createTestDatabase();
+    await run({ DB: d1 });
+    expect(headers['cache-control']).toBe('public, max-age=60');
+    await run({ DB: d1 }, { id: 'u1' });
+    expect(headers['cache-control']).toBe('private, max-age=60');
   });
 
   it('is not behind sign-in (the hook protects only /mail, /admin and /api)', async () => {

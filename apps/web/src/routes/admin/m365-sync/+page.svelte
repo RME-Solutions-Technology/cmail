@@ -191,10 +191,10 @@
 
         {#if welcome.installed}
           <div class="recipients" aria-labelledby="welcome-recipients-heading">
-            <h3 id="welcome-recipients-heading">Who would be emailed: {welcome.recipients.total} {welcome.recipients.total === 1 ? 'person' : 'people'}</h3>
+            <h3 id="welcome-recipients-heading">Who would be emailed: {welcome.toggle.enabled && welcome.recipients.auto !== welcome.recipients.total ? `${welcome.recipients.auto} now, ${welcome.recipients.total - welcome.recipients.auto} more by Send` : `${welcome.recipients.total} ${welcome.recipients.total === 1 ? 'person' : 'people'}`}</h3>
             <p class="muted">
               Licensed, enabled people the sync created, who have not been sent a welcome email. Shared mailboxes, unlicensed and disabled accounts are never listed or emailed. Each name below is the Microsoft sign-in name (UPN) the email tells them to use.
-              {#if welcome.toggle.enabled}Only the ones created since the switch went on are sent automatically; use Send on a person for the others.{:else}Nothing has been sent. The switch below decides who is emailed.{/if}
+              {#if welcome.toggle.enabled}{#if welcome.recipients.total > welcome.recipients.auto}Only the {welcome.recipients.auto} created since the switch went on are sent automatically; the other {welcome.recipients.total - welcome.recipients.auto} are listed too and go only when you press Send on them.{:else}All of them are sent automatically.{/if}{:else}Nothing has been sent. The switch below decides who is emailed.{/if}
             </p>
             {#if welcome.recipients.people.length}
               <details open={welcome.recipients.total <= 25}>
@@ -212,7 +212,7 @@
             <form method="POST" class="test-form">
               <input type="hidden" name="action" value="welcome_test" />
               <button type="submit" class="btn">Send a test to me</button>
-              <span class="muted">Sends this email to your own address only, marked [Test]. Nothing is recorded or turned on. Up to 5 an hour.</span>
+              <span class="muted">Sends this email to your own address only, marked [Test]. Nothing is recorded or turned on. About 5 an hour.</span>
             </form>
           </div>
         {/if}
