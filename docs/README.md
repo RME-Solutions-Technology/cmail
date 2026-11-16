@@ -65,6 +65,11 @@ default, with a manager switch), see
 [Passkey break-glass sign-in](passkeys.md), including the one path to exclude
 from Access.
 
+For the encrypted store that keeps setup-wizard secrets in D1 under one
+Worker key (`CMAIL_VAULT_KEY`, held by the organisation, env secrets still
+win), see [Secret vault](secret-vault.md), including key custody, rotation
+and restores.
+
 ## How cmail works
 
 Technical guides for developers and operators, one feature at a time, with the code paths, data, limits and tests behind each.
