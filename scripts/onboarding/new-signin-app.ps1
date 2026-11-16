@@ -111,9 +111,14 @@ if (-not $AppId) {
 }
 
 if ($GrantAdminConsent -and $PSCmdlet.ShouldProcess("Entra app $AppId", 'create service principal and grant tenant-wide admin consent for openid email profile')) {
-  if (-not (Invoke-Az ad sp list --filter "appId eq '$AppId'" --query '[].id' -o tsv)) { Invoke-Az ad sp create --id $AppId | Out-Null }
-  Invoke-Az ad app permission admin-consent --id $AppId | Out-Null
-  Write-Note 'Admin consent granted.'
+  $spId = Get-FirstLine (Invoke-Az ad sp list --filter "appId eq '$AppId'" --query '[].id' -o tsv)
+  if (-not $spId) {
+    $spId = Get-FirstLine (Invoke-Az ad sp create --id $AppId --query id -o tsv)
+    Start-Sleep -Seconds 15  # a new service principal takes a moment to be usable for consent
+  }
+  Assert-Guid $spId 'Service principal id'
+  Grant-DelegatedScopes -AppId $AppId -ServicePrincipalId $spId -ResourceAppId $script:GraphResourceAppId -Scopes 'openid', 'email', 'profile'
+  Write-Note 'Admin consent for openid email profile granted and checked.'
 }
 
 if (-not $SkipSecret) {

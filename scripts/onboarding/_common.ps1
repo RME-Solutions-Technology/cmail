@@ -184,6 +184,33 @@ function Grant-AppRoles {
   }
 }
 
+# Tenant-wide (AllPrincipals) consent for delegated scopes, checked on the
+# service principal's oauth2PermissionGrants. `az ad app permission
+# admin-consent` is tried first; scopes still missing are granted directly
+# (POST oauth2PermissionGrants), then read back.
+function Grant-DelegatedScopes {
+  param([string]$AppId, [string]$ServicePrincipalId, [string]$ResourceAppId, [string[]]$Scopes)
+  try { Invoke-Az ad app permission admin-consent --id $AppId | Out-Null }
+  catch { Write-Warning "admin-consent did not complete ($_); granting directly." }
+  $readGranted = {
+    @(Invoke-Az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$ServicePrincipalId/oauth2PermissionGrants" --query "value[?consentType=='AllPrincipals'].scope" -o tsv |
+      ForEach-Object { "$_" -split '\s+' } | Where-Object { $_ })
+  }
+  $missing = @($Scopes | Where-Object { (& $readGranted) -notcontains $_ })
+  if ($missing.Count -eq 0) { return }
+  $resourceSpId = Get-FirstLine (Invoke-Az ad sp show --id $ResourceAppId --query id -o tsv)
+  Assert-Guid $resourceSpId 'Resource service principal id'
+  $bodyFile = Join-Path ([IO.Path]::GetTempPath()) ("cmail-grant-{0}.json" -f [guid]::NewGuid().ToString('N'))
+  ConvertTo-Json -InputObject @{ clientId = $ServicePrincipalId; consentType = 'AllPrincipals'; resourceId = $resourceSpId; scope = ($Scopes -join ' ') } |
+    Set-Content -LiteralPath $bodyFile -Encoding utf8NoBOM
+  try {
+    Invoke-Az rest --method POST --url 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' --body "@$bodyFile" --headers 'Content-Type=application/json' | Out-Null
+  } finally { Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue }
+  $still = @($Scopes | Where-Object { (& $readGranted) -notcontains $_ })
+  if ($still.Count) { throw "Admin consent is still missing for: $($still -join ', '). Grant it in Entra > App registrations > the app > API permissions." }
+  Write-Note "Granted $($missing -join ', ') directly (admin-consent had not applied them)."
+}
+
 # Runs an Exchange Get-* query (which must use -ErrorAction Stop); returns
 # $null only when the object does not exist. Any other error (sign-in,
 # permission, throttling) stops the script.
