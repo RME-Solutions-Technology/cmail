@@ -249,32 +249,55 @@ export async function reserveMirrorStorage(
   }
 }
 
+/** A recorded send proves a mirrored copy only within this window. */
+export const OWN_SEND_WINDOW_DAYS = 2;
+
 /**
- * The envelope recipients of a send this instance recorded from `mailboxId`
- * with this Message-ID (the one the provider reported, or the one cmail
- * proposed), or null when there is none. A mirrored copy for one of those
- * recipients is cmail's own colleague mail coming back through Exchange
- * ("Send colleague mail through Exchange"), so it is treated as proven.
+ * The visible recipients (To and Cc) of a message this instance sent from
+ * `mailboxId` in the last OWN_SEND_WINDOW_DAYS days, with this Message-ID
+ * (as the provider reported it) and this subject, or null when there is
+ * none. A mirrored copy for one of them is cmail's own colleague mail coming
+ * back through Exchange ("Send colleague mail through Exchange"), so it is
+ * treated as proven. Read from the sender's Sent copy (indexed by mailbox,
+ * folder and time). A copy that fails the original's authentication
+ * (`ownSendSpoofSignals`) is never proven.
  */
-export async function recordedSendRecipients(db: D1Database, mailboxId: string, messageIdHeader: string): Promise<Set<string> | null> {
+export async function recordedSendRecipients(
+  db: D1Database,
+  mailboxId: string,
+  messageIdHeader: string,
+  subject: string,
+): Promise<Set<string> | null> {
   const row = await db.prepare(
-    `SELECT envelope_recipients FROM outbound_send_journal
-     WHERE mailbox_id = ? AND state IN ('accepted', 'materialized')
-       AND (message_id_header = ? OR proposed_message_id_header = ?)
-     ORDER BY created_at DESC LIMIT 1`,
-  ).bind(mailboxId, messageIdHeader, messageIdHeader).first<{ envelope_recipients: string }>();
-  if (!row) return null;
-  try {
-    const list = JSON.parse(row.envelope_recipients) as unknown;
-    return Array.isArray(list)
-      ? new Set(list.filter((item): item is string => typeof item === 'string').map((item) => item.trim().toLowerCase()))
-      : null;
-  } catch {
-    // A malformed row proves nothing: the copy is filed like any other.
-    return null;
+    `SELECT to_addresses, cc_addresses, subject FROM messages
+     WHERE mailbox_id = ? AND folder = 'sent' AND direction = 'outbound'
+       AND julianday(received_at) >= julianday('now') - ?
+       AND message_id_header = ?
+     LIMIT 1`,
+  ).bind(mailboxId, OWN_SEND_WINDOW_DAYS, messageIdHeader).first<{ to_addresses: string; cc_addresses: string; subject: string }>();
+  if (!row || row.subject !== subject) return null;
+  const out = new Set<string>();
+  for (const column of [row.to_addresses, row.cc_addresses]) {
+    try {
+      const list = JSON.parse(column) as unknown;
+      if (Array.isArray(list)) for (const item of list) if (typeof item === 'string') out.add(item.trim().toLowerCase());
+    } catch {
+      // A malformed column proves nothing for its recipients.
+      continue;
+    }
   }
+  return out.size ? out : null;
 }
 
+/**
+ * Exchange's own verdict on the original, when it recorded one: an explicit
+ * DMARC or composite-authentication failure means the From was not proven,
+ * whatever else matches.
+ */
+export function ownSendSpoofSignals(innerHeaders: readonly Header[] | undefined): boolean {
+  return headerValues(innerHeaders, 'authentication-results')
+    .some((value) => /\b(?:dmarc|compauth)\s*=\s*fail\b/i.test(value));
+}
 async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (const slice of chunks(ids, IN_CHUNK)) {
@@ -491,8 +514,8 @@ async function processReport(
   // Colleague mail this instance sent through Exchange: proven for the
   // recipients the send recorded (unread, notified, a colleague for Focused).
   const fromMailbox = headerFrom ? mailboxes.get(headerFrom) : undefined;
-  const sentHere = fromMailbox
-    ? await recordedSendRecipients(env.DB, fromMailbox, messageIdHeader).catch(() => {
+  const sentHere = fromMailbox && !ownSendSpoofSignals(innerHeaders)
+    ? await recordedSendRecipients(env.DB, fromMailbox, messageIdHeader, subject).catch(() => {
       console.error('Exchange mirror: recorded sends could not be read; filing as a normal mirrored copy');
       return null;
     })

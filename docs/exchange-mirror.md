@@ -154,13 +154,18 @@ no second one, because a message from the provider reaches Exchange as
 internet mail and so never carries the internal-submission proof a mirrored
 Sent copy needs.
 
-When the colleague's copy carries the Message-ID of a send this instance
-recorded (sent from the same mailbox as its From), the mirror treats it as
-proven internal mail: it is filed **unread** with a new-mail notification,
-and Focused Inbox treats the sender as a colleague. This needs the provider
-to report the Message-ID it wrote (the Cloudflare REST route and Postmark
-do); otherwise the copy is filed like any mirrored copy, as read with no
-notification. cmail inbox rules never run on mirrored copies.
+When the colleague's copy matches a message this instance sent, the mirror
+treats it as proven internal mail: it is filed **unread** with a new-mail
+notification, and Focused Inbox treats the sender as a colleague. It matches
+when the sender's Sent copy in cmail, from the last 2 days, has the same
+Message-ID (as the provider reported it: the Cloudflare REST route and
+Postmark do), the same subject, and the colleague in To or Cc, and Exchange
+did not record a DMARC or composite-authentication failure on it. Anything
+else (a Bcc'd colleague, a provider that does not report the Message-ID, an
+older or altered message) is filed like any mirrored copy, as read with no
+notification. A forged copy would need the Message-ID and subject and to
+reach the journal before the real one, which arrives within minutes. cmail
+inbox rules never run on mirrored copies.
 
 With the switch on:
 
