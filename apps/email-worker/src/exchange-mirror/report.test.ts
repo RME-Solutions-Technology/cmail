@@ -90,18 +90,23 @@ describe('journal report trust', () => {
 
   it('reads DKIM pass domains only from the trusted, topmost record', () => {
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=Example.Test header.s=s1; dkim=fail header.d=bad.example; dkim=pass header.i=@other.example; dmarc=pass', 'mx.example.test'))
-      .toEqual({ dmarc: 'pass', dkimPassDomains: ['example.test', 'other.example'], dmarcHeaderFrom: null, spf: null, spfMailFromDomain: null });
-    const none = { dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null, spf: null, spfMailFromDomain: null };
+      .toEqual({ dmarc: 'pass', dkimPassDomains: ['example.test', 'other.example'], dmarcHeaderFrom: null, spf: null, spfMailFromDomain: null, spfMailFromResult: null });
+    const none = { dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null, spf: null, spfMailFromDomain: null, spfMailFromResult: null };
     expect(parseAuthenticationIdentities('mx.attacker.example; dkim=pass header.d=example.test', 'mx.example.test')).toEqual(none);
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test', '')).toEqual(none);
     // Only whole domains count: a prefix with junk after it is dropped.
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test_.evil.example; dmarc=pass header.from=Example.Test', 'mx.example.test'))
-      .toEqual({ dmarc: 'pass', dkimPassDomains: [], dmarcHeaderFrom: 'example.test', spf: null, spfMailFromDomain: null });
+      .toEqual({ dmarc: 'pass', dkimPassDomains: [], dmarcHeaderFrom: 'example.test', spf: null, spfMailFromDomain: null, spfMailFromResult: null });
     // SPF and the MAIL FROM domain it is about.
     expect(parseAuthenticationIdentities('mx.example.test; spf=pass smtp.mailfrom=journal-ndr@NDR.example.test', 'mx.example.test'))
       .toMatchObject({ spf: 'pass', spfMailFromDomain: 'ndr.example.test' });
     expect(parseAuthenticationIdentities('mx.example.test; spf=pass smtp.mailfrom=x@ndr.example.test_', 'mx.example.test'))
       .toMatchObject({ spf: 'pass', spfMailFromDomain: 'invalid' });
+    // Live Cloudflare shape: a bare spf=pass (HELO) before the smtp.mailfrom one; the mailfrom result is used.
+    expect(parseAuthenticationIdentities('mx.example.test; dmarc=fail header.from=sender.example; spf=pass; spf=pass smtp.mailfrom=ndr.example.test; arc=none', 'mx.example.test'))
+      .toMatchObject({ spfMailFromDomain: 'ndr.example.test', spfMailFromResult: 'pass' });
+    expect(parseAuthenticationIdentities('mx.example.test; spf=pass; spf=fail smtp.mailfrom=ndr.example.test', 'mx.example.test'))
+      .toMatchObject({ spfMailFromDomain: 'ndr.example.test', spfMailFromResult: 'fail' });
   });
 
   it('reads quoted property values whole, so they cannot inject a verdict or a domain', () => {

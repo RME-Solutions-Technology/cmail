@@ -172,7 +172,7 @@ export function verifyJournalReport(
   //    verdict is about must also be the envelope's, when both are known.
   const authAs = headerValues(headers, 'x-ms-exchange-crosstenant-authas').map((value) => value.trim().toLowerCase());
   const internal = authAs.length > 0 && authAs.every((value) => value === 'internal');
-  if (config.ndrDomain && identities.spf === 'pass' && internal) {
+  if (config.ndrDomain && identities.spfMailFromResult === 'pass' && internal) {
     // The domain must be the one Cloudflare's record says SPF was checked
     // for: no fallback to the envelope (the verdict is about the record's).
     const recorded = identities.spfMailFromDomain;
