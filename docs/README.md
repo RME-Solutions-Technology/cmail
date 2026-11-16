@@ -33,7 +33,9 @@ For engineers and operators setting up a deployment, roughly in this order:
 
 To keep accounts in step with a Microsoft 365 tenant (read-only, off by
 default, with a manager switch and dry run), see
-[Microsoft 365 mailbox sync](m365-sync.md). To copy Full Access and Send As
+[Microsoft 365 mailbox sync](m365-sync.md). To email each person the sync
+creates once with first sign-in steps (off by default), see
+[Microsoft 365 welcome emails](m365-welcome-emails.md). To copy Full Access and Send As
 on shared mailboxes from Exchange Online into cmail daily (off by default,
 read-only, needs a Cloudflare Container), see
 [Shared mailbox access from Exchange Online](m365-mailbox-permissions.md). After an Exchange outage, mail
@@ -44,7 +46,9 @@ a domain's incoming mail to cmail and back in one DNS change each, see
 
 To give every mailbox a second address on a standby subdomain and test it
 daily (off by default), see
-[Standby test address and daily probe](standby-probe.md).
+[Standby test address and daily probe](standby-probe.md). To keep cmail a
+live copy of an Exchange Online tenant with no setup per address (one
+Exchange journal rule), see [Exchange mirror](exchange-mirror.md).
 
 For staff-portal links and optional provider-session reuse, see the
 [staff sign-in contract](staff-sign-in.md), including the Cloudflare Access

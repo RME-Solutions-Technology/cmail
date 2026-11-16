@@ -10,7 +10,11 @@ This is the directory half of using cmail as a standby for Exchange Online:
 the people who would need the standby already have accounts when it is
 needed. Sign-in itself is separate (Google, Microsoft, an email code, or the
 [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge), which
-adopts synced pending accounts on a first visit).
+adopts synced pending accounts on a first visit). While the sync is on, a
+synced person can also sign in for the first time with "Sign in with
+Microsoft" and no invitation (see [First sign-in](#first-sign-in)). Optional
+[welcome emails](m365-welcome-emails.md) (off by default) tell each new
+person how to sign in.
 
 - Code: `apps/email-worker/src/m365-sync/` (Graph client, rules, apply,
   scheduled driver), `packages/shared/src/m365-sync.ts` (switch, config check,
@@ -281,9 +285,81 @@ Rules that always hold:
   mailbox (`address_in_use`), two Entra objects with the same address
   (`duplicate_source_object`), or a write that lost a race with a sign-in or a
   manager (`write_conflict`) changes nothing and appears in the report.
-- **No sign-in identity is created.** Synced accounts are pending with no
-  identity: the person enrols by invitation, or the Access bridge adopts the
-  account on their first visit. The sync never decides who can sign in.
+- **No sign-in identity is created by the sync.** Synced accounts are
+  pending with no identity. The person's own first sign-in binds one: with
+  "Sign in with Microsoft" (see [First sign-in](#first-sign-in)), by
+  invitation, or through the Access bridge.
+
+## First sign-in
+
+While the sync is **on**, a person it created (or adopted) signs in for the
+first time with **Sign in with Microsoft** on cmail's own sign-in page, with
+no invitation. Code: `apps/web/src/lib/server/m365-sync-signin.ts`, called
+from the Microsoft OIDC callback only when no identity is bound to the
+signed-in subject and there is no invitation or bootstrap proof.
+
+The decision rests only on the **ID token** returned by the token endpoint,
+verified by cmail, never on UserInfo, the email or the UPN:
+
+1. Signature: RS256 with a key from the configured tenant's published keys
+   (`https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys?appid=<client id>`;
+   never a URL from the token).
+2. Claims, after the signature: `iss` is exactly
+   `https://login.microsoftonline.com/<tenant>/v2.0`, `aud` is
+   `MICROSOFT_CLIENT_ID` (compared without case: it is a GUID), `nonce` is the
+   one this browser's login request sent (see below), `ver` (if present) is `2.0`, `idp` (if present)
+   equals `iss` (a guest's `idp` is their home tenant, so guests never match),
+   `exp`, `nbf` and `iat` within 5 minutes of skew, `tid` is the tenant, and
+   `oid` is a GUID. Microsoft:
+   [ID token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)
+   (`oid` is the object id Graph returns as the user `id`, which is what the
+   sync stores), [validating ID tokens](https://learn.microsoft.com/en-us/entra/identity-platform/id-tokens#validate-tokens).
+3. The ID token's `sub` equals the UserInfo `sub` the callback binds (Microsoft
+   documents the UserInfo values as the same values as in the ID token:
+   [UserInfo](https://learn.microsoft.com/en-us/entra/identity-platform/userinfo)).
+4. `oid` is in `m365_sync_links` as a person, in scope, whose account is
+   standard (never a manager), pending or active, and has **no identity of any
+   kind** yet.
+
+Then one D1 batch inserts the `microsoft` identity (provider + `sub`) with all
+of rule 4 checked again inside the same statement, and sets
+`users.auth_provider`; a manager action or another sign-in landing in between
+makes it bind nothing. Audit: `auth.sync_link_bound`. The callback then
+carries on as for any sign-in (country gate, policy, session). From then on the
+person is a normal returning Microsoft sign-in (provider + `sub`).
+
+**Nonce.** Every login request (Google and Microsoft) now sends a fresh OIDC
+`nonce` (32 random bytes) and keeps it in a single-use, HttpOnly cookie
+beside the state and PKCE verifier; the callback deletes it whatever happens.
+The bind path requires the ID token's `nonce` to equal it, so an ID token
+obtained for another login request cannot be replayed into this one.
+
+Every refusal is audited once: the callback's usual `auth.sign_in_denied`
+row carries the reason (`Denied microsoft sign-in: <code> (Microsoft 365 sync
+link: <reason>)`; reasons `nonce_missing`, `id_token_invalid`,
+`wrong_tenant`, `subject_mismatch`, `not_linked`, `out_of_scope`, `manager`,
+`account_suspended`, `already_bound`, `bind_conflict`), so an unbound sign-in
+writes one row, not two. The person sees the usual answer
+(`enrollment_required`, `identity_conflict` or `account_suspended`).
+
+**Sync off:** nothing here runs; the callback behaves exactly as before
+(`enrollment_required` without an invitation).
+
+**Tenant setting (web app).** The tenant is `M365_TENANT_ID` on the web app
+(the same value as the email Worker's) or, if unset, `MICROSOFT_TENANT_ID`
+when that is a tenant GUID. If both are GUIDs and differ, or neither is a
+GUID, nothing is bound (a warning is logged) and the callback behaves as
+before. `MICROSOFT_TENANT_ID` may stay `organizations` or `common`: a token
+from any other tenant fails rule 1 or 2. Microsoft sign-in itself must be
+configured (`MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`). The
+`profile` scope (already requested) is what makes Microsoft include `oid`.
+
+Tests: `apps/web/src/lib/server/m365-sync-signin.test.ts` (happy path, sync
+off, wrong tenant, unlinked `oid` with a matching email, manager, paused and
+offboarded, out of scope, already bound to another `sub`, `sub` mismatch,
+missing nonce, replayed token with another request's nonce,
+unsigned, mis-signed, HS256, wrong audience, expired, not yet valid, guest
+`idp`, v1.0, bad `oid`, a race) and `routes/auth/callback/callback-security.test.ts`.
 
 ## Mass-pause brake
 

@@ -35,6 +35,18 @@
   function when(value: string | null | undefined): string {
     return value ? value.replace('T', ' ').slice(0, 16) + ' UTC' : 'never';
   }
+  const welcome = $derived(data.welcome);
+  let welcomeScope = $state('new_only');
+  const WELCOME_STATUS: Record<string, string> = {
+    not_sent: 'Not sent', queued: 'Waiting to send', sending: 'Sending', sent: 'Sent', failed: 'Failed', skipped: 'Skipped',
+  };
+  const WELCOME_RESULT: Record<string, string> = {
+    ok: 'ok', dry_run: 'dry run (nothing sent)', not_configured: 'cannot send', rate_limited: 'hourly limit reached',
+    paused: 'stopped by Cloudflare Email Sending', error: 'error',
+  };
+  function at(value: number | null | undefined): string {
+    return value ? new Date(value).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '—';
+  }
   function deltaAge(value: string | null | undefined): string {
     if (!value) return 'none yet';
     const hours = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 3_600_000));
@@ -143,6 +155,142 @@
       </section>
     {/if}
 
+    {#if welcome}
+      <section class="card switch-card" aria-labelledby="welcome-heading">
+        <div class="switch-head">
+          <div>
+            <h2 id="welcome-heading">Welcome emails</h2>
+            <p class="muted">Emails each person the sync creates (or links while still pending) once, with first sign-in steps. Never shared mailboxes, never people who have signed in. Off by default.</p>
+          </div>
+          <span class="state-badge" class:on={welcome.toggle.enabled}>{welcome.toggle.enabled ? 'On' : 'Off'}</span>
+        </div>
+
+        {#if welcome.problemText.length}
+          <div class="notice notice-warning" role="status">
+            <strong>Cannot send:</strong>
+            <ul>{#each welcome.problemText as problem}<li>{problem}</li>{/each}</ul>
+            {#if !welcome.toggle.enabled}The switch stays off until this is fixed.{/if}
+          </div>
+        {/if}
+
+        {#if welcome.senderRefused}
+          <div class="notice notice-error" role="alert">
+            <strong>Sending is not set up.</strong> Cloudflare Email Sending refused the From address on the last run (<code>{welcome.senderRefused}</code>). Onboard <strong>{welcome.sender.mailDomain || 'MAIL_DOMAIN'}</strong> in Cloudflare Email Sending (it adds the DKIM and DMARC records). Waiting emails are retried every hour.
+          </div>
+        {/if}
+        {#if welcome.profileStale && welcome.toggle.enabled}
+          <div class="notice notice-warning" role="status">
+            The organisation details or sign-in settings changed since they were last saved for the email Worker, which still uses the old ones. Save them to use the new ones.
+          </div>
+        {/if}
+        <form method="POST">
+          <input type="hidden" name="action" value="welcome_refresh" />
+          <button type="submit" class="btn btn-sm">Check sending and save organisation details</button>
+        </form>
+        <p class="muted">Sent from <strong>{welcome.sender.fromEmail || 'no address'}</strong>. It must be on {welcome.sender.mailDomain || 'MAIL_DOMAIN'}, and that domain must be onboarded to Cloudflare Email Sending so the message passes DMARC (Cloudflare's DKIM signature matches the From domain). Otherwise Exchange may junk or reject it.</p>
+
+        {#if welcome.toggle.enabled}
+          <p class="muted">
+            {welcome.toggle.since === '1970-01-01 00:00:00' ? 'Including people who were already waiting when it was turned on.' : `For people created from ${welcome.toggle.since} UTC on.`}
+            {#if !welcome.syncEnabled}Nothing is sent while the sync is off.{:else if welcome.syncDryRun}The sync is in dry run, so nothing is sent; the list below shows who would be emailed.{/if}
+          </p>
+          <form method="POST">
+            <input type="hidden" name="action" value="welcome_disable" />
+            <button type="submit" class="btn btn-outline-danger">Turn welcome emails off</button>
+          </form>
+          <p class="muted">Turning off cancels emails not sent yet. Emails already sent stay sent.</p>
+        {:else if welcome.canSend}
+          <details class="confirm">
+            <summary class="btn btn-primary">Turn welcome emails on…</summary>
+            <form method="POST" class="confirm-body">
+              <input type="hidden" name="action" value="welcome_enable" />
+              <input type="hidden" name="expected" value={welcome.waitingNow} />
+              <div class="notice notice-warning" role="alert">
+                <strong>Warning: this sends real email.</strong>
+                Right now <strong>{welcome.waitingNow}</strong> {welcome.waitingNow === 1 ? 'person was' : 'people were'} created by the sync, {welcome.waitingNow === 1 ? 'has' : 'have'} never signed in and {welcome.waitingNow === 1 ? 'was' : 'were'} never sent a welcome email.
+                Emails come from {welcome.preview?.from ?? 'the system address'} and go to each person's work address (with Exchange as primary, their Exchange inbox). Sending is rate-limited (50 an hour unless the Worker sets <code>M365_WELCOME_MAX_PER_HOUR</code>).
+              </div>
+              <fieldset>
+                <legend>Who should be emailed?</legend>
+                <label><input type="radio" name="scope" value="new_only" bind:group={welcomeScope} /> Only people created from now on</label>
+                <label><input type="radio" name="scope" value="include_waiting" bind:group={welcomeScope} disabled={welcome.waitingNow === 0} /> Also the {welcome.waitingNow} {welcome.waitingNow === 1 ? 'person' : 'people'} already waiting</label>
+              </fieldset>
+              <button type="submit" class="btn btn-primary">{welcomeScope === 'include_waiting' ? `Turn on and email ${welcome.waitingNow} now` : 'Turn on for new people only'}</button>
+            </form>
+          </details>
+          <p class="muted">Turning on also asks the email Worker whether it can send.</p>
+          {#if !welcome.syncEnabled || welcome.syncDryRun}<p class="muted">While the sync is off or in dry run, nothing is sent. In dry run the list shows who would be emailed.</p>{/if}
+        {:else}
+          <button type="button" class="btn" disabled>Turn welcome emails on</button>
+        {/if}
+
+        {#if welcome.installed}
+          <ul class="counts" aria-label="Welcome email counts">
+            <li><span>Sent</span><strong>{welcome.counts.sent}</strong></li>
+            <li><span>Waiting to send</span><strong>{welcome.counts.queued}</strong></li>
+            <li><span>Failed</span><strong>{welcome.counts.failed}</strong></li>
+            <li><span>Skipped</span><strong>{welcome.counts.skipped}</strong></li>
+            <li><span>Not sent (never queued)</span><strong>{welcome.counts.notSent}</strong></li>
+          </ul>
+          {#if welcome.state.lastTickAt}
+            <p class="muted">Last run {at(welcome.state.lastTickAt)}: {WELCOME_RESULT[welcome.state.lastResult ?? ''] ?? 'not run yet'}{welcome.state.lastProblem ? ` (${welcome.state.lastProblem})` : ''}.</p>
+          {/if}
+          {#if welcome.toggle.enabled && welcome.syncDryRun && welcome.state.dryRun}
+            <div class="notice notice-warning" role="status">
+              Dry run ({at(welcome.state.dryRun.at)}): {welcome.state.dryRun.count} {welcome.state.dryRun.count === 1 ? 'person' : 'people'} would be emailed now.
+              {#if welcome.state.dryRun.addresses.length}<ul>{#each welcome.state.dryRun.addresses as address}<li>{address}</li>{/each}</ul>{/if}
+            </div>
+          {/if}
+
+          <form method="POST" class="note-form">
+            <input type="hidden" name="action" value="welcome_note" />
+            <label for="welcome-note">Standby sentence (optional)</label>
+            <textarea id="welcome-note" name="note" rows="2" maxlength="300" aria-describedby="welcome-note-help"
+              placeholder="This is our standby mailbox. Keep using Outlook as usual; you only need it if Microsoft 365 email is down.">{welcome.toggle.note}</textarea>
+            <p id="welcome-note-help" class="muted">Added after the first paragraph. Plain text, one sentence or two, up to 300 characters. Leave empty to leave it out.</p>
+            <button type="submit" class="btn">Save sentence</button>
+          </form>
+
+          {#if welcome.preview}
+            <details>
+              <summary>Preview the email</summary>
+              <p class="muted">From {welcome.preview.from}. Subject: {welcome.preview.subject}. {welcome.passkeys ? 'Passkey sign-in is on, so step 4 is included.' : 'Passkey sign-in is off, so there is no passkey step.'}</p>
+              <pre class="preview">{welcome.preview.text}</pre>
+            </details>
+          {/if}
+
+          {#if welcome.people.length}
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only">Welcome emails by person</caption>
+                <thead><tr><th>Person</th><th>Status</th><th>Attempts</th><th>Last attempt</th><th>Error</th><th><span class="sr-only">Actions</span></th></tr></thead>
+                <tbody>
+                  {#each welcome.people as person}
+                    <tr>
+                      <td>{person.displayName ? `${person.displayName} · ` : ''}{person.email}</td>
+                      <td>{WELCOME_STATUS[person.status] ?? person.status}{person.sentAt ? ` ${at(person.sentAt)}` : ''}</td>
+                      <td>{person.attempts}</td>
+                      <td>{at(person.lastAttemptAt)}</td>
+                      <td>{#if person.lastError}<code>{person.lastError}</code>{/if}</td>
+                      <td>
+                        {#if person.canResend && welcome.toggle.enabled && welcome.canSend}
+                          <form method="POST">
+                            <input type="hidden" name="action" value="welcome_resend" />
+                            <input type="hidden" name="user_id" value={person.userId} />
+                            <button type="submit" class="btn btn-sm" aria-label="{person.status === 'not_sent' ? 'Send' : 'Resend'} welcome email to {person.email}">{person.status === 'not_sent' ? 'Send' : 'Resend'}</button>
+                          </form>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        {/if}
+      </section>
+    {/if}
+
     {#if status}
       <section class="card" aria-labelledby="status-heading">
         <h2 id="status-heading">Status</h2>
@@ -221,4 +369,14 @@
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th, td { padding: 6px 8px; text-align: left; }
   td { overflow-wrap: anywhere; }
+  .confirm summary { display: inline-block; cursor: pointer; list-style: none; }
+  .confirm summary::-webkit-details-marker { display: none; }
+  .confirm-body { display: grid; gap: 10px; margin-top: 10px; }
+  fieldset { display: grid; gap: 6px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  legend { padding: 0 4px; font-weight: 600; }
+  .note-form { display: grid; gap: 6px; max-width: 640px; }
+  .note-form label { font-size: 13px; font-weight: 600; }
+  .note-form textarea { width: 100%; font: inherit; font-size: 13px; }
+  .note-form .btn { justify-self: start; }
+  .preview { margin: 8px 0 0; padding: 10px 12px; max-width: 640px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-subtle); font-size: 12.5px; }
 </style>

@@ -55,6 +55,15 @@ or generic JWT/ID-token issuer validator in this flow: the provider namespace
 is fixed by server-selected endpoints and the configured OAuth application.
 Do not change the OAuth client registration as a shortcut to federation.
 
+One exception reads the Microsoft ID token: while the Microsoft 365 sync is
+on, a first Microsoft sign-in with no bound identity and no invitation may
+bind to the account the sync created for that person. That decision uses only
+the ID token from the token endpoint, verified by cmail (RS256 signature from
+the configured tenant's keys, exact issuer, audience, time, `tid`, and the
+Entra object id `oid` the sync stored), never the email or UPN. Returning
+sign-in still uses provider + `sub` only. See
+[Microsoft 365 sync: First sign-in](m365-sync.md#first-sign-in).
+
 Cloudflare Access can be an extra edge gate in front of any of these flows.
 With the optional Access bridge below turned on, it can also sign people in.
 Access `sub` is an Access user identifier; Microsoft's `sub` is
@@ -194,7 +203,10 @@ token and grant they hold. Remove them in Access too.
   mailbox assignment. New users use the existing manager invitation flow.
   The OAuth flows add no automatic provisioning, merging, or email-based
   linking; only the Access bridge, when configured, binds by verified email
-  on a first visit and can provision.
+  on a first visit and can provision. With the Microsoft 365 sync on, a
+  Microsoft first sign-in binds to a synced account by the verified ID
+  token's tenant and object id (never by email); see
+  [First sign-in](m365-sync.md#first-sign-in).
 - If Access protects mail, review its own application audience, issuer,
   allowed staff/IdP policy, MFA/session requirements, and protection of both
   custom and direct Pages origins. Keep preview isolated. Without the bridge

@@ -123,6 +123,20 @@ export interface DeltaPage {
 export const DELTA_SELECT = 'id,displayName,mail,userPrincipalName,accountEnabled,userType,assignedPlans';
 export const INITIAL_DELTA_URL = `${GRAPH_ROOT}users/delta?$select=${DELTA_SELECT}`;
 
+/** Users with their proxyAddresses, 999 per page (the Graph maximum for users). */
+export const ALIAS_USERS_URL = `${GRAPH_ROOT}users?$select=id,proxyAddresses&$top=999`;
+
+export interface ProxyAddressUser {
+  id: string;
+  /** Raw entries such as "SMTP:alice@example.com" (primary) and "smtp:al@example.com". */
+  proxyAddresses: string[];
+}
+
+export interface ProxyAddressPage {
+  users: ProxyAddressUser[];
+  nextLink: string | null;
+}
+
 export function isGraphUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 8192) return false;
   try {
@@ -315,6 +329,31 @@ export class GraphClient {
     const users = (body.value as unknown[]).filter((item): item is GraphUser =>
       Boolean(item) && typeof item === 'object' && typeof (item as GraphUser).id === 'string');
     return { users, nextLink: nextLink as string | null, deltaLink: deltaLink as string | null };
+  }
+
+  /**
+   * One page of users with their proxyAddresses, for the alias import
+   * (docs/exchange-mirror.md). proxyAddresses is returned only when selected:
+   * https://learn.microsoft.com/en-us/graph/api/resources/user
+   * `url` is ALIAS_USERS_URL or a nextLink from the previous page.
+   */
+  async proxyAddressPage(url: string): Promise<ProxyAddressPage> {
+    const body = await this.graphJson(url, { method: 'GET' }) as Record<string, unknown> | null;
+    if (!body || !Array.isArray(body.value)) throw new GraphError('bad_response', 200);
+    const next = body['@odata.nextLink'];
+    const nextLink = next === undefined || next === null ? null : next;
+    if (nextLink !== null && !isGraphUrl(nextLink)) throw new GraphError('bad_response', 200);
+    const users: ProxyAddressUser[] = [];
+    for (const item of body.value as unknown[]) {
+      if (!item || typeof item !== 'object') continue;
+      const record = item as { id?: unknown; proxyAddresses?: unknown };
+      if (typeof record.id !== 'string') continue;
+      const proxies = Array.isArray(record.proxyAddresses)
+        ? record.proxyAddresses.filter((value): value is string => typeof value === 'string' && value.length <= 400).slice(0, 500)
+        : [];
+      users.push({ id: record.id, proxyAddresses: proxies });
+    }
+    return { users, nextLink: nextLink as string | null };
   }
 
   /**

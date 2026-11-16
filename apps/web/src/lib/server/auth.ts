@@ -120,6 +120,7 @@ export function buildAuthorizationUrl(
   state: string,
   codeChallenge: string,
   accountSelection: 'choose' | 'existing' = 'choose',
+  nonce?: string,
 ): string {
   const config = getProviderConfig(provider, env);
   if (!config) throw new Error(`Auth provider "${provider}" is not configured`);
@@ -137,8 +138,22 @@ export function buildAuthorizationUrl(
   // Omitting prompt lets the provider reuse its own browser session or ask
   // for interaction as needed. It never supplies identity to the callback.
   if (accountSelection === 'choose') params.set('prompt', 'select_account');
+  // OIDC nonce: the provider copies it into the ID token, which ties that
+  // token to this browser's request (checked where the ID token is used).
+  if (nonce) params.set('nonce', nonce);
 
   return `${config.authorizationUrl}?${params}`;
+}
+
+export const OAUTH_NONCE_COOKIE_PREFIX = 'cmail_oauth_nonce_';
+
+/** 32 random bytes, base64url: a fresh OIDC nonce per authorization request. */
+export function createOidcNonce(): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+export function validOidcNonce(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
 }
 
 export async function exchangeCode(
