@@ -73,7 +73,7 @@
         <button type="submit" class="btn {data.focusedInbox.enabled ? 'btn-outline-danger' : 'btn-primary'}">
           {data.focusedInbox.enabled ? 'Turn off Focused Inbox' : 'Turn on Focused Inbox'}
         </button>
-        <small>Sorting uses the sender and standard mail headers only, inside cmail. <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
+        <small>Sorting uses the sender and standard mail headers only, inside cmail. <a class="text-link" href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
       </form>
     </section>
   {/if}
@@ -205,6 +205,8 @@
   .state-badge.on { background: var(--success-soft); color: var(--success); }
   .mcp-toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
   .mcp-toggle small { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+  /* Underlined: a link inside text must not rely on colour alone (WCAG 1.4.1). */
+  .text-link { text-decoration: underline; }
   .mcp-stats { margin: 0; color: var(--text-muted); font-size: 12px; }
   .mcp-log summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
   .table-wrap { margin-top: 8px; overflow-x: auto; }
