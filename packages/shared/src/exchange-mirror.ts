@@ -10,11 +10,26 @@
 /** org_settings keys. Absent = off. */
 export const EXCHANGE_MIRROR_SETTING_ENABLED = 'exchange_mirror_enabled';
 export const M365_ALIAS_SYNC_SETTING_ENABLED = 'm365_alias_sync_enabled';
+/**
+ * "Send colleague mail through Exchange" (docs/exchange-mirror.md). Off by
+ * default, and meaningful only while the mirror is on: mail from cmail to a
+ * colleague on the Exchange-hosted domain goes out through the provider (so
+ * Exchange and Outlook get it) instead of straight into their cmail mailbox.
+ */
+export const EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND = 'exchange_mirror_colleague_send';
 
 export async function loadExchangeMirrorSwitch(db: D1Database): Promise<boolean> {
   const row = await db.prepare('SELECT value FROM org_settings WHERE key = ?')
     .bind(EXCHANGE_MIRROR_SETTING_ENABLED).first<{ value: string }>();
   return row?.value === 'true';
+}
+
+/** True only while both the mirror and its colleague-send switch are on. One read. */
+export async function loadColleagueSendViaExchange(db: D1Database): Promise<boolean> {
+  const { results } = await db.prepare('SELECT key, value FROM org_settings WHERE key IN (?, ?)')
+    .bind(EXCHANGE_MIRROR_SETTING_ENABLED, EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND).all<{ key: string; value: string }>();
+  const on = new Set((results ?? []).filter((row) => row.value === 'true').map((row) => row.key));
+  return on.has(EXCHANGE_MIRROR_SETTING_ENABLED) && on.has(EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND);
 }
 
 export async function loadAliasSyncSwitch(db: D1Database): Promise<boolean> {

@@ -130,10 +130,84 @@ Not mirrored:
 
 Nothing a mirrored copy does can send mail: no inbox rules run on it, no
 forwarding, no auto-reply, no bounce, no read receipt, and no new-mail
-notification (people are still reading in Outlook). The only SMTP answer
+notification (people are still reading in Outlook), except for cmail's own
+colleague mail coming back through Exchange
+([below](#mail-sent-from-cmail-to-colleagues)). The only SMTP answer
 cmail ever gives is Cloudflare's own refusal of a report that fails the
 checks below.
 
+### Mail sent from cmail to colleagues
+
+By default, mail from cmail to a colleague who also has a cmail mailbox is
+filed straight into that mailbox, as on any instance. While Exchange holds
+the mail domain, that copy never reaches Exchange, so the colleague does not
+see it in Outlook.
+
+**Send colleague mail through Exchange** (Admin > Exchange mirror, **off by
+default**, acts only while the mirror is on) changes that: recipients on the
+mail domain are sent through the outbound provider like any external
+address. Exchange delivers the message to Outlook, the journal report comes
+back, and the mirror files the cmail copy once (the copy's id comes from the
+Message-ID, so a repeated report or a second delivery path files nothing
+new). The sender's own Sent copy is stored by cmail as usual; the mirror adds
+no second one, because a message from the provider reaches Exchange as
+internet mail and so never carries the internal-submission proof a mirrored
+Sent copy needs.
+
+When the colleague's copy matches a message this instance sent, the mirror
+treats it as proven internal mail: it is filed **unread** with a new-mail
+notification, and Focused Inbox treats the sender as a colleague. It matches
+when the sender's Sent copy in cmail, from the last 2 days, has the same
+Message-ID (as the provider reported it: the Cloudflare REST route and
+Postmark do), the same subject, and the colleague in To or Cc, and Exchange
+did not record a DMARC or composite-authentication failure on it. Anything
+else (a Bcc'd colleague, a provider that does not report the Message-ID, an
+older or altered message) is filed like any mirrored copy, as read with no
+notification. A forged copy would need the Message-ID and subject and to
+reach the journal before the real one, which arrives within minutes. cmail
+inbox rules never run on mirrored copies.
+
+With the switch on:
+
+- A send to a colleague needs the outbound provider ([Sending](sending.md));
+  without it the send is refused with the provider's setup message.
+- A colleague in **Bcc** is an envelope-only recipient, so the provider must
+  be able to split the envelope (the Cloudflare REST route); on a provider
+  that cannot, the send is refused before anything leaves.
+- "Sent" means the provider accepted it. If Exchange later refuses it, the
+  bounce arrives afterwards, as for any external recipient
+  ([delivery status](delivery-and-bounces.md)).
+- If the switches cannot be read, the send fails and the draft is kept.
+- After a [standby switch-over](standby-switch.md) (MX at Cloudflare), turn
+  it and the mirror off (the switch-over runbook says when).
+
+#### Exchange settings to check first
+
+Mail from your own domain arriving from Cloudflare is, to Exchange, internet
+mail claiming to be from inside. Check, with Exchange Online PowerShell:
+
+| Check | Command | What you want |
+|---|---|---|
+| Reject Direct Send | `Get-OrganizationConfig \| Format-List RejectDirectSend` | `False`. When `True`, Exchange rejects unauthenticated mail from your own domain to your MX unless a partner connector covers the sender; such a connector for Cloudflare Email Sending is not documented. Leave the switch off. |
+| Sender authentication | a test message's `Authentication-Results` header | `spf=pass`, `dkim=pass` with `header.d=` your domain, `dmarc=pass`, `compauth=pass`. Needs the domain onboarded to Cloudflare Email Sending. |
+| Spoof and impersonation policies | Microsoft Defender > Anti-phishing, Tenant Allow/Block List > Spoofed senders | The test message is not quarantined or sent to Junk. |
+| External sender tags | `Get-ExternalInOutlook`; mail flow rules that add `[EXTERNAL]` | Decide whether an "External" tag on colleague mail is acceptable. |
+
+#### Prove it with one message
+
+Before relying on it, on the live tenant:
+
+1. Turn **Send colleague mail through Exchange** on.
+2. From cmail, send one message from a cmail user to one colleague on the
+   mail domain (both with Exchange mailboxes).
+3. In the colleague's Outlook: it arrives in the Inbox (not Junk or
+   quarantine) within a few minutes, and shows as you expect (sender name,
+   any External tag). Open the message headers and check the
+   authentication results above.
+4. In cmail: Admin > Mail trace shows it accepted by the provider and no
+   bounce within an hour; Admin > Exchange mirror counts one more filed copy
+   and no duplicate in the colleague's cmail Inbox.
+5. If any step fails, turn the switch off. Nothing else changes.
 ## How a report is trusted
 
 A message is treated as a journal report only when **all** of these hold.

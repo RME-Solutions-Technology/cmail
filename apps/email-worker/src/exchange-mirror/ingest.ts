@@ -5,8 +5,9 @@
 // journal address. With the manager switch off it returns false at once and
 // the inbound handler treats the address like any unknown one.
 //
-// What a mirrored copy never does: it raises no new-mail notification, runs
-// no inbox rule, records no contact or calendar change, and nothing here can
+// What a mirrored copy never does: it raises no new-mail notification (except
+// cmail's own colleague mail coming back through Exchange: see
+// recordedSendRecipients), runs no inbox rule, records no contact or calendar change, and nothing here can
 // send mail (no reply, forward, bounce or read receipt). The only SMTP answer
 // is Cloudflare's own reject of a report that fails the checks in verify.ts.
 import PostalMime from 'postal-mime';
@@ -115,6 +116,12 @@ export interface JournalEnv extends InboundGuardEnv, ExchangeMirrorEnv {
 
 export interface JournalDeps {
   now?: () => number;
+  /**
+   * New-mail notification for a filed Inbox copy of mail this instance sent
+   * (see recordedSendRecipients). Absent: no notification, as for every other
+   * mirrored copy.
+   */
+  notify?: (mailboxId: string, messageId: string) => void;
 }
 
 type Rejected = { kind: 'rejected'; reason: string; diagnostic?: string };
@@ -242,6 +249,55 @@ export async function reserveMirrorStorage(
   }
 }
 
+/** A recorded send proves a mirrored copy only within this window. */
+export const OWN_SEND_WINDOW_DAYS = 2;
+
+/**
+ * The visible recipients (To and Cc) of a message this instance sent from
+ * `mailboxId` in the last OWN_SEND_WINDOW_DAYS days, with this Message-ID
+ * (as the provider reported it) and this subject, or null when there is
+ * none. A mirrored copy for one of them is cmail's own colleague mail coming
+ * back through Exchange ("Send colleague mail through Exchange"), so it is
+ * treated as proven. Read from the sender's Sent copy (indexed by mailbox,
+ * folder and time). A copy that fails the original's authentication
+ * (`ownSendSpoofSignals`) is never proven.
+ */
+export async function recordedSendRecipients(
+  db: D1Database,
+  mailboxId: string,
+  messageIdHeader: string,
+  subject: string,
+): Promise<Set<string> | null> {
+  const row = await db.prepare(
+    `SELECT to_addresses, cc_addresses, subject FROM messages
+     WHERE mailbox_id = ? AND folder = 'sent' AND direction = 'outbound'
+       AND julianday(received_at) >= julianday('now') - ?
+       AND message_id_header = ?
+     LIMIT 1`,
+  ).bind(mailboxId, OWN_SEND_WINDOW_DAYS, messageIdHeader).first<{ to_addresses: string; cc_addresses: string; subject: string }>();
+  if (!row || row.subject !== subject) return null;
+  const out = new Set<string>();
+  for (const column of [row.to_addresses, row.cc_addresses]) {
+    try {
+      const list = JSON.parse(column) as unknown;
+      if (Array.isArray(list)) for (const item of list) if (typeof item === 'string') out.add(item.trim().toLowerCase());
+    } catch {
+      // A malformed column proves nothing for its recipients.
+      continue;
+    }
+  }
+  return out.size ? out : null;
+}
+
+/**
+ * Exchange's own verdict on the original, when it recorded one: an explicit
+ * DMARC or composite-authentication failure means the From was not proven,
+ * whatever else matches.
+ */
+export function ownSendSpoofSignals(innerHeaders: readonly Header[] | undefined): boolean {
+  return headerValues(innerHeaders, 'authentication-results')
+    .some((value) => /\b(?:dmarc|compauth)\s*=\s*fail\b/i.test(value));
+}
 async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (const slice of chunks(ids, IN_CHUNK)) {
@@ -310,6 +366,7 @@ async function processReport(
   env: JournalEnv,
   tools: InboundTools,
   now: number,
+  notify?: JournalDeps['notify'],
 ): Promise<Rejected | Processed> {
   const check = exchangeMirrorConfig(env);
   if (!check.configured) return { kind: 'rejected', reason: 'not_configured' };
@@ -405,7 +462,7 @@ async function processReport(
 
   // Map recipients (and the sender, for a Sent copy) to active mailboxes by
   // primary address or imported alias. Unknown addresses are only counted.
-  const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : [])])];
+  const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : []), ...(headerFrom ? [headerFrom] : [])])];
   const aliasState = await aliasImportState(env.DB, now).catch(() => 'stale' as const);
   const mailboxes = await resolveMailboxes(env.DB, lookups, aliasState === 'fresh');
   const targets: Target[] = [];
@@ -454,6 +511,16 @@ async function processReport(
     innerHeaders,
     innerHeaderBlockOk: headerBlockWellFormed(original.raw),
   });
+  // Colleague mail this instance sent through Exchange: proven for the
+  // recipients the send recorded (unread, notified, a colleague for Focused).
+  const fromMailbox = headerFrom ? mailboxes.get(headerFrom) : undefined;
+  const sentHere = fromMailbox && !ownSendSpoofSignals(innerHeaders)
+    ? await recordedSendRecipients(env.DB, fromMailbox, messageIdHeader, subject).catch(() => {
+      console.error('Exchange mirror: recorded sends could not be read; filing as a normal mirrored copy');
+      return null;
+    })
+    : null;
+  const sentHereFor = (target: Target) => target.role === 'inbound' && Boolean(sentHere?.has(target.address));
 
   // Ids and duplicates, then the subrequest budget.
   const ids = await Promise.all(targets.map((target) => target.role === 'inbound'
@@ -508,15 +575,16 @@ async function processReport(
     }
 
     const sent = target.role === 'sent';
+    const ownSend = sentHereFor(target);
     // Only an Inbox copy is sorted; null stores nothing (switch off for the
     // mailbox, or the lookup failed) and the copy is filed as before.
     const focus = !sent && focusOn
-      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated })
+      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated || ownSend })
       : null;
     const to = toParticipants.length ? toParticipants : [{ address: target.address, name: '' }];
     const insert = env.DB.prepare(
       `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, from_name, to_addresses, cc_addresses, reply_to_addresses, bcc_addresses, to_participants, cc_participants, reply_to_participants, bcc_participants, subject, snippet, body_r2_key, has_attachments, size_bytes, folder, is_read, is_starred, importance, in_reply_to, references_header, thread_id, spam_score, sender_first_contact, quarantine_reason, received_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, NULL, 0, ?, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, 0, ?, datetime('now'), datetime('now'))`,
     ).bind(
       id,
       target.mailboxId,
@@ -539,6 +607,8 @@ async function processReport(
       hasAttachments,
       size,
       sent ? 'sent' : placement.folder,
+      // Mirrored copies are filed as read; cmail's own colleague mail is new mail.
+      ownSend && placement.folder === 'inbox' ? 0 : 1,
       importance,
       inReplyTo,
       referencesHeader,
@@ -551,6 +621,7 @@ async function processReport(
     ).bind(attachment.id, id, attachment.filename, attachment.contentType, attachment.size, attachment.key, attachment.contentId, attachment.disposition));
     try {
       await env.DB.batch([insert, ...(focus ? [focusUpdateStatement(env.DB, id, focus)] : []), ...attachmentInserts]);
+      if (ownSend && placement.folder === 'inbox') notify?.(target.mailboxId, id);
       return 'filed';
     } catch {
       // A concurrent delivery of the same message (another report, or the
@@ -661,7 +732,7 @@ export async function handleJournalDelivery(
 
   const now = (deps.now ?? Date.now)();
   const envelopeFrom = (message.from || '').trim().toLowerCase();
-  const outcome = await processReport(message, env, tools, now);
+  const outcome = await processReport(message, env, tools, now, deps.notify);
 
   if (outcome.kind === 'rejected') {
     message.setReject(JOURNAL_REJECT_RESPONSE);

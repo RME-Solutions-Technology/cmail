@@ -128,6 +128,54 @@ describe('Exchange mirror: filing', () => {
     t.assertNothingSent();
   });
 
+  it('files cmail\'s own colleague mail (a recorded send) unread with a notification, only for the recorded recipients', async () => {
+    const t = setup();
+    // alice's Sent copy of the send, as cmail stored it (the provider reported the Message-ID).
+    const sentCopy = (id: string, subject: string, receivedAt = "datetime('now', '-1 hour')") => t.sqlite.prepare(
+      `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, to_addresses, cc_addresses, subject, folder, received_at)
+       VALUES (?, 'mbx-alice', '<plan-1@example.test>', 'outbound', 'alice@example.test', '["bob@example.test"]', '[]', ?, 'sent', ${receivedAt})`,
+    ).run(id, subject);
+    sentCopy('sent-1', 'Quarterly plan');    // Internet mail to Exchange (no internal-submission headers), as from the provider.
+    await t.deliver(journalReport({
+      inner: innerMessage({ internal: false, to: 'bob@example.test, carol@example.test' }),
+      envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test', 'Recipient: carol@example.test'],
+    }));
+    const read = Object.fromEntries(t.messages().filter((row) => row.direction === 'inbound').map((row) => [row.mailbox_id, row.is_read]));
+    expect(read).toEqual({ 'mbx-bob': 0, 'mbx-carol': 1 });
+    expect(t.waitUntil).toHaveBeenCalledTimes(1);
+    t.assertNothingSent();
+  });
+
+  it('does not prove a copy whose subject, age or authentication does not fit the recorded send', async () => {
+    const cases: Array<{ subject: string; receivedAt: string; headers?: Record<string, string> }> = [
+      { subject: 'Something else', receivedAt: "datetime('now', '-1 hour')" },
+      { subject: 'Quarterly plan', receivedAt: "datetime('now', '-3 days')" },
+      { subject: 'Quarterly plan', receivedAt: "datetime('now', '-1 hour')", headers: { 'Authentication-Results': 'spf=pass smtp.mailfrom=example.test; dmarc=fail action=none header.from=example.test; compauth=fail reason=000' } },
+    ];
+    for (const item of cases) {
+      const t = setup();
+      t.sqlite.prepare(
+        `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, to_addresses, cc_addresses, subject, folder, received_at)
+         VALUES ('sent-1', 'mbx-alice', '<plan-1@example.test>', 'outbound', 'alice@example.test', '["bob@example.test"]', '[]', ?, 'sent', ${item.receivedAt})`,
+      ).run(item.subject);
+      await t.deliver(journalReport({
+        inner: innerMessage({ internal: false, headers: item.headers }),
+        envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test'],
+      }));
+      expect(t.messages().filter((row) => row.direction === 'inbound').map((row) => row.is_read)).toEqual([1]);
+      expect(t.waitUntil).not.toHaveBeenCalled();
+    }
+  });
+  it('treats a copy as ordinary mirrored mail when the Message-ID matches no recorded send', async () => {
+    const t = setup();
+    await t.deliver(journalReport({
+      inner: innerMessage({ internal: false }),
+      envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test'],
+    }));
+    expect(t.messages().filter((row) => row.direction === 'inbound').map((row) => row.is_read)).toEqual([1]);
+    expect(t.waitUntil).not.toHaveBeenCalled();
+  });
+
   it('files to fresh imported aliases only, never to an alias of a disabled mailbox', async () => {
     const report = () => journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'To: Robert@example.test', 'To: ollie@example.test', 'To: carol@example.test'] });
     const withAliases = (options: { importOn: boolean; lastOkAgeMs: number | null }) => {
