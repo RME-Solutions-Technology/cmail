@@ -189,6 +189,34 @@
         </form>
         <p class="muted">Sent from <strong>{welcome.sender.fromEmail || 'no address'}</strong>. It must be on {welcome.sender.mailDomain || 'MAIL_DOMAIN'}, and that domain must be onboarded to Cloudflare Email Sending so the message passes DMARC (Cloudflare's DKIM signature matches the From domain). Otherwise Exchange may junk or reject it.</p>
 
+        {#if welcome.installed}
+          <div class="recipients" aria-labelledby="welcome-recipients-heading">
+            <h3 id="welcome-recipients-heading">Who would be emailed: {welcome.toggle.enabled && welcome.recipients.auto !== welcome.recipients.total ? `${welcome.recipients.auto} now, ${welcome.recipients.total - welcome.recipients.auto} more by Send` : `${welcome.recipients.total} ${welcome.recipients.total === 1 ? 'person' : 'people'}`}</h3>
+            <p class="muted">
+              Licensed, enabled people the sync created, who have not been sent a welcome email. Shared mailboxes, unlicensed and disabled accounts are never listed or emailed. Each name below is the Microsoft sign-in name (UPN) the email tells them to use.
+              {#if welcome.toggle.enabled}{#if welcome.recipients.total > welcome.recipients.auto}Only the {welcome.recipients.auto} created since the switch went on are sent automatically; the other {welcome.recipients.total - welcome.recipients.auto} are listed too and go only when you press Send on them.{:else}All of them are sent automatically.{/if}{:else}Nothing has been sent. The switch below decides who is emailed.{/if}
+            </p>
+            {#if welcome.recipients.people.length}
+              <details open={welcome.recipients.total <= 25}>
+                <summary>Show the list</summary>
+                <ul class="recipient-list">
+                  {#each welcome.recipients.people as person (person.userId)}
+                    <li>{person.displayName ? `${person.displayName} · ` : ''}{person.signInName}{person.signInName !== person.email ? ` (mailbox ${person.email})` : ''}</li>
+                  {/each}
+                </ul>
+                {#if welcome.recipients.total > welcome.recipients.people.length}<p class="muted">Showing the first {welcome.recipients.people.length} of {welcome.recipients.total}.</p>{/if}
+              </details>
+            {:else}
+              <p class="muted">No one is waiting.</p>
+            {/if}
+            <form method="POST" class="test-form">
+              <input type="hidden" name="action" value="welcome_test" />
+              <button type="submit" class="btn">Send a test to me</button>
+              <span class="muted">Sends this email to your own address only, marked [Test]. Nothing is recorded or turned on. About 5 an hour.</span>
+            </form>
+          </div>
+        {/if}
+
         {#if welcome.toggle.enabled}
           <p class="muted">
             {welcome.toggle.since === '1970-01-01 00:00:00' ? 'Including people who were already waiting when it was turned on.' : `For people created from ${welcome.toggle.since} UTC on.`}
@@ -254,7 +282,7 @@
           {#if welcome.preview}
             <details>
               <summary>Preview the email</summary>
-              <p class="muted">From {welcome.preview.from}. Subject: {welcome.preview.subject}. {welcome.passkeys ? 'Passkey sign-in is on, so step 4 is included.' : 'Passkey sign-in is off, so there is no passkey step.'}</p>
+              <p class="muted">From {welcome.preview.from}. Subject: {welcome.preview.subject}. {welcome.passkeys ? 'Passkey sign-in is on, so step 4 is included.' : 'Passkey sign-in is off, so there is no passkey step.'} {welcome.standby ? 'A standby switch is on, so it says why the account exists.' : 'No standby switch is on, so it uses neutral wording.'}</p>
               <pre class="preview">{welcome.preview.text}</pre>
             </details>
           {/if}
@@ -267,7 +295,7 @@
                 <tbody>
                   {#each welcome.people as person}
                     <tr>
-                      <td>{person.displayName ? `${person.displayName} · ` : ''}{person.email}</td>
+                      <td>{person.displayName ? `${person.displayName} · ` : ''}{person.signInName}{person.signInName !== person.email ? ` (mailbox ${person.email})` : ''}</td>
                       <td>{WELCOME_STATUS[person.status] ?? person.status}{person.sentAt ? ` ${at(person.sentAt)}` : ''}</td>
                       <td>{person.attempts}</td>
                       <td>{at(person.lastAttemptAt)}</td>
@@ -385,6 +413,10 @@
   .confirm-body { display: grid; gap: 10px; margin-top: 10px; }
   fieldset { display: grid; gap: 6px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
   legend { padding: 0 4px; font-weight: 600; }
+  .recipients { display: grid; gap: 8px; }
+  .recipients h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .recipient-list { margin: 8px 0 0; padding-left: 20px; max-height: 320px; overflow: auto; font-size: 13px; }
+  .test-form { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
   .note-form { display: grid; gap: 6px; max-width: 640px; }
   .note-form label { font-size: 13px; font-weight: 600; }
   .note-form textarea { width: 100%; font: inherit; font-size: 13px; }

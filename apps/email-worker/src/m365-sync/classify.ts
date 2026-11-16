@@ -21,7 +21,7 @@ export type OutReason =
 export type SharedSource = 'in_shared_group' | 'shared_mailbox';
 
 export type Classification =
-  | { kind: 'person'; address: string; displayName: string }
+  | { kind: 'person'; address: string; displayName: string; upn: string }
   | { kind: 'shared'; address: string; displayName: string; source: SharedSource }
   | { kind: 'out'; reason: OutReason; address: string }
   /** The mailbox type lookup failed: leave this object exactly as it is this round. */
@@ -67,6 +67,12 @@ export function primaryAddress(user: GraphUser, domains: OrgDomainSet): { addres
   const local = raw.slice(0, at);
   const domain = raw.slice(at + 1);
   return { address: raw, onDomain: domainIn(domain, domains) && LOCAL_PART.test(local) && !local.includes('..') };
+}
+
+/** The sign-in name (userPrincipalName) as a plain address, or '' when Graph gave nothing usable. */
+export function cleanUpn(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return raw && raw.length <= 254 && /^[^\s<>"@\u0000-\u001f\u007f]+@[^\s<>"@\u0000-\u001f\u007f]+$/.test(raw) ? raw : '';
 }
 
 export function cleanDisplayName(value: unknown): string {
@@ -136,5 +142,5 @@ export function classify(
   if (user.accountEnabled !== true) return { kind: 'out', reason: 'disabled', address };
   if (!hasExchangePlan(user, planIds)) return { kind: 'out', reason: 'no_mailbox_plan', address };
   if (groups.scope && !memberOf?.has(groups.scope)) return { kind: 'out', reason: 'not_in_scope_group', address };
-  return { kind: 'person', address, displayName };
+  return { kind: 'person', address, displayName, upn: cleanUpn(user.userPrincipalName) };
 }

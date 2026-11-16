@@ -204,6 +204,20 @@ Turning a person off in Access does not revoke their AI app grants. When
 someone leaves, also pause or offboard them in cmail: both revoke every MCP
 token and grant they hold. Remove them in Access too.
 
+## Public help pages (Access bypass for /help/*)
+
+cmail serves a few pages without a cmail session, on purpose, so a person who
+cannot sign in yet can read them: the help centre under `/help/*`, including
+`/help/first-sign-in`, the page the [Microsoft 365 welcome
+email](m365-welcome-emails.md) links to. "Public" only means cmail does not ask
+for a session. **When Cloudflare Access covers the whole hostname, Access shows
+its own login page before cmail**, so those pages are public only if you let
+them through: add an Access application or policy with the **Bypass** action
+for the path `/help/*` (the same pattern as for the AI app paths above). Without
+it, a person who has not signed in cannot open the link in the email. With
+Microsoft sign-in and no Access (the usual setup for synced people) nothing
+needs doing.
+
 ## Live configuration still needs verification
 
 - Confirm the mail origin and existing provider configuration in each lane.

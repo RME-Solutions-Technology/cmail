@@ -23,6 +23,7 @@
 // are conditional on the change having landed, so a concurrent manager
 // action is never overwritten. A unique-key clash becomes a reported conflict.
 import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
+import { hasUpnColumn } from '@cmail/shared/m365-welcome';
 import {
   M365_REPORT_LIMIT,
   type M365CountKey,
@@ -39,6 +40,7 @@ interface LinkRow {
   source_state: 'in_scope' | 'out_of_scope';
   paused_by_sync: number;
   status_before_pause: 'pending' | 'active' | null;
+  upn: string;
 }
 
 interface UserRow {
@@ -126,11 +128,13 @@ async function markerLanded(ctx: ApplyContext, userId: string, marker: string): 
 
 async function loadLinks(ctx: ApplyContext, ids: string[]): Promise<Map<string, LinkRow>> {
   const links = new Map<string, LinkRow>();
+  // Before migration 0032 there is no upn column: read '' instead of failing.
+  const upnColumn = await hasUpnColumn(ctx.db) ? 'upn' : "'' AS upn";
   for (let start = 0; start < ids.length; start += IN_CHUNK) {
     const slice = ids.slice(start, start + IN_CHUNK);
     ctx.ops += 1;
     const { results } = await ctx.db.prepare(
-      `SELECT object_id, kind, user_id, mailbox_id, source_state, paused_by_sync, status_before_pause
+      `SELECT object_id, kind, user_id, mailbox_id, source_state, paused_by_sync, status_before_pause, ${upnColumn}
        FROM m365_sync_links WHERE object_id IN (${slice.map(() => '?').join(', ')})`,
     ).bind(...slice).all<LinkRow>();
     for (const row of results ?? []) links.set(row.object_id, row);
@@ -346,9 +350,29 @@ async function personIn(ctx: ApplyContext, entry: M365PendingEntry, link: LinkRo
     changed = true;
   }
 
+  // Keep the sign-in name (UPN) current: a rename in Microsoft 365 changes it
+  // without changing the primary address. Not a change to the account.
+  if (entry.upn && entry.upn !== link.upn && await hasUpnColumn(ctx.db)) {
+    statements.push(
+      ctx.db.prepare(`UPDATE m365_sync_links SET upn = ?, updated_at = datetime('now') WHERE object_id = ?`).bind(entry.upn, link.object_id),
+    );
+  }
+
   if (!changed) record(ctx, 'unchanged');
   if (!live(ctx) || !statements.length) return;
   if (!await runBatch(ctx, statements)) await conflict(ctx, entry, 'write_conflict');
+}
+
+/** The person link insert; without migration 0032 (no upn column) it is the old statement. */
+async function personLinkInsert(ctx: ApplyContext, entry: M365PendingEntry, userId: string): Promise<D1PreparedStatement> {
+  if (await hasUpnColumn(ctx.db)) {
+    return ctx.db.prepare(
+      `INSERT INTO m365_sync_links (object_id, kind, user_id, source_state, seen_round, upn) VALUES (?, 'person', ?, 'in_scope', ?, ?)`,
+    ).bind(entry.id, userId, ctx.round.id, entry.upn ?? '');
+  }
+  return ctx.db.prepare(
+    `INSERT INTO m365_sync_links (object_id, kind, user_id, source_state, seen_round) VALUES (?, 'person', ?, 'in_scope', ?)`,
+  ).bind(entry.id, userId, ctx.round.id);
 }
 
 async function personNew(ctx: ApplyContext, entry: M365PendingEntry) {
@@ -368,9 +392,7 @@ async function personNew(ctx: ApplyContext, entry: M365PendingEntry) {
     record(ctx, 'adopted', { action: 'adopt', address: entry.address, reason: 'existing_account' });
     if (!live(ctx)) return;
     const ok = await runBatch(ctx, [
-      ctx.db.prepare(
-        `INSERT INTO m365_sync_links (object_id, kind, user_id, source_state, seen_round) VALUES (?, 'person', ?, 'in_scope', ?)`,
-      ).bind(entry.id, existing.id, ctx.round.id),
+      await personLinkInsert(ctx, entry, existing.id),
       auditStatement(ctx.db, 'm365_sync.user_adopted', existing.id, 'Linked an existing standard account to its Microsoft 365 user'),
     ]);
     if (!ok) await conflict(ctx, entry, 'write_conflict');
@@ -383,6 +405,7 @@ async function personNew(ctx: ApplyContext, entry: M365PendingEntry) {
   const userId = ctx.newId();
   const mailboxId = ctx.newId();
   const localPart = entry.address.split('@')[0];
+  const link = await personLinkInsert(ctx, entry, userId);
   const ok = await runBatch(ctx, [
     ctx.db.prepare(
       `INSERT INTO users (id, email, display_name, role, status, created_at, updated_at)
@@ -396,9 +419,7 @@ async function personNew(ctx: ApplyContext, entry: M365PendingEntry) {
       `INSERT INTO mailbox_assignments (mailbox_id, user_id, permissions, assigned_at, assigned_by)
        VALUES (?, ?, 'full', datetime('now'), NULL)`,
     ).bind(mailboxId, userId),
-    ctx.db.prepare(
-      `INSERT INTO m365_sync_links (object_id, kind, user_id, source_state, seen_round) VALUES (?, 'person', ?, 'in_scope', ?)`,
-    ).bind(entry.id, userId, ctx.round.id),
+    link,
     auditStatement(ctx.db, 'user.provisioned', userId, 'Provisioned pending standard account from Microsoft 365 sync'),
     auditStatement(ctx.db, 'mailbox.created', mailboxId, 'Provisioned personal mailbox with full owner assignment (Microsoft 365 sync)'),
   ]);
