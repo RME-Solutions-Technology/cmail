@@ -3,7 +3,7 @@ import worker, { RECIPIENT_UNAVAILABLE_SMTP_RESPONSE } from '../index';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { GUARDS_OFF } from '../testing/delivery';
 import { JOURNAL_REJECT_RESPONSE } from './ingest';
-import { AUTHSERV, DOMAIN, JOURNAL, OTHER_TENANT, TENANT, defaultEnvelope, innerMessage, journalReport } from './fixtures';
+import { AUTHSERV, DOMAIN, JOURNAL, NDR, NDR_DOMAIN, OTHER_TENANT, TENANT, defaultEnvelope, innerMessage, journalReport } from './fixtures';
 
 // The Exchange mirror against every real migration (node:sqlite), driving
 // the real inbound handler with journal reports shaped like Exchange
@@ -38,6 +38,7 @@ function setup(options: { enabled?: boolean; env?: Record<string, unknown> } = {
     INBOUND_AUTHSERV_ID: AUTHSERV,
     M365_JOURNAL_ADDRESS: JOURNAL,
     M365_TENANT_ID: TENANT,
+    M365_JOURNAL_NDR_DOMAIN: NDR_DOMAIN,
     // Off by default in the product; most tests here exercise it.
     M365_JOURNAL_MIRROR_SENT: 'true',
     ...GUARDS_OFF,
@@ -51,7 +52,8 @@ function setup(options: { enabled?: boolean; env?: Record<string, unknown> } = {
     // Email Routing exposes the top-level headers; the inbound path reads Message-ID from them.
     const messageId = /^Message-ID: (.*)$/im.exec(raw.split('\r\n\r\n')[0] ?? '')?.[1] ?? '';
     const message = {
-      from: envelope.from ?? `bounce@${DOMAIN}`,
+      // Live journal reports come from the NDR address; other mail from a bounce address.
+      from: envelope.from ?? ((envelope.to ?? JOURNAL) === JOURNAL ? NDR : `bounce@${DOMAIN}`),
       to: envelope.to ?? JOURNAL,
       rawSize: envelope.rawSize ?? raw.length,
       headers: new Headers(messageId ? { 'message-id': messageId } : {}),
@@ -269,7 +271,7 @@ describe('Exchange mirror: refused reports', () => {
       expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
       expect(t.messages()).toEqual([]);
       expect(t.days()[0]).toMatchObject({ received: 1, rejected: 1, filed: 0, last_problem: item.reason });
-      expect(t.audits()).toEqual([{ event_type: 'exchange_mirror.report_rejected', detail: `Journal report refused: ${item.reason}; envelope sender domain attacker.example` }]);
+      expect(t.audits()).toEqual([{ event_type: 'exchange_mirror.report_rejected', detail: expect.stringMatching(new RegExp(`^Journal report refused: ${item.reason}; envelope sender domain attacker\\.example($|; outer headers: )`)) }]);
       // A refused report's subject and From are never trusted into the trace.
       expect(t.traces()).toEqual([expect.objectContaining({ status: 'rejected', subject: null })]);
       t.assertNothingSent();
@@ -312,6 +314,90 @@ describe('Exchange mirror: refused reports', () => {
     const untied = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false', INBOUND_AUTHSERV_ID: '', M365_TENANT_ID: '' } });
     expect((await untied.deliver(journalReport({ authenticationResults: null }))).message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
     expect(untied.days()[0]).toMatchObject({ last_problem: 'not_configured' });
+  });
+});
+
+describe('Exchange mirror: live-shaped reports', () => {
+  // From the live tenant (16 Nov 2026): internet mail is journaled with the
+  // external sender as the report's From, the NDR address as MAIL FROM, and
+  // the report can carry the sender's tenant id as well as ours.
+  const external = () => journalReport({
+    inner: innerMessage({ from: 'Pat Partner <pat@partner.example>', messageId: '<ext-1@partner.example>', internal: false, headers: { 'X-MS-Exchange-CrossTenant-Id': OTHER_TENANT } }),
+    envelope: ['Sender: pat@partner.example', 'Subject: Quarterly plan', 'Message-Id: <ext-1@partner.example>', 'Recipient: bob@example.test'],
+    authenticationResults: `${AUTHSERV}; spf=pass smtp.mailfrom=${NDR}; dkim=none; dmarc=fail header.from=partner.example`,
+    extraHeaders: { 'X-MS-Exchange-CrossTenant-Id': TENANT },
+    tenantHeader: OTHER_TENANT,
+  });
+
+  it('files internet mail authenticated by SPF for the NDR domain plus our tenant id, with auth required', async () => {
+    const t = setup();
+    const { message } = await t.deliver(external());
+    expect(message.setReject).not.toHaveBeenCalled();
+    expect(t.messages()).toEqual([expect.objectContaining({ mailbox_id: 'mbx-bob', from_address: 'pat@partner.example' })]);
+  });
+
+  it('files the same report with M365_JOURNAL_REQUIRE_AUTH "false" (our id among several)', async () => {
+    const t = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false' } });
+    const { message } = await t.deliver(external());
+    expect(message.setReject).not.toHaveBeenCalled();
+    expect(t.messages()).toHaveLength(1);
+  });
+
+  it('refuses it without our tenant id, and audits a safe header diagnostic', async () => {
+    const t = setup();
+    const report = journalReport({
+      inner: innerMessage({ from: 'Pat Partner <pat@partner.example>', messageId: '<ext-2@partner.example>', internal: false, headers: { 'X-MS-Exchange-CrossTenant-Id': OTHER_TENANT, 'X-MS-Exchange-Organization-SCL': '1' } }),
+      envelope: ['Sender: pat@partner.example', 'Subject: Quarterly plan', 'Message-Id: <ext-2@partner.example>', 'Recipient: bob@example.test'],
+      authenticationResults: `${AUTHSERV}; spf=pass smtp.mailfrom=${NDR}; dkim=none; dmarc=fail header.from=partner.example`,
+      tenantHeader: OTHER_TENANT,
+      extraHeaders: {
+        'X-MS-Exchange-CrossTenant-OriginalArrivalTime': '16 Nov 2026 01:02:03.0000 (UTC)',
+        'DKIM-Signature': 'v=1; a=rsa-sha256; d=partner.example; s=selector1; h=From:Subject; bh=abc=; b=def=',
+      },
+    });
+    const { message } = await t.deliver(report);
+    expect(message.setReject).toHaveBeenCalled();
+    const detail = String(t.audits()[0]?.detail);
+    expect(detail).toContain('Journal report refused: wrong_tenant');
+    expect(detail).toContain(`x-ms-exchange-crosstenant-id: ${OTHER_TENANT}`);
+    expect(detail).toContain('x-ms-exchange-crosstenant-originalarrivaltime: 16 Nov 2026 01:02:03.0000 (UTC)');
+    expect(detail).toContain('x-ms-journal-report:');
+    expect(detail).toContain('dkim-signature: d=partner.example s=selector1');
+    expect(detail).toContain('spf=pass smtp.mailfrom=ndr.example.test');
+    expect(detail).toContain('original: 2 such headers');
+    // Never the subject, an address, the DKIM hashes or another header.
+    for (const forbidden of ['Quarterly plan', 'journal-ndr@', 'pat@', 'bh=', 'b=def', 'Pat Partner', 'Date:', 'Message-ID']) {
+      expect(detail, forbidden).not.toContain(forbidden);
+    }
+  });
+});
+
+describe('Exchange mirror: what the checks do and do not prove', () => {
+  it('with authentication off, anyone with the token and a forged tenant id header is accepted (documented: the token is the boundary)', async () => {
+    const t = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false' } });
+    const forged = journalReport({ authenticationResults: null, tenantHeader: TENANT });
+    const { message } = await t.deliver(forged, { from: 'anyone@attacker.example' });
+    expect(message.setReject).not.toHaveBeenCalled();
+    expect(t.messages().filter((row) => row.direction === 'inbound')).toHaveLength(1);
+  });
+
+  it('a forged Authentication-Results below Cloudflare\'s own is ignored by the real parser', async () => {
+    const t = setup();
+    const report = journalReport({
+      authenticationResults: `${AUTHSERV}; spf=fail smtp.mailfrom=${NDR}; dkim=none; dmarc=none`,
+      extraHeaders: { 'Authentication-Results': `${AUTHSERV}; spf=pass smtp.mailfrom=${NDR}; dkim=pass header.d=${DOMAIN}` },
+    });
+    const { message } = await t.deliver(report);
+    expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(t.days()[0]).toMatchObject({ last_problem: 'auth_failed' });
+  });
+
+  it('SPF for the NDR domain counts only when Cloudflare recorded that domain (no fallback to the envelope)', async () => {
+    const t = setup();
+    const report = journalReport({ authenticationResults: `${AUTHSERV}; spf=pass; dkim=none`, extraHeaders: {} });
+    const { message } = await t.deliver(report, { from: NDR });
+    expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(t.days()[0]).toMatchObject({ last_problem: 'auth_failed' });
   });
 });
 

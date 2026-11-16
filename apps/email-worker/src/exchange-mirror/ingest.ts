@@ -31,6 +31,7 @@ import { mailboxStorageQuotaBytes } from '@cmail/shared/mailbox-storage';
 import { releaseInboundReservation, type InboundGuardEnv } from '../inbound-guard';
 import { attachedOriginal, envelopeText, parseJournalEnvelope, type JournalEnvelope } from './report';
 import { headerBlockWellFormed, headerValues, verifyJournalReport } from './verify';
+import { MAX_DIAGNOSTIC, journalDiagnostic } from './diagnostic';
 
 /** SMTP text for a refused report. Deliberately says nothing about why. */
 export const JOURNAL_REJECT_RESPONSE = 'cmail: journal report refused';
@@ -115,7 +116,7 @@ export interface JournalDeps {
   now?: () => number;
 }
 
-type Rejected = { kind: 'rejected'; reason: string };
+type Rejected = { kind: 'rejected'; reason: string; diagnostic?: string };
 interface Processed {
   kind: 'processed';
   counts: ExchangeMirrorCounts;
@@ -310,11 +311,19 @@ async function processReport(
     return { kind: 'rejected', reason: 'unparseable' };
   }
 
-  const verdict = verifyJournalReport(outer.headers, config);
-  if (!verdict.ok) return { kind: 'rejected', reason: verdict.reason };
-
+  // From here on a refusal carries the safe header diagnostic (diagnostic.ts).
+  const parsedOuter = outer;
   const original = attachedOriginal(outer.attachments as ParsedAttachment[] | undefined);
-  if (!original.ok) return { kind: 'rejected', reason: original.reason };
+  const reject = (reason: string): Rejected => ({
+    kind: 'rejected',
+    reason,
+    diagnostic: journalDiagnostic(parsedOuter.headers, original.ok ? original.raw : null),
+  });
+
+  // Only the outer report's own headers and the SMTP envelope are read here.
+  const verdict = verifyJournalReport(outer.headers, config, message.from || null);
+  if (!verdict.ok) return reject(verdict.reason);
+  if (!original.ok) return reject(original.reason);
 
   const counts = emptyMirrorCounts();
   const skipAll = (reason: string, size: number): Processed => ({
@@ -331,10 +340,10 @@ async function processReport(
   }
   // The envelope's Subject line is the original subject. A decoded line
   // break in it could fake envelope lines, so such a report is refused.
-  if (UNSAFE_SUBJECT.test(inner.subject ?? '')) return { kind: 'rejected', reason: 'unsafe_subject' };
+  if (UNSAFE_SUBJECT.test(inner.subject ?? '')) return reject('unsafe_subject');
 
   const parsedEnvelope = parseJournalEnvelope(envelopeText(outer));
-  if (!parsedEnvelope.ok) return { kind: 'rejected', reason: parsedEnvelope.reason };
+  if (!parsedEnvelope.ok) return reject(parsedEnvelope.reason);
   const envelope = parsedEnvelope.envelope;
 
   const size = original.raw.byteLength;
@@ -345,7 +354,7 @@ async function processReport(
   const messageIdHeader = innerMessageIds.length === 1 ? tools.normalizeMessageIdHeader(innerMessageIds[0]) : null;
   const envelopeMessageId = tools.normalizeMessageIdHeader(envelope.messageId ?? '');
   if (!messageIdHeader || !envelopeMessageId || messageIdHeader.toLowerCase() !== envelopeMessageId.toLowerCase()) {
-    return { kind: 'rejected', reason: 'message_id_mismatch' };
+    return reject('message_id_mismatch');
   }
   const rawFromHeader = firstHeader(inner.headers as Header[], 'from');
   const parsedFrom = tools.inboundFromParticipant(inner.from as ParsedMailbox | undefined, envelope.sender ?? '', rawFromHeader);
@@ -556,7 +565,7 @@ async function audit(db: D1Database, eventType: string, detail: string): Promise
   await db.prepare(
     `INSERT INTO audit_log (event_id, timestamp, actor_id, actor_role, event_type, target, detail)
      VALUES (?, datetime('now'), NULL, 'system', ?, 'exchange-mirror', ?)`,
-  ).bind(crypto.randomUUID(), eventType, detail.slice(0, 1000)).run();
+  ).bind(crypto.randomUUID(), eventType, detail.slice(0, 200 + MAX_DIAGNOSTIC)).run();
 }
 
 /** One row per UTC day; returns the day's running totals for the audit cap. */
@@ -630,7 +639,8 @@ export async function handleJournalDelivery(
       if (day && Number(day.received) === 1) await env.DB.prepare('DELETE FROM exchange_mirror_days WHERE day < ?').bind(mirrorDay(now - KEEP_DAYS * 86_400_000)).run();
       if (!day || Number(day.rejected) <= AUDIT_PER_DAY) {
         // The envelope sender of a refused report is unverified: its domain only.
-        await audit(env.DB, 'exchange_mirror.report_rejected', `Journal report refused: ${outcome.reason}; envelope sender domain ${domainOf(envelopeFrom) || 'none'}`);
+        // Only the envelope sender's domain, and the safe header diagnostic.
+        await audit(env.DB, 'exchange_mirror.report_rejected', `Journal report refused: ${outcome.reason}; envelope sender domain ${domainOf(envelopeFrom) || 'none'}${outcome.diagnostic ? `; ${outcome.diagnostic}` : ''}`);
       }
     } catch {
       console.error('Exchange mirror status could not be recorded');
