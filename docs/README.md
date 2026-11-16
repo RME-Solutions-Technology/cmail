@@ -1,6 +1,6 @@
 # cmail documentation
 
-This page is the map for all cmail documentation. cmail is pre-1.0 software: operators should read the deployment and security guides before sending real mail through it.
+This page is the map for all cmail documentation. cmail is beta software (0.9, before 1.0): operators should read the deployment and security guides before sending real mail through it.
 
 ## Use cmail
 
