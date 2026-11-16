@@ -103,6 +103,16 @@ VAPID_SUBJECT = ""
 APP_NAME = "cmail"
 PUSH_ENDPOINT_HOSTS = ""
 
+# Optional secret vault (docs/secret-vault.md): encrypted storage in D1 for
+# values the Microsoft 365 setup wizard creates. Off until used. The key is a
+# Worker secret, never a var; keep a copy in the organisation's password
+# manager BEFORE setting it (losing it means re-running setup, never losing
+# mail). Steps: docs/secret-vault.md#setting-up-the-key, ending with:
+#   wrangler secret put CMAIL_VAULT_KEY --config apps/email-worker/wrangler.toml < vault-key.txt
+# Only while rotating the key: the old key as CMAIL_VAULT_KEY_PREVIOUS (set it
+# before the new CMAIL_VAULT_KEY).
+# A set env secret (for example M365_CLIENT_SECRET) always wins over the vault.
+
 # Optional Microsoft 365 mailbox sync (docs/m365-sync.md). Read-only toward
 # Microsoft. Nothing runs until a manager turns it on in Admin >
 # Microsoft 365 sync; until these are set, Admin shows "not configured".

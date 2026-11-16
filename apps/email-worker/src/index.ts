@@ -24,6 +24,8 @@ import { isJournalAddress, type ExchangeMirrorEnv } from '@cmail/shared/exchange
 import { exchangeMirrorConfigDiagnostic, handleJournalDelivery, type InboundTools } from './exchange-mirror/ingest';
 import { runAliasSyncTick } from './m365-sync/aliases';
 import { runWelcomeTick, welcomeConfigDiagnostic, type WelcomeWorkerEnv } from './m365-welcome/welcome';
+import { handleVaultRpc, isVaultRpcPath } from './vault/rpc';
+import type { VaultKeyEnv } from './vault/crypto';
 import PostalMime from 'postal-mime';
 import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
@@ -71,7 +73,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, VaultKeyEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
   /** Subrequests one Exchange journal report may use for filing (docs/exchange-mirror.md). */
   M365_JOURNAL_SUBREQUEST_BUDGET?: string | number;
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
@@ -838,6 +840,9 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
       return Response.json({ status: 'error' }, { status: 503 });
     }
   }
+  // Secret vault (docs/secret-vault.md): allow-listed operations only; none
+  // returns a value. Values and CMAIL_VAULT_KEY never leave this Worker.
+  if (isVaultRpcPath(url.pathname)) return handleVaultRpc(request, env);
   if (url.pathname !== '/internal/send' || request.method !== 'POST') {
     return new Response('Not found', { status: 404 });
   }
