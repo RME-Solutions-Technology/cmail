@@ -68,7 +68,8 @@ describe('welcome emails admin: defaults and readiness', () => {
   it('cannot send (and stays off) when outbound mail is not configured', async () => {
     for (const options of [{ outbound: 'none' }, { canSend: false }, { canSend: 'down' as const }, { canSend: 'none' as const }]) {
       const t = setup(options);
-      const overview = await loadWelcomeOverview(t.env, 'manager-1');
+      // Checked live by the action (the page load asks the Worker nothing).
+      const overview = await loadWelcomeOverview(t.env, 'manager-1', { live: true });
       expect(overview.canSend).toBe(false);
       expect(overview.problems.some((code) => ['outbound_not_configured', 'no_send_binding', 'worker_unknown'].includes(code))).toBe(true);
       const result = await applyWelcomeAdminAction(t.env, t.manager, 'welcome_enable', {}, NOW);
@@ -81,6 +82,9 @@ describe('welcome emails admin: defaults and readiness', () => {
   it('works with Microsoft sign-in for the sync tenant, or the Access bridge, and refuses when synced people cannot sign in', async () => {
     expect((await loadWelcomeOverview(setup({ signIn: 'microsoft' }).env, 'manager-1')).problems).toEqual([]);
     expect((await loadWelcomeOverview(setup({ signIn: 'access' }).env, 'manager-1')).problems).toEqual([]);
+    // Behind Access the email says to sign in with the work account, not to press a Microsoft button.
+    expect((await loadWelcomeOverview(setup({ signIn: 'access' }).env, 'manager-1')).preview?.text).toContain('Sign in with your work account');
+    expect((await loadWelcomeOverview(setup({ signIn: 'microsoft' }).env, 'manager-1')).preview?.text).toContain('Choose Sign in with Microsoft');
     const t = setup({ signIn: 'none' });
     const overview = await loadWelcomeOverview(t.env, 'manager-1');
     expect(overview.problems).toContain('sign_in_not_ready');
@@ -107,13 +111,25 @@ describe('welcome emails admin: defaults and readiness', () => {
     expect(await workerCanSend({ fetch: async () => { throw new Error('down'); } })).toEqual({ canSend: false, known: false });
   });
 
+  it('page load only reads: no Worker call, no settings write; it reports a stale snapshot', async () => {
+    const t = setup();
+    const before = t.sqlite.prepare('SELECT key, value FROM org_settings ORDER BY key').all();
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(t.fetch).not.toHaveBeenCalled();
+    expect(t.sqlite.prepare('SELECT key, value FROM org_settings ORDER BY key').all()).toEqual(before);
+    expect(overview).toMatchObject({ workerChecked: false, profileStale: true });
+    expect(await applyWelcomeAdminAction(t.env, t.manager, 'welcome_refresh', {}, NOW)).toMatchObject({ ok: true });
+    expect(t.fetch).toHaveBeenCalledTimes(1);
+    expect((await loadWelcomeOverview(t.env, 'manager-1')).profileStale).toBe(false);
+  });
+
   it('saves the organisation snapshot the Worker renders from, with the invitation From rules', async () => {
     const t = setup();
-    await loadWelcomeOverview(t.env, 'manager-1');
+    await applyWelcomeAdminAction(t.env, t.manager, 'welcome_refresh', {}, NOW);
     const row = t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_welcome_profile'`).get() as { value: string };
     expect(parseWelcomeProfile(row.value)).toEqual({
       v: 1, appUrl: 'https://mail.example.test', appName: 'cmail', orgName: 'Example Org', fromEmail: `noreply@${DOMAIN}`,
-      fromName: 'Example Org Mail', contactEmail: `desk@${DOMAIN}`, brandColor: '#0078d4', signInReady: true,
+      fromName: 'Example Org Mail', contactEmail: `desk@${DOMAIN}`, brandColor: '#0078d4', signIn: 'microsoft',
     });
     const offDomain = await buildWelcomeProfile({ ...t.env, SYSTEM_EMAIL: 'someone@other.test' });
     expect(offDomain.profile.fromEmail).toBe(`noreply@${DOMAIN}`);

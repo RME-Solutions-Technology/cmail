@@ -53,6 +53,7 @@ export const WELCOME_PROBLEM_TEXT: Record<string, string> = {
   no_send_binding: 'outbound mail not configured (the email Worker has no Cloudflare Email Sending binding).',
   sign_in_not_ready: 'people created by the sync cannot sign in yet: turn on Microsoft sign-in (MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET) and set M365_TENANT_ID on the web app to the sync tenant (or a single-tenant MICROSOFT_TENANT_ID), or use the Cloudflare Access bridge.',
   app_url_missing: 'APP_URL is not set to an https address.',
+  mail_domain_missing: 'MAIL_DOMAIN is not set.',
   from_missing: 'there is no valid system From address on MAIL_DOMAIN (Admin > Settings).',
   from_not_on_mail_domain: 'the system From address must be exactly on MAIL_DOMAIN (the domain onboarded to Cloudflare Email Sending), so it passes DMARC.',
   org_name_missing: 'the organisation name is not set (Admin > Settings).',
@@ -106,14 +107,18 @@ export async function buildWelcomeProfile(env: Record<string, unknown>): Promise
     fromName: settings.systemFromName,
     contactEmail: isWelcomeEmailAddress(contact) ? contact : '',
     brandColor: runtime.brandPrimaryColor,
-    signInReady: accessMode(env).mode === 'on'
-      || (getEnabledProviders(env as Record<string, string | undefined>).includes('microsoft') && syncSignInTenant(env) !== null),
+    // The Access bridge, when on, is what people meet first (its login page).
+    signIn: accessMode(env).mode === 'on'
+      ? 'access'
+      : getEnabledProviders(env as Record<string, string | undefined>).includes('microsoft') && syncSignInTenant(env) !== null
+        ? 'microsoft'
+        : 'none',
   };
   const problems: string[] = [];
   if (!appUrl) problems.push('app_url_missing');
   if (!settings.orgName) problems.push('org_name_missing');
   if (!isWelcomeEmailAddress(fromEmail)) problems.push('from_missing');
-  if (!profile.signInReady) problems.push('sign_in_not_ready');
+  if (profile.signIn === 'none') problems.push('sign_in_not_ready');
   return { profile, problems };
 }
 
@@ -166,21 +171,34 @@ export interface WelcomeOverview {
   sender: { fromEmail: string; mailDomain: string };
   /** Not blocking: Cloudflare refused the sender on the last run (domain not onboarded to Email Sending). */
   senderRefused: string;
+  /** The organisation details differ from the copy the Worker renders from (save with an action). */
+  profileStale: boolean;
+  /** Whether this overview asked the Worker (actions only); on page load the Worker is checked when turning on. */
+  workerChecked: boolean;
 }
 
-async function readinessProblems(env: WelcomeEnv, profileProblems: string[], profile: WelcomeProfile): Promise<string[]> {
+async function readinessProblems(env: WelcomeEnv, profileProblems: string[], profile: WelcomeProfile, askWorker: boolean): Promise<string[]> {
   const problems: string[] = [];
   if (detectProvider(env) === 'none') problems.push('outbound_not_configured');
-  const worker = await workerCanSend(env.EMAIL_SERVICE);
-  if (!problems.length && !worker.known) problems.push('worker_unknown');
-  if (!problems.length && worker.known && !worker.canSend) problems.push('no_send_binding');
+  // The Worker is asked only for a manager action (POST), never on page load.
+  if (askWorker && !problems.length) {
+    const worker = await workerCanSend(env.EMAIL_SERVICE);
+    if (!worker.known) problems.push('worker_unknown');
+    else if (!worker.canSend) problems.push('no_send_binding');
+  }
   for (const code of profileProblems) if (!problems.includes(code)) problems.push(code);
   const mailDomain = normalizeDomain(publicRuntimeConfig(env).mailDomain) || '';
   for (const code of welcomeProfileProblems(profile, mailDomain)) if (!problems.includes(code)) problems.push(code);
   return problems;
 }
 
-export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | null = null): Promise<WelcomeOverview> {
+/**
+ * Page load (live false) only reads: it neither calls the Worker nor writes
+ * settings. Manager actions (live true) also ask the Worker whether it can
+ * send and save the organisation snapshot the Worker renders from.
+ */
+export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | null = null, options: { live?: boolean } = {}): Promise<WelcomeOverview> {
+  const live = options.live === true;
   const db = env.DB;
   const { results } = await db.prepare(
     'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?, ?, ?)',
@@ -206,11 +224,14 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
     installed = false;
     state = parseM365WelcomeState(null);
   }
-  const problems = installed ? await readinessProblems(env, built.problems, built.profile) : ['not_installed'];
-  // Keep the Worker's copy of the organisation details current.
-  if (installed && !built.problems.includes('app_url_missing') && !built.problems.includes('org_name_missing') && !built.problems.includes('from_missing')) {
-    await saveWelcomeProfile(db, built.profile, managerId);
-  }
+  const problems = installed ? await readinessProblems(env, built.problems, built.profile, live) : ['not_installed'];
+  const savable = installed && !built.problems.includes('app_url_missing') && !built.problems.includes('org_name_missing') && !built.problems.includes('from_missing');
+  // Keep the Worker's copy of the organisation details current (actions only).
+  if (live && savable) await saveWelcomeProfile(db, built.profile, managerId);
+  const stored = installed
+    ? await db.prepare('SELECT value FROM org_settings WHERE key = ?').bind(M365_WELCOME_SETTING_PROFILE).first<{ value: string }>().catch(() => null)
+    : null;
+  const profileStale = savable && stored?.value !== JSON.stringify(built.profile);
 
   const preview = parseWelcomeProfile(JSON.stringify(built.profile));
   const sample = preview
@@ -222,7 +243,7 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
   const sender = { fromEmail: built.profile.fromEmail, mailDomain: mailDomainNow };
   const senderRefused = /^E_SENDER_[A-Z_]+$/.test(state.lastProblem) ? state.lastProblem : '';
   if (!installed) {
-    return { ...base, sender, senderRefused, installed, problems, canSend: false, waitingNow: 0, counts: { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 }, people: [], state, preview: previewView };
+    return { ...base, sender, senderRefused, profileStale: false, workerChecked: live, installed, problems, canSend: false, waitingNow: 0, counts: { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 }, people: [], state, preview: previewView };
   }
 
   let waitingNow = 0;
@@ -273,13 +294,13 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
   } catch {
     // Migration 0022 missing: the sync page already says so.
   }
-  return { ...base, sender, senderRefused, installed, problems, canSend: problems.length === 0, waitingNow, counts, people, state, preview: previewView };
+  return { ...base, sender, senderRefused, profileStale, workerChecked: live, installed, problems, canSend: problems.length === 0, waitingNow, counts, people, state, preview: previewView };
 }
 
-export type WelcomeAdminAction = 'welcome_enable' | 'welcome_disable' | 'welcome_note' | 'welcome_resend';
+export type WelcomeAdminAction = 'welcome_enable' | 'welcome_disable' | 'welcome_note' | 'welcome_resend' | 'welcome_refresh';
 
 export function parseWelcomeAdminAction(value: unknown): WelcomeAdminAction | null {
-  return typeof value === 'string' && ['welcome_enable', 'welcome_disable', 'welcome_note', 'welcome_resend'].includes(value)
+  return typeof value === 'string' && ['welcome_enable', 'welcome_disable', 'welcome_note', 'welcome_resend', 'welcome_refresh'].includes(value)
     ? value as WelcomeAdminAction
     : null;
 }
@@ -304,8 +325,14 @@ export async function applyWelcomeAdminAction(
   now = new Date(),
 ): Promise<WelcomeAdminResult> {
   const db = env.DB;
-  const overview = await loadWelcomeOverview(env, manager.id);
+  const overview = await loadWelcomeOverview(env, manager.id, { live: true });
   if (!overview.installed) return { ok: false, status: 409, error: 'Apply database migration 0029 first.' };
+
+  if (action === 'welcome_refresh') {
+    return overview.problems.length
+      ? { ok: false, status: 409, error: `Saved what could be saved. Cannot send: ${overview.problems.map(welcomeProblemText).join(' ')}` }
+      : { ok: true, message: 'Checked: the email Worker can send, and the organisation details are saved for it.' };
+  }
 
   if (action === 'welcome_enable') {
     if (overview.toggle.enabled) return { ok: false, status: 409, error: 'Welcome emails are already on.' };

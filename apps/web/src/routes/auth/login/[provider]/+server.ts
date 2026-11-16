@@ -1,6 +1,14 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { buildAuthorizationUrl, createPkcePair, getOAuthCallbackUrl, getProviderConfig, isAuthProvider } from '#lib/server/auth.js';
+import {
+  OAUTH_NONCE_COOKIE_PREFIX,
+  buildAuthorizationUrl,
+  createOidcNonce,
+  createPkcePair,
+  getOAuthCallbackUrl,
+  getProviderConfig,
+  isAuthProvider,
+} from '#lib/server/auth.js';
 import { assertStrongSessionSecret } from '#lib/server/config.js';
 import { consumeRateLimit } from '#lib/server/rate-limit.js';
 import { BOOTSTRAP_PROOF_COOKIE } from '#lib/server/bootstrap.js';
@@ -44,6 +52,7 @@ export const GET: RequestHandler = async ({ params, platform, url, cookies, requ
 
   const state = crypto.randomUUID();
   const pkce = await createPkcePair();
+  const nonce = createOidcNonce();
   const authUrl = buildAuthorizationUrl(
     provider,
     env as unknown as Record<string, string | undefined>,
@@ -51,6 +60,7 @@ export const GET: RequestHandler = async ({ params, platform, url, cookies, requ
     state,
     pkce.challenge,
     reuseProviderSession ? 'existing' : 'choose',
+    nonce,
   );
 
   const cookieOptions = {
@@ -62,6 +72,7 @@ export const GET: RequestHandler = async ({ params, platform, url, cookies, requ
   };
   cookies.set(`cmail_oauth_state_${provider}`, state, cookieOptions);
   cookies.set(`cmail_oauth_verifier_${provider}`, pkce.verifier, cookieOptions);
+  cookies.set(`${OAUTH_NONCE_COOKIE_PREFIX}${provider}`, nonce, cookieOptions);
 
   return new Response(null, {
     status: 302,

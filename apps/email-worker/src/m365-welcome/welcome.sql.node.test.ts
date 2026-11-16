@@ -26,7 +26,7 @@ const PROFILE: WelcomeProfile = {
   fromName: 'Example Org Mail',
   contactEmail: `desk@${DOMAIN}`,
   brandColor: '#0078d4',
-  signInReady: true,
+  signIn: 'microsoft',
 };
 
 interface Sent { from: { email: string; name: string }; to: string; subject: string; text: string; html: string }
@@ -43,6 +43,7 @@ function setup(options: {
   profile?: Partial<WelcomeProfile> | null;
   email?: boolean;
   perHour?: string;
+  mailDomain?: string;
   send?: (message: Sent, count: number) => Promise<unknown>;
 } = {}) {
   const { d1, sqlite } = migratedDatabase();
@@ -76,7 +77,7 @@ function setup(options: {
   });
   const env = {
     DB: d1,
-    MAIL_DOMAIN: DOMAIN,
+    MAIL_DOMAIN: options.mailDomain ?? DOMAIN,
     ...(options.email === false ? {} : { EMAIL: { send } as unknown as SendEmail }),
     ...(options.perHour ? { M365_WELCOME_MAX_PER_HOUR: options.perHour } : {}),
   };
@@ -380,7 +381,7 @@ describe('welcome emails: rate limit and bounded runs', () => {
 
 describe('welcome emails: cannot send', () => {
   it('sends nothing without the EMAIL binding, a profile, a sign-in path, or a From address exactly on MAIL_DOMAIN', async () => {
-    for (const options of [{ email: false }, { profile: null }, { profile: { signInReady: false } }, { profile: { fromEmail: 'noreply@other.test' } }, { profile: { fromEmail: `noreply@mail.${DOMAIN}` } }] as const) {
+    for (const options of [{ email: false }, { profile: null }, { profile: { signIn: 'none' } }, { mailDomain: '' }, { profile: { fromEmail: 'noreply@other.test' } }, { profile: { fromEmail: `noreply@mail.${DOMAIN}` } }] as const) {
       const t = setup(options);
       t.person('alice');
       const result = await t.tick();
@@ -395,5 +396,25 @@ describe('welcome emails: cannot send', () => {
     const response = await worker.fetch(new Request('https://cmail-email-worker.internal/internal/m365-welcome/config'), { MAIL_DOMAIN: DOMAIN, EMAIL: { send: vi.fn() } } as never);
     expect(await response.json()).toEqual({ canSend: true, problems: [] });
     expect((await worker.fetch(new Request('https://mail.example.test/internal/m365-welcome/config'), {} as never)).status).toBe(404);
+  });
+});
+
+describe('welcome emails: wording follows the deployment', () => {
+  it('says "Choose Sign in with Microsoft" with Microsoft sign-in, and "sign in with your work account" behind the Access bridge', () => {
+    const microsoft = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: '', displayName: 'Alice', address: `alice@${DOMAIN}` });
+    expect(microsoft.text).toContain(`2. Choose Sign in with Microsoft and use your work account (alice@${DOMAIN}).`);
+    const access = renderWelcomeEmail({ profile: { ...PROFILE, signIn: 'access' }, passkeys: false, note: '', displayName: 'Alice', address: `alice@${DOMAIN}` });
+    expect(access.text).toContain(`1. Open https://mail.example.test\n2. Sign in with your work account (alice@${DOMAIN}) when asked.`);
+    expect(access.text).not.toContain('Sign in with Microsoft');
+    expect(access.html).not.toContain('Sign in with Microsoft');
+  });
+
+  it('saves the hourly counter before each send, not only at the end of the run', async () => {
+    const seen: number[] = [];
+    const t = setup({ send: async () => { seen.push(t.state().attempts.length); return { messageId: '<ok@cf.example.test>' }; } });
+    t.person('alice');
+    t.person('bob');
+    await t.tick();
+    expect(seen).toEqual([1, 2]);
   });
 });

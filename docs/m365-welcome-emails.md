@@ -119,8 +119,11 @@ Managers only. Off by default.
 
 **Cannot send.** The switch is disabled, with the reason, while any of these
 is true: migration `0029` is missing; the web app has no outbound provider
-(`OUTBOUND_PROVIDER` resolves to none); the email Worker has no `EMAIL` send
-binding or cannot be asked ("Cannot send: outbound mail not configured");
+(`OUTBOUND_PROVIDER` resolves to none, shown on page load); the email Worker
+has no `EMAIL` send binding or cannot be asked ("Cannot send: outbound mail
+not configured"; checked when turning on and by **Check sending**: the page
+load itself never calls the Worker or writes a setting); `MAIL_DOMAIN` is not
+set (the Worker refuses to send too);
 synced people cannot sign in (no Microsoft sign-in for the sync's tenant and
 no Access bridge); `APP_URL`, the organisation name or a valid From address
 exactly on `MAIL_DOMAIN` is missing. An unknown answer from the Worker counts
@@ -168,7 +171,9 @@ waits until dry run is off.
   [Email Sending Workers API](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/).
 - **Bounded.** At most 20 sends per cron run (every 15 minutes) and
   `M365_WELCOME_MAX_PER_HOUR` (default 50, 1 to 500) per rolling hour; up to
-  200 people are queued per run.
+  200 people are queued per run. Each send is counted and the count saved
+  before the send, so a run that stops half way cannot let the next one go
+  over the hourly limit.
 - **Audited.** Every attempt writes one audit row: `m365_welcome.sent`,
   `m365_welcome.send_failed` (will retry), `m365_welcome.failed` (final) or
   `m365_welcome.skipped` (no longer eligible), with the account id as target
@@ -221,6 +226,10 @@ Example Org will never ask for your password by email.
 Sent by Example Org with cmail.
 ```
 
+- **Step 2** follows the deployment: with Microsoft first sign-in it is
+  "Choose Sign in with Microsoft and use your work account (…)". With the
+  Cloudflare Access bridge on (its login page appears before cmail, with no
+  cmail button) it is "Sign in with your work account (…) when asked.".
 - **Step 4** appears only while [passkey sign-in](passkeys.md) is switched on
   (checked at send time). "Soon after you sign in" matters: adding a passkey
   needs a session opened in the last 15 minutes.
@@ -246,11 +255,13 @@ Sent by Example Org with cmail.
 | Wording | `renderWelcomeEmail` in `packages/shared/src/m365-welcome.ts`, in your own fork or deployment branch (keep the tests in `welcome.sql.node.test.ts` passing: no images, no external links, passkey step only when on) |
 
 The web app owns the organisation details, `APP_URL` and the sign-in
-settings (Microsoft sign-in and tenant, or the Access bridge), so it saves a snapshot of them (`m365_welcome_profile` in
-`org_settings`) for the Worker every time a manager opens **Admin >
-Microsoft 365 sync** and when the switch is turned on. After changing them in
-Admin > Settings or redeploying with new values, open that page once; the
-preview there shows exactly what will be sent.
+settings (Microsoft sign-in and tenant, or the Access bridge), so it saves a
+snapshot of them (`m365_welcome_profile` in `org_settings`) for the Worker
+when the switch is turned on and when a manager presses **Check sending and
+save organisation details** (any welcome action saves it too). Opening the
+page only reads: after changing them in Admin > Settings or redeploying with
+new values, the page says the Worker still has the old details; press that
+button. The preview always shows the current details.
 
 ## Configuration
 

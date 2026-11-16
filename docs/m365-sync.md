@@ -302,11 +302,12 @@ The decision rests only on the **ID token** returned by the token endpoint,
 verified by cmail, never on UserInfo, the email or the UPN:
 
 1. Signature: RS256 with a key from the configured tenant's published keys
-   (`https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys`; never a
-   URL from the token).
+   (`https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys?appid=<client id>`;
+   never a URL from the token).
 2. Claims, after the signature: `iss` is exactly
    `https://login.microsoftonline.com/<tenant>/v2.0`, `aud` is
-   `MICROSOFT_CLIENT_ID`, `ver` (if present) is `2.0`, `idp` (if present)
+   `MICROSOFT_CLIENT_ID` (compared without case: it is a GUID), `nonce` is the
+   one this browser's login request sent (see below), `ver` (if present) is `2.0`, `idp` (if present)
    equals `iss` (a guest's `idp` is their home tenant, so guests never match),
    `exp`, `nbf` and `iat` within 5 minutes of skew, `tid` is the tenant, and
    `oid` is a GUID. Microsoft:
@@ -327,10 +328,18 @@ makes it bind nothing. Audit: `auth.sync_link_bound`. The callback then
 carries on as for any sign-in (country gate, policy, session). From then on the
 person is a normal returning Microsoft sign-in (provider + `sub`).
 
-Every refusal is audited (`auth.sync_link_refused` with a reason:
-`id_token_invalid`, `wrong_tenant`, `subject_mismatch`, `not_linked`,
-`out_of_scope`, `manager`, `account_suspended`, `already_bound`,
-`bind_conflict`) and the person sees the usual answer
+**Nonce.** Every login request (Google and Microsoft) now sends a fresh OIDC
+`nonce` (32 random bytes) and keeps it in a single-use, HttpOnly cookie
+beside the state and PKCE verifier; the callback deletes it whatever happens.
+The bind path requires the ID token's `nonce` to equal it, so an ID token
+obtained for another login request cannot be replayed into this one.
+
+Every refusal is audited once: the callback's usual `auth.sign_in_denied`
+row carries the reason (`Denied microsoft sign-in: <code> (Microsoft 365 sync
+link: <reason>)`; reasons `nonce_missing`, `id_token_invalid`,
+`wrong_tenant`, `subject_mismatch`, `not_linked`, `out_of_scope`, `manager`,
+`account_suspended`, `already_bound`, `bind_conflict`), so an unbound sign-in
+writes one row, not two. The person sees the usual answer
 (`enrollment_required`, `identity_conflict` or `account_suspended`).
 
 **Sync off:** nothing here runs; the callback behaves exactly as before
@@ -348,6 +357,7 @@ configured (`MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`). The
 Tests: `apps/web/src/lib/server/m365-sync-signin.test.ts` (happy path, sync
 off, wrong tenant, unlinked `oid` with a matching email, manager, paused and
 offboarded, out of scope, already bound to another `sub`, `sub` mismatch,
+missing nonce, replayed token with another request's nonce,
 unsigned, mis-signed, HS256, wrong audience, expired, not yet valid, guest
 `idp`, v1.0, bad `oid`, a race) and `routes/auth/callback/callback-security.test.ts`.
 

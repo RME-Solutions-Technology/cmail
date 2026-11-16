@@ -47,6 +47,10 @@ describe('optional staff SSO entry', () => {
     expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(authorization.searchParams.get('code_challenge')).toBe(createHash('sha256').update(verifier).digest('base64url'));
     expect(authorization.searchParams.get('code_challenge_method')).toBe('S256');
+    // A fresh OIDC nonce per request, sent to the provider and kept in its own cookie.
+    const nonce = saved[`cmail_oauth_nonce_${provider}`];
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(authorization.searchParams.get('nonce')).toBe(nonce);
     for (const [, , options] of event.cookies.set.mock.calls) {
       expect(options).toEqual({ path: '/', httpOnly: true, secure: true, sameSite: 'lax', maxAge: 600 });
     }
@@ -54,6 +58,7 @@ describe('optional staff SSO entry', () => {
     await GET(next as never);
     expect(next.cookies.set.mock.calls[0][1]).not.toBe(saved[`cmail_oauth_state_${provider}`]);
     expect(next.cookies.set.mock.calls[1][1]).not.toBe(verifier);
+    expect(next.cookies.set.mock.calls[2][1]).not.toBe(nonce);
   });
 
   it.each(['', '?sso=0', '?sso=true', '?prompt=none'])('keeps the default chooser for %s', async (search) => {

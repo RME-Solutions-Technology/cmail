@@ -13,6 +13,8 @@ const CLIENT = '00000000-0000-4000-8000-0000000000cc';
 const OID = '00000000-0000-4000-8000-000000000001';
 const SUB = 'pairwise-subject-alice';
 const NOW = Date.parse('2026-11-16T00:00:00Z');
+const NONCE = 'n'.repeat(43);
+const OTHER_NONCE = 'o'.repeat(43);
 const ISSUER = `https://login.microsoftonline.com/${TENANT}/v2.0`;
 
 let keyPair: CryptoKeyPair;
@@ -34,7 +36,7 @@ async function sign(claims: Record<string, unknown>, header: Record<string, unkn
 
 function claims(extra: Record<string, unknown> = {}): Record<string, unknown> {
   const now = Math.floor(NOW / 1000);
-  return { ver: '2.0', iss: ISSUER, aud: CLIENT, tid: TENANT, oid: OID, sub: SUB, iat: now - 10, nbf: now - 10, exp: now + 3600, ...extra };
+  return { ver: '2.0', iss: ISSUER, aud: CLIENT, tid: TENANT, oid: OID, sub: SUB, nonce: NONCE, iat: now - 10, nbf: now - 10, exp: now + 3600, ...extra };
 }
 
 function keyStore(): { store: AccessKeyStore; urls: string[] } {
@@ -64,7 +66,7 @@ function setup(options: { sync?: boolean; role?: string; status?: string; scope?
   const identities = () => sqlite.prepare('SELECT provider, subject, user_id FROM user_identities').all();
   const audits = () => sqlite.prepare(`SELECT event_type, target, detail FROM audit_log WHERE event_type LIKE 'auth.sync_link_%'`).all() as Array<{ event_type: string; target: string | null; detail: string }>;
   const ks = keyStore();
-  const run = async (token: unknown, subject = SUB) => bindSyncLinkedMicrosoftIdentity(d1, env, { idToken: token, subject, clientIp: '192.0.2.1' }, { nowMs: NOW, keyStore: ks.store });
+  const run = async (token: unknown, subject = SUB, nonce: string | undefined = NONCE) => bindSyncLinkedMicrosoftIdentity(d1, env, { idToken: token, subject, nonce, clientIp: '192.0.2.1' }, { nowMs: NOW, keyStore: ks.store });
   return { d1, sqlite, env, identities, audits, run, ks };
 }
 
@@ -77,7 +79,7 @@ describe('Microsoft 365 sync first sign-in', () => {
     expect(t.sqlite.prepare(`SELECT auth_provider FROM users WHERE id = 'alice'`).get()).toEqual({ auth_provider: 'microsoft' });
     expect(t.audits()).toEqual([expect.objectContaining({ event_type: 'auth.sync_link_bound', target: 'alice' })]);
     // Keys come from the configured tenant's endpoint only.
-    expect(t.ks.urls).toEqual([`https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys`]);
+    expect(t.ks.urls).toEqual([`https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys?appid=${CLIENT}`]);
   });
 
   it('changes nothing while the sync is off', async () => {
@@ -96,10 +98,8 @@ describe('Microsoft 365 sync first sign-in', () => {
     // Right issuer but a different tid claim.
     expect(await t.run(await sign(claims({ tid: OTHER_TENANT })))).toMatchObject({ status: 'refused', reason: 'wrong_tenant' });
     expect(t.identities()).toEqual([]);
-    expect(t.audits().map((row) => row.detail)).toEqual([
-      'Microsoft 365 sync sign-in refused: id_token_invalid',
-      'Microsoft 365 sync sign-in refused: wrong_tenant',
-    ]);
+    // One row per denied sign-in is written by the callback, not here.
+    expect(t.audits()).toEqual([]);
   });
 
   it('refuses an oid the sync has not linked, and never matches by email', async () => {
@@ -187,7 +187,27 @@ describe('sync sign-in tenant', () => {
 
   it('verifies a good token on its own', async () => {
     const { store } = keyStore();
-    expect(await verifyMicrosoftIdToken(await sign(claims()), { tenantId: TENANT, clientId: CLIENT }, { nowMs: NOW, keyStore: store }))
+    expect(await verifyMicrosoftIdToken(await sign(claims({ aud: CLIENT.toUpperCase() })), { tenantId: TENANT, clientId: CLIENT, nonce: NONCE }, { nowMs: NOW, keyStore: store }))
       .toEqual({ sub: SUB, oid: OID, tid: TENANT });
+  });
+});
+
+describe('OIDC nonce', () => {
+  it('refuses when the login request left no nonce (missing or malformed cookie)', async () => {
+    const t = setup();
+    // An absent cookie reaches the callback as an empty value.
+    expect(await t.run(await sign(claims()), SUB, '')).toMatchObject({ status: 'refused', reason: 'nonce_missing' });
+    expect(await t.run(await sign(claims()), SUB, 'short')).toMatchObject({ status: 'refused', reason: 'nonce_missing' });
+    expect(t.identities()).toEqual([]);
+  });
+
+  it('refuses a replayed token whose nonce belongs to another login request', async () => {
+    const t = setup();
+    const replayed = await sign(claims({ nonce: OTHER_NONCE }));
+    expect(await t.run(replayed)).toMatchObject({ status: 'refused', reason: 'id_token_invalid' });
+    expect(await t.run(await sign(claims({ nonce: undefined })))).toMatchObject({ status: 'refused', reason: 'id_token_invalid' });
+    expect(t.identities()).toEqual([]);
+    // The same token with its own nonce would have been accepted.
+    expect(await t.run(replayed, SUB, OTHER_NONCE)).toMatchObject({ status: 'bound' });
   });
 });

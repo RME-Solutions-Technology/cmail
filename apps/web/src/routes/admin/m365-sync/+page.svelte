@@ -178,6 +178,15 @@
             <strong>Sending is not set up.</strong> Cloudflare Email Sending refused the From address on the last run (<code>{welcome.senderRefused}</code>). Onboard <strong>{welcome.sender.mailDomain || 'MAIL_DOMAIN'}</strong> in Cloudflare Email Sending (it adds the DKIM and DMARC records). Waiting emails are retried every hour.
           </div>
         {/if}
+        {#if welcome.profileStale && welcome.toggle.enabled}
+          <div class="notice notice-warning" role="status">
+            The organisation details or sign-in settings changed since they were last saved for the email Worker, which still uses the old ones. Save them to use the new ones.
+          </div>
+        {/if}
+        <form method="POST">
+          <input type="hidden" name="action" value="welcome_refresh" />
+          <button type="submit" class="btn btn-sm">Check sending and save organisation details</button>
+        </form>
         <p class="muted">Sent from <strong>{welcome.sender.fromEmail || 'no address'}</strong>. It must be on {welcome.sender.mailDomain || 'MAIL_DOMAIN'}, and that domain must be onboarded to Cloudflare Email Sending so the message passes DMARC (Cloudflare's DKIM signature matches the From domain). Otherwise Exchange may junk or reject it.</p>
 
         {#if welcome.toggle.enabled}
@@ -209,6 +218,7 @@
               <button type="submit" class="btn btn-primary">{welcomeScope === 'include_waiting' ? `Turn on and email ${welcome.waitingNow} now` : 'Turn on for new people only'}</button>
             </form>
           </details>
+          <p class="muted">Turning on also asks the email Worker whether it can send.</p>
           {#if !welcome.syncEnabled || welcome.syncDryRun}<p class="muted">While the sync is off or in dry run, nothing is sent. In dry run the list shows who would be emailed.</p>{/if}
         {:else}
           <button type="button" class="btn" disabled>Turn welcome emails on</button>

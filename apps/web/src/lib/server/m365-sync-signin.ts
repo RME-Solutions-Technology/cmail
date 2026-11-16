@@ -19,11 +19,14 @@
 //   all of that, in one batch with the auth_provider update, so a race with a
 //   manager action or another sign-in binds nothing.
 // - Sync off, or no tenant configured: nothing here runs and nothing changes.
-// - Every bind is audited (auth.sync_link_bound); every refusal with a
-//   matching tenant is audited (auth.sync_link_refused) with a reason code.
+// - The ID token must carry the OIDC nonce this browser's login request sent
+//   (cookie, single use), so a token obtained elsewhere cannot be replayed.
+// - Every bind is audited (auth.sync_link_bound). A refusal adds its reason to
+//   the callback's single auth.sign_in_denied row (one row per denied sign-in).
 import { M365_SYNC_SETTING_ENABLED } from '@cmail/shared/m365-sync';
 import { AccessKeyStore, base64UrlDecode, decodeJsonSegment } from './access-jwt';
 import { audit } from './db';
+import { validOidcNonce } from './auth';
 
 /** Seconds of clock skew tolerated on exp, nbf and iat. */
 export const ID_TOKEN_CLOCK_SKEW_SECONDS = 300;
@@ -71,11 +74,11 @@ function numericDate(value: unknown): number | null | undefined {
  */
 export async function verifyMicrosoftIdToken(
   token: unknown,
-  expected: { tenantId: string; clientId: string },
+  expected: { tenantId: string; clientId: string; nonce: string },
   options: { nowMs?: number; keyStore?: AccessKeyStore } = {},
 ): Promise<MicrosoftIdClaims | null> {
   if (typeof token !== 'string' || !token || token.length > MAX_TOKEN_LENGTH) return null;
-  if (!GUID.test(expected.tenantId) || !expected.clientId) return null;
+  if (!GUID.test(expected.tenantId) || !expected.clientId || !validOidcNonce(expected.nonce)) return null;
   const parts = token.split('.');
   if (parts.length !== 3 || parts.some((part) => !part)) return null;
   const [headerSegment, payloadSegment, signatureSegment] = parts;
@@ -89,7 +92,8 @@ export async function verifyMicrosoftIdToken(
 
   const nowMs = options.nowMs ?? Date.now();
   // The configured tenant's keys, never a URL taken from the token.
-  const keysUrl = `https://login.microsoftonline.com/${expected.tenantId}/discovery/v2.0/keys`;
+  // ?appid= as Microsoft documents, so app-specific signing keys are included.
+  const keysUrl = `https://login.microsoftonline.com/${expected.tenantId}/discovery/v2.0/keys?appid=${encodeURIComponent(expected.clientId.toLowerCase())}`;
   const key = await (options.keyStore ?? defaultKeyStore).key(keysUrl, header.kid, nowMs);
   if (!key) return null;
   let valid: boolean;
@@ -102,7 +106,10 @@ export async function verifyMicrosoftIdToken(
 
   const issuer = `https://login.microsoftonline.com/${expected.tenantId}/v2.0`;
   if (payload.iss !== issuer) return null;
-  if (payload.aud !== expected.clientId) return null;
+  // The client id is a GUID: compare without case.
+  if (typeof payload.aud !== 'string' || payload.aud.toLowerCase() !== expected.clientId.toLowerCase()) return null;
+  // Ties the token to this browser's login request: no replay from elsewhere.
+  if (payload.nonce !== expected.nonce) return null;
   if (payload.ver !== undefined && payload.ver !== '2.0') return null;
   // A guest signs in with an identity from another tenant: idp says so.
   if (payload.idp !== undefined && payload.idp !== issuer) return null;
@@ -122,6 +129,7 @@ export async function verifyMicrosoftIdToken(
 }
 
 export type SyncSignInRefusal =
+  | 'nonce_missing'
   | 'id_token_invalid'
   | 'subject_mismatch'
   | 'wrong_tenant'
@@ -147,6 +155,7 @@ interface LinkedAccount {
 }
 
 const DENY: Record<SyncSignInRefusal, 'enrollment_required' | 'identity_conflict' | 'account_suspended'> = {
+  nonce_missing: 'enrollment_required',
   id_token_invalid: 'enrollment_required',
   subject_mismatch: 'enrollment_required',
   wrong_tenant: 'enrollment_required',
@@ -174,7 +183,7 @@ async function syncEnabled(db: D1Database): Promise<boolean> {
 export async function bindSyncLinkedMicrosoftIdentity(
   db: D1Database,
   env: Record<string, unknown>,
-  input: { idToken: unknown; subject: string; clientIp: string },
+  input: { idToken: unknown; subject: string; nonce: string | undefined; clientIp: string },
   options: { nowMs?: number; keyStore?: AccessKeyStore } = {},
 ): Promise<SyncSignInResult> {
   if (!await syncEnabled(db)) return { status: 'not_applicable' };
@@ -186,18 +195,12 @@ export async function bindSyncLinkedMicrosoftIdentity(
     return { status: 'not_applicable' };
   }
 
-  const refuse = async (reason: SyncSignInRefusal, userId?: string): Promise<SyncSignInResult> => {
-    await audit(db, {
-      event_type: 'auth.sync_link_refused',
-      actor_role: 'system',
-      target: userId ?? null,
-      detail: `Microsoft 365 sync sign-in refused: ${reason}`,
-      ip_address: input.clientIp,
-    });
-    return { status: 'refused', reason, deny: DENY[reason], userId };
-  };
+  // No audit row here: the callback's one denial row carries the reason.
+  const refuse = (reason: SyncSignInRefusal, userId?: string): SyncSignInResult =>
+    ({ status: 'refused', reason, deny: DENY[reason], userId });
 
-  const claims = await verifyMicrosoftIdToken(input.idToken, { tenantId, clientId }, options);
+  if (!validOidcNonce(input.nonce)) return refuse('nonce_missing');
+  const claims = await verifyMicrosoftIdToken(input.idToken, { tenantId, clientId, nonce: input.nonce }, options);
   if (!claims) return refuse('id_token_invalid');
   // verifyMicrosoftIdToken already pins iss to the tenant; tid must agree.
   if (claims.tid !== tenantId) return refuse('wrong_tenant');

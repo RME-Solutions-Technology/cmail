@@ -74,6 +74,8 @@ export function parseM365WelcomeSwitch(rows: Array<{ key: string; value: string 
  * this snapshot to org_settings (when Admin > Microsoft 365 sync is opened
  * and when welcome emails are turned on); the Worker renders from it.
  */
+export type WelcomeSignIn = 'microsoft' | 'access' | 'none';
+
 export interface WelcomeProfile {
   v: 1;
   appUrl: string;
@@ -86,11 +88,13 @@ export interface WelcomeProfile {
   /** #rrggbb */
   brandColor: string;
   /**
-   * True when people the sync created can sign in on their own: Microsoft
-   * sign-in with the sync's tenant configured (docs/m365-sync.md, First
-   * sign-in), or the Cloudflare Access bridge.
+   * How people the sync created sign in on their own, which decides the
+   * wording of step 2: 'access' when the Cloudflare Access bridge is on (the
+   * Access login page appears, no cmail button), else 'microsoft' when
+   * Microsoft sign-in has the sync's tenant (docs/m365-sync.md, First
+   * sign-in), else 'none' (cannot send).
    */
-  signInReady: boolean;
+  signIn: WelcomeSignIn;
 }
 
 const EMAIL = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
@@ -139,7 +143,7 @@ export function parseWelcomeProfile(raw: string | null | undefined): WelcomeProf
     fromName: cleanLine(parsed.fromName, 120),
     contactEmail: typeof parsed.contactEmail === 'string' ? parsed.contactEmail.trim().toLowerCase() : '',
     brandColor: typeof parsed.brandColor === 'string' && HEX.test(parsed.brandColor) ? parsed.brandColor.toLowerCase() : '#2563eb',
-    signInReady: parsed.signInReady === true,
+    signIn: parsed.signIn === 'microsoft' || parsed.signIn === 'access' ? parsed.signIn : 'none',
   };
   if (parsed.v !== 1 || !profile.appUrl || !profile.orgName || !isWelcomeEmailAddress(profile.fromEmail)) return null;
   if (profile.contactEmail && !isWelcomeEmailAddress(profile.contactEmail)) profile.contactEmail = '';
@@ -153,9 +157,12 @@ export function parseWelcomeProfile(raw: string | null | undefined): WelcomeProf
 export function welcomeProfileProblems(profile: WelcomeProfile | null, mailDomain = ''): string[] {
   if (!profile) return ['profile_missing'];
   const problems: string[] = [];
-  if (!profile.signInReady) problems.push('sign_in_not_ready');
+  if (profile.signIn === 'none') problems.push('sign_in_not_ready');
   const domain = mailDomain.trim().toLowerCase();
-  if (domain) {
+  // No MAIL_DOMAIN means the From address cannot be checked: never send.
+  if (!domain) {
+    problems.push('mail_domain_missing');
+  } else {
     const fromDomain = profile.fromEmail.split('@')[1] ?? '';
     // Exactly MAIL_DOMAIN: the domain onboarded to Cloudflare Email Sending,
     // whose DKIM signature then aligns with the From domain so DMARC passes.
@@ -279,7 +286,11 @@ export function renderWelcomeEmail(input: WelcomeEmailInput): WelcomeEmail {
   const intro = `You now have a mail account at ${org} in ${app}.`;
   const steps = [
     { text: `Open ${profile.appUrl}`, html: `Open <a href="${escapeHtml(profile.appUrl)}" style="color:${accent};text-decoration:underline;">${escapeHtml(profile.appUrl)}</a>` },
-    { text: `Choose Sign in with Microsoft and use your work account (${address}).`, html: `Choose <strong>Sign in with Microsoft</strong> and use your work account (${escapeHtml(address)}).` },
+    profile.signIn === 'access'
+      // Behind the Cloudflare Access bridge there is no cmail sign-in button:
+      // the Access login page asks for the work account.
+      ? { text: `Sign in with your work account (${address}) when asked.`, html: `Sign in with your work account (${escapeHtml(address)}) when asked.` }
+      : { text: `Choose Sign in with Microsoft and use your work account (${address}).`, html: `Choose <strong>Sign in with Microsoft</strong> and use your work account (${escapeHtml(address)}).` },
     { text: 'If you are asked to accept the IT policy, read it and accept it.', html: 'If you are asked to accept the IT policy, read it and accept it.' },
   ];
   if (passkeys) {

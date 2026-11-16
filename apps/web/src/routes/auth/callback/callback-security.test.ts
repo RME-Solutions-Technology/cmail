@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('#lib/server/auth.js', () => ({
+  OAUTH_NONCE_COOKIE_PREFIX: 'cmail_oauth_nonce_',
   exchangeCode: mocks.exchangeCode,
   fetchUserInfo: mocks.fetchUserInfo,
   getOAuthCallbackUrl: vi.fn(() => 'https://mail.example.com/auth/callback/google'),
@@ -456,12 +457,15 @@ describe('Microsoft 365 sync first sign-in in the callback', () => {
     mocks.exchangeCode.mockResolvedValue({ access_token: 'access-token', id_token: 'id-token-value', expires_in: 3600 });
     mocks.fetchUserInfo.mockResolvedValue({ subject: 'ms-sub', email: 'alice@example.com', name: 'Alice', provider: 'microsoft', emailVerified: true });
     mocks.bindSyncLinkedMicrosoftIdentity.mockResolvedValue({ status: 'bound', userId: 'synced-1' });
-    const { event } = callbackEvent({}, fakeDb({ enrolledUser: syncedUser }), 'microsoft');
+    const nonce = 'n'.repeat(43);
+    const { event, cookies } = callbackEvent({ cmail_oauth_nonce_microsoft: nonce }, fakeDb({ enrolledUser: syncedUser }), 'microsoft');
     const response = await GET(event as never) as Response;
+    // The nonce cookie is single use.
+    expect(cookies.delete).toHaveBeenCalledWith('cmail_oauth_nonce_microsoft', { path: '/' });
     expect(mocks.bindSyncLinkedMicrosoftIdentity).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      { idToken: 'id-token-value', subject: 'ms-sub', clientIp: '192.0.2.10' },
+      { idToken: 'id-token-value', subject: 'ms-sub', nonce, clientIp: '192.0.2.10' },
     );
     expect(response.status).toBe(303);
     expect(response.headers.get('Location')).toBe('/mail');
@@ -473,6 +477,12 @@ describe('Microsoft 365 sync first sign-in in the callback', () => {
     const { event } = callbackEvent({}, fakeDb(), 'microsoft');
     await expect(GET(event as never)).rejects.toMatchObject({ status: 303, location: '/?error=identity_conflict' });
     expect(mocks.createSessionToken).not.toHaveBeenCalled();
+    // One denial row, carrying the reason.
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      event_type: 'auth.sign_in_denied',
+      detail: 'Denied microsoft sign-in: identity_conflict (Microsoft 365 sync link: manager)',
+    }));
   });
 
   it('changes nothing when not applicable (sync off): the old enrollment_required answer', async () => {

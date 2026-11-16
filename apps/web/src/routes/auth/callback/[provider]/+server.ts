@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { User } from '@cmail/shared/types';
-import { exchangeCode, fetchUserInfo, getOAuthCallbackUrl, isAuthProvider } from '#lib/server/auth.js';
+import { OAUTH_NONCE_COOKIE_PREFIX, exchangeCode, fetchUserInfo, getOAuthCallbackUrl, isAuthProvider } from '#lib/server/auth.js';
 import {
   BOOTSTRAP_PROOF_COOKIE,
   bootstrapConfiguration,
@@ -31,12 +31,13 @@ async function denySignIn(
   provider: 'google' | 'microsoft',
   clientIp: string,
   target?: string | null,
+  reason?: string,
 ): Promise<never> {
   await audit(db, {
     event_type: 'auth.sign_in_denied',
     actor_role: 'system',
     target: target || null,
-    detail: `Denied ${provider} sign-in: ${code}`,
+    detail: `Denied ${provider} sign-in: ${code}${reason ? ` (${reason})` : ''}`,
     ip_address: clientIp,
   });
   throw redirect(303, `/?error=${encodeURIComponent(code)}`);
@@ -54,8 +55,12 @@ export const GET: RequestHandler = async ({ params, url, platform, cookies, requ
   const state = url.searchParams.get('state');
   const storedState = cookies.get(stateCookie);
   const verifier = cookies.get(verifierCookie);
+  // Single use: the nonce cookie goes with state and verifier, whatever happens next.
+  const nonceCookie = `${OAUTH_NONCE_COOKIE_PREFIX}${provider}`;
+  const expectedNonce = cookies.get(nonceCookie);
   cookies.delete(stateCookie, { path: '/' });
   cookies.delete(verifierCookie, { path: '/' });
+  cookies.delete(nonceCookie, { path: '/' });
 
   const code = url.searchParams.get('code');
   if (url.searchParams.has('error') || !code || code.length > 4096 || !state || state !== storedState || !verifier) {
@@ -171,9 +176,11 @@ export const GET: RequestHandler = async ({ params, url, platform, cookies, requ
     const linked = await bindSyncLinkedMicrosoftIdentity(
       env.DB,
       env as unknown as Record<string, unknown>,
-      { idToken, subject: userInfo.subject, clientIp },
+      { idToken, subject: userInfo.subject, nonce: expectedNonce, clientIp },
     );
-    if (linked.status === 'refused') return denySignIn(env.DB, linked.deny, provider, clientIp, linked.userId);
+    if (linked.status === 'refused') {
+      return denySignIn(env.DB, linked.deny, provider, clientIp, linked.userId, `Microsoft 365 sync link: ${linked.reason}`);
+    }
     if (linked.status === 'bound') {
       user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(linked.userId).first<User>();
       if (!user) return denySignIn(env.DB, 'identity_conflict', provider, clientIp);

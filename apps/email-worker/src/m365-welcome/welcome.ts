@@ -241,6 +241,9 @@ export async function runWelcomeTick(env: WelcomeWorkerEnv, deps: WelcomeDeps = 
         const email = renderWelcomeEmail({ profile, passkeys, note: toggle.note, displayName: row.display_name ?? '', address: row.email });
         const attempt = row.attempts + 1;
         state.attempts.push(now);
+        // Counted before the send, and saved at once (lease kept), so a run
+        // that dies mid-way can never let the next one exceed the hourly limit.
+        await db.prepare('UPDATE m365_welcome_state SET state = ? WHERE id = 1').bind(JSON.stringify(state)).run();
         let messageId = '';
         let code = '';
         let failed = false;
