@@ -345,6 +345,8 @@ export interface AuthenticationIdentities {
    * null when the boundary wrote none.
    */
   spfMailFromDomain: string | 'invalid' | null;
+  /** Result of the SPF resinfo that carries smtp.mailfrom (Cloudflare may also emit a bare spf=pass for HELO). */
+  spfMailFromResult: string | null;
 }
 
 const DKIM_DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -361,7 +363,7 @@ export function parseAuthenticationIdentities(
 ): AuthenticationIdentities {
   const facts = parseAuthenticationResults(headerValue, trustedAuthservId);
   const resinfos = trustedResinfos(headerValue, trustedAuthservId);
-  if (!resinfos) return { dmarc: facts.dmarc, dkimPassDomains: [], dmarcHeaderFrom: null, spf: facts.spf, spfMailFromDomain: null };
+  if (!resinfos) return { dmarc: facts.dmarc, dkimPassDomains: [], dmarcHeaderFrom: null, spf: facts.spf, spfMailFromDomain: null, spfMailFromResult: null };
   const domains = new Set<string>();
   for (const info of resinfos) {
     if (info.method !== 'dkim' || info.result !== 'pass') continue;
@@ -379,13 +381,15 @@ export function parseAuthenticationIdentities(
     dmarcHeaderFrom = DKIM_DOMAIN.test(value) ? value : 'invalid';
   }
   let spfMailFromDomain: AuthenticationIdentities['spfMailFromDomain'] = null;
-  const spf = resinfos.find((info) => info.method === 'spf');
+  // Use the SPF result that names smtp.mailfrom: Cloudflare can emit more than one spf= result.
+  const spf = resinfos.find((info) => info.method === 'spf' && info.properties.some((property) => property.name === 'smtp.mailfrom'));
   const mailFrom = spf?.properties.find((property) => property.name === 'smtp.mailfrom');
+  const spfMailFromResult = spf ? spf.result || null : null;
   if (mailFrom) {
     // smtp.mailfrom is an address or, for an empty MAIL FROM, a domain (HELO).
     const at = mailFrom.value.lastIndexOf('@');
     const value = (at >= 0 ? mailFrom.value.slice(at + 1) : mailFrom.value).toLowerCase().replace(/\.$/, '');
     spfMailFromDomain = DKIM_DOMAIN.test(value) ? value : 'invalid';
   }
-  return { dmarc: facts.dmarc, dkimPassDomains: [...domains], dmarcHeaderFrom, spf: facts.spf, spfMailFromDomain };
+  return { dmarc: facts.dmarc, dkimPassDomains: [...domains], dmarcHeaderFrom, spf: facts.spf, spfMailFromDomain, spfMailFromResult };
 }

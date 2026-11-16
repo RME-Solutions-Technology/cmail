@@ -108,6 +108,7 @@ describe('well-formed records parse exactly as before', () => {
       dmarcHeaderFrom: 'example.com',
       spf: 'pass',
       spfMailFromDomain: 'example.com',
+      spfMailFromResult: 'pass',
     });
   });
 });
