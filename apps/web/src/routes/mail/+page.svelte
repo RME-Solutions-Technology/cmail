@@ -24,6 +24,12 @@
     trash: 'Trash',
   };
   const folderLabel = $derived(folderLabels[d.folder] || d.folder);
+  // Focused Inbox: null whenever it is off for this list (then nothing below changes).
+  const focus = $derived(d.focus ?? null);
+  const focusTabs = [
+    { view: 'focused', label: 'Focused' },
+    { view: 'other', label: 'Other' },
+  ] as const;
   const showMailboxColumn = $derived(!d.mailboxId);
 
   /** Drop the query but keep the mailbox and folder currently in scope. */
@@ -50,6 +56,11 @@
   const someVisibleSelected = $derived(selectedCount > 0 && !allVisibleSelected);
   const selectionHasFullControl = $derived(
     selectedMessages.length > 0 && selectedMessages.every((message) => message.mailbox_permissions === 'full'),
+  );
+  // Move to Focused/Other needs every selected message's mailbox to be sorted.
+  const selectionSortable = $derived(
+    Boolean(focus) && selectedMessages.length > 0
+      && selectedMessages.every((message) => focus!.mailboxIds.includes(message.mailbox_id)),
   );
   const fullActionTitle = $derived(
     selectedCount === 0
@@ -210,8 +221,67 @@
     if (d.folder && d.folder !== 'inbox') params.set('folder', d.folder);
     if (d.mailboxId) params.set('mailbox', d.mailboxId);
     if (includeSearch && d.search) params.set('q', d.search);
+    if (focus?.view === 'other') params.set('view', 'other');
     if (pageNumber > 1) params.set('page', String(pageNumber));
     return params.toString();
+  }
+
+  function focusTabHref(view: 'focused' | 'other'): string {
+    const params = new URLSearchParams();
+    if (d.mailboxId) params.set('mailbox', d.mailboxId);
+    if (view === 'other') params.set('view', 'other');
+    const qs = params.toString();
+    return qs ? `/mail?${qs}` : '/mail';
+  }
+
+  /** Arrow keys, Home and End move between the tabs; Enter or Space opens one. */
+  function focusTabKeydown(event: KeyboardEvent): void {
+    const tabs = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLAnchorElement>('[role="tab"]'));
+    const current = tabs.indexOf(document.activeElement as HTMLAnchorElement);
+    if (current < 0) return;
+    let next = -1;
+    if (event.key === 'ArrowRight') next = (current + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (current - 1 + tabs.length) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else if (event.key === ' ') {
+      event.preventDefault();
+      tabs[current].click();
+      return;
+    }
+    if (next < 0) return;
+    event.preventDefault();
+    tabs.forEach((tab, index) => { tab.tabIndex = index === next ? 0 : -1; });
+    tabs[next].focus();
+  }
+
+  async function moveFocus(to: 'focused' | 'other'): Promise<void> {
+    if (selectedCount === 0 || busyAction) return;
+    if (!selectionHasFullControl) {
+      bulkError = 'Moving between Focused and Other needs full permission for every selected message.';
+      return;
+    }
+    const ids = [...selectedIds];
+    busyAction = `focus:${to}`;
+    bulkError = '';
+    bulkStatus = '';
+    try {
+      const response = await fetch('/api/messages/focus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, to }),
+      });
+      const payload = await response.json().catch(() => ({})) as { message?: unknown; moved?: unknown };
+      if (!response.ok) throw new Error(typeof payload.message === 'string' ? payload.message : 'Couldn\'t move selected messages');
+      const moved = typeof payload.moved === 'number' ? payload.moved : ids.length;
+      selectedIds = [];
+      bulkStatus = `${moved} ${moved === 1 ? 'message' : 'messages'} moved to ${to === 'other' ? 'Other' : 'Focused'}.`;
+      await invalidateAll();
+    } catch (caught) {
+      bulkError = caught instanceof Error ? caught.message : 'Couldn\'t move selected messages';
+    } finally {
+      busyAction = '';
+    }
   }
 
   function messageHref(id: string): string {
@@ -318,6 +388,35 @@
     </div>
   </header>
 
+  {#if focus}
+    <!-- Arrow keys reach this from the focused tab; the tablist itself is never a tab stop. -->
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div class="focus-tabs" role="tablist" aria-label="Inbox views" onkeydown={focusTabKeydown}>
+      {#each focusTabs as tab (tab.view)}
+        {@const selected = focus.view === tab.view}
+        {@const unread = focus.unread[tab.view]}
+        <a
+          id={`focus-tab-${tab.view}`}
+          class="focus-tab"
+          class:selected
+          role="tab"
+          href={focusTabHref(tab.view)}
+          aria-selected={selected}
+          aria-controls="focus-panel"
+          tabindex={selected ? 0 : -1}
+          data-sveltekit-noscroll
+          data-sveltekit-keepfocus
+        >
+          <span>{tab.label}</span>
+          {#if unread > 0}
+            <span class="focus-count" aria-hidden="true">{unread > 999 ? '999+' : unread}</span>
+            <span class="sr-only">, {unread} unread</span>
+          {/if}
+        </a>
+      {/each}
+    </div>
+  {/if}
+
   {#if d.partialDelivery}
     <p class="bulk-feedback error" role="alert">
       Delivered or queued for some recipients, but at least one bounced permanently. Don't resend to the whole list — check provider activity and contact failed recipients separately.
@@ -340,10 +439,18 @@
     <p class="bulk-feedback success" role="status">{bulkStatus}</p>
   {/if}
 
+  {#snippet listContent()}
   {#if d.messages.length === 0}
     <div class="card empty-state">
-      <h2>{d.search ? 'No matching messages' : `No messages in ${folderLabel.toLowerCase()}`}</h2>
-      <p>{d.search ? 'Try another term or clear search.' : 'Messages in this folder appear here.'}</p>
+      {#if focus}
+        <h2>{focus.view === 'other' ? 'Nothing in Other' : 'Nothing in Focused'}</h2>
+        <p>{focus.view === 'other'
+          ? 'Newsletters, notifications and other automated mail appear here. It is still in your Inbox.'
+          : 'Mail from people appears here. Newsletters and notifications go to Other.'}</p>
+      {:else}
+        <h2>{d.search ? 'No matching messages' : `No messages in ${folderLabel.toLowerCase()}`}</h2>
+        <p>{d.search ? 'Try another term or clear search.' : 'Messages in this folder appear here.'}</p>
+      {/if}
       {#if d.search}
         <a class="btn" href={queryFor(1, false) ? `?${queryFor(1, false)}` : '/mail'}>Clear search</a>
       {/if}
@@ -380,6 +487,10 @@
           {/if}
           {#if canArchive}
             <button class="btn btn-sm" type="button" title={fullActionTitle} aria-describedby={selectedCount > 0 && !selectionHasFullControl ? 'bulk-permission-note' : undefined} disabled={selectedCount === 0 || !selectionHasFullControl || Boolean(busyAction)} onclick={() => bulkMutate('move', 'archive')}>Archive</button>
+          {/if}
+          {#if focus}
+            {@const target = focus.view === 'other' ? 'focused' : 'other'}
+            <button class="btn btn-sm" type="button" title={fullActionTitle} aria-describedby={selectedCount > 0 && !selectionHasFullControl ? 'bulk-permission-note' : undefined} disabled={selectedCount === 0 || !selectionHasFullControl || !selectionSortable || Boolean(busyAction)} onclick={() => moveFocus(target)}>{target === 'other' ? 'Move to Other' : 'Move to Focused'}</button>
           {/if}
           {#if canMarkSpam}
             <button class="btn btn-sm" type="button" title={fullActionTitle} aria-describedby={selectedCount > 0 && !selectionHasFullControl ? 'bulk-permission-note' : undefined} disabled={selectedCount === 0 || !selectionHasFullControl || Boolean(busyAction)} onclick={() => bulkMutate('move', 'spam')}>Spam</button>
@@ -455,6 +566,16 @@
         {/each}
       </div>
     </section>
+  {/if}
+
+  {/snippet}
+
+  {#if focus}
+    <div id="focus-panel" role="tabpanel" aria-labelledby={`focus-tab-${focus.view}`}>
+      {@render listContent()}
+    </div>
+  {:else}
+    {@render listContent()}
   {/if}
 
   {#if d.hasMore || d.page > 1}
@@ -682,6 +803,38 @@
   }
   .indicator.starred svg { fill: currentColor; stroke-width: 1.2; }
 
+  .focus-tabs {
+    display: flex;
+    gap: 4px;
+    margin: -4px 0 10px;
+    border-bottom: 1px solid var(--divider, var(--border));
+  }
+  .focus-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 0 14px;
+    margin-bottom: -1px;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .focus-tab:hover { color: var(--text); background: var(--bg-hover); text-decoration: none; }
+  .focus-tab.selected { border-bottom-color: var(--primary); color: var(--text); font-weight: 600; }
+  .focus-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+  .focus-count {
+    min-width: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--primary-soft);
+    color: var(--primary-text);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: center;
+  }
   .empty-state { padding: 52px 24px; text-align: center; }
   .empty-state h2 { font-size: 18px; }
   .empty-state p { margin-top: 6px; color: var(--text-muted); }
@@ -757,6 +910,8 @@
 
   @media (max-width: 520px) {
     .heading-group h1 { font-size: 20px; }
+    .focus-tabs { margin-top: -6px; }
+    .focus-tab { flex: 1; justify-content: center; min-height: 44px; }
 
     .mail-row { grid-template-columns: 44px minmax(0, 1fr); }
     .message-selector { min-width: 44px; }
@@ -766,5 +921,6 @@
 
   @media (forced-colors: active) {
     .mail-row.selected { outline: 2px solid Highlight; outline-offset: -2px; }
+    .focus-tab.selected { border-bottom-color: Highlight; }
   }
 </style>

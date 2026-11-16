@@ -57,6 +57,14 @@ jobs:
         env:
           E2E_SKIP_BUILD: "1"
 
+      # Focused Inbox turns an organisation-wide switch on, so it runs on its
+      # own against a fresh seed (docs/focused-inbox.md): tabs, keyboard, axe
+      # at desktop and phone sizes, moving, and switching off again.
+      - name: Run Focused Inbox spec
+        run: pnpm exec playwright test e2e/mobile/focused-inbox.spec.ts --project=focused-inbox --no-deps --workers=1
+        env:
+          E2E_SKIP_BUILD: "1"
+
       - name: Keep the report and traces of a failed run
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

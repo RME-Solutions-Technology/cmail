@@ -4,6 +4,14 @@ import type { Message } from '@cmail/shared/types';
 import { escapeLike } from '#lib/server/validation.js';
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 import { loadDeliveryBadges } from '#lib/server/delivery-badges.js';
+import {
+  focusUnreadCounts,
+  focusViewCondition,
+  loadFocusScope,
+  parseFocusView,
+  scheduleFocusBackfills,
+  type FocusView,
+} from '#lib/server/focused-inbox.js';
 
 const FOLDERS = ['inbox', 'sent', 'drafts', 'archive', 'spam', 'trash'];
 const PAGE_SIZE = 50;
@@ -20,6 +28,21 @@ export const load: PageServerLoad = async ({ locals, platform, url }) => {
   const parsedPage = Number.parseInt(url.searchParams.get('page') || '1', 10);
   const page = Number.isSafeInteger(parsedPage) ? Math.max(1, Math.min(10000, parsedPage)) : 1;
   const offset = (page - 1) * PAGE_SIZE;
+
+  // Focused Inbox (docs/focused-inbox.md): the Focused and Other views apply
+  // to the Inbox list only, never to search or other folders. With the
+  // organisation switch off the scope is null and nothing below changes.
+  let focusMailboxIds: string[] = [];
+  let focusView: FocusView = 'focused';
+  if (folder === 'inbox' && !search) {
+    const scope = await loadFocusScope(env.DB, locals.user.id);
+    if (scope) {
+      focusMailboxIds = mailboxId ? scope.mailboxIds.filter((id) => id === mailboxId) : scope.mailboxIds;
+      if (focusMailboxIds.length) focusView = parseFocusView(url.searchParams.get('view'));
+      // Sort recent mail once, after the response, for mailboxes never sorted.
+      scheduleFocusBackfills(platform, scope.needsBackfill.filter((id) => focusMailboxIds.includes(id)));
+    }
+  }
 
   const conditions = [
     'ma.user_id = ?',
@@ -43,6 +66,10 @@ export const load: PageServerLoad = async ({ locals, platform, url }) => {
     )`);
     bindings.push(term, term, term, term, term, term, term, term, term);
   }
+  if (focusMailboxIds.length) {
+    conditions.push(focusViewCondition(focusView));
+    bindings.push(JSON.stringify(focusMailboxIds));
+  }
 
   const result = await env.DB.prepare(
     `SELECT m.*, mb.address AS mailbox_address, mb.display_name AS mailbox_display_name,
@@ -62,6 +89,13 @@ export const load: PageServerLoad = async ({ locals, platform, url }) => {
   const hasMore = rows.length > PAGE_SIZE;
   const messages = rows.slice(0, PAGE_SIZE);
   const deliveryBadges = folder === 'sent' ? await loadDeliveryBadges(env.DB, messages) : {};
+  const focus = focusMailboxIds.length
+    ? {
+      view: focusView,
+      mailboxIds: focusMailboxIds,
+      unread: await focusUnreadCounts(env.DB, locals.user.id, focusMailboxIds, mailboxId || null),
+    }
+    : null;
 
   let currentMailbox: { id: string; address: string; display_name: string } | null = null;
   if (mailboxId) {
@@ -87,5 +121,7 @@ export const load: PageServerLoad = async ({ locals, platform, url }) => {
     mailboxId: currentMailbox ? mailboxId : null,
     currentMailbox,
     mailboxUnavailable,
+    // null whenever Focused Inbox is off here: the page then renders as before.
+    focus,
   };
 };

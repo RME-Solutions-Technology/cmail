@@ -29,6 +29,7 @@ import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnviron
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
 import { parseMessageImportance } from '@cmail/shared/message-importance';
 import { contactUpsertStatements } from '@cmail/shared/contacts';
+import { decideFocusAtDelivery, focusUpdateStatement } from '@cmail/shared/focused-inbox';
 import {
   evaluateInboxRules,
   loadEnabledInboxRules,
@@ -1308,6 +1309,19 @@ export default {
       importance,
       sizeBytes: messageSize,
     }, { text: parsed.text, html: preparedBody.html, headers: parsed.headers });
+    // Focused Inbox (docs/focused-inbox.md): only mail still bound for the
+    // Inbox after spam filing and inbox rules. null (switch off, or the lookup
+    // failed) stores nothing and the message is filed exactly as before.
+    const focus = (ruleOutcome?.folder ?? placement.folder) === 'inbox'
+      ? await decideFocusAtDelivery(env.DB, {
+        mailboxId: mailbox.id,
+        sender: headerFrom,
+        mailDomain: env.MAIL_DOMAIN,
+        headers: parsed.headers,
+        // Only a DMARC pass recorded by the trusted boundary proves the From.
+        senderAuthenticated: auth.dmarc === 'pass',
+      })
+      : null;
 
     const storageNamespace = generateId();
     const bodyKey = messageBodyR2Key(storageNamespace, generateId());
@@ -1380,7 +1394,11 @@ export default {
       // D1 batches are transactional: message metadata and every attachment
       // row become visible together or not at all. This prevents a retry from
       // deduplicating against a partially persisted message.
-      await env.DB.batch([messageInsert, ...attachmentInserts]);
+      await env.DB.batch([
+        messageInsert,
+        ...(focus ? [focusUpdateStatement(env.DB, messageId, focus)] : []),
+        ...attachmentInserts,
+      ]);
       // The D1 message-insert trigger atomically replaces the pending quota
       // charge with this messages.size_bytes row.
       reservationSettled = true;

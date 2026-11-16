@@ -6,6 +6,7 @@ import { defineConfig, devices } from '@playwright/test';
 // baselines. Nothing in this suite reaches a real deployment or sends mail.
 
 const PORT = Number(process.env.E2E_PORT || 4321);
+const FOCUSED_INBOX_SPEC = /focused-inbox\.spec\.ts/;
 
 const shared = {
   // Local self-signed certificate from `wrangler pages dev --local-protocol https`.
@@ -51,10 +52,19 @@ export default defineConfig({
     ...shared,
   },
   projects: [
-    { name: 'pixel-7', use: { ...devices['Pixel 7'], ...shared } },
-    { name: 'galaxy-s24', use: { ...devices['Galaxy S24'], ...shared } },
-    { name: 'iphone-14', use: { ...devices['iPhone 14'], ...shared } },
-    { name: 'desktop-chrome', use: { ...devices['Desktop Chrome'], ...shared } },
+    { name: 'pixel-7', testIgnore: FOCUSED_INBOX_SPEC, use: { ...devices['Pixel 7'], ...shared } },
+    { name: 'galaxy-s24', testIgnore: FOCUSED_INBOX_SPEC, use: { ...devices['Galaxy S24'], ...shared } },
+    { name: 'iphone-14', testIgnore: FOCUSED_INBOX_SPEC, use: { ...devices['iPhone 14'], ...shared } },
+    { name: 'desktop-chrome', testIgnore: FOCUSED_INBOX_SPEC, use: { ...devices['Desktop Chrome'], ...shared } },
+    // Focused Inbox turns an organisation-wide switch on, which changes every
+    // inbox: it runs only after the device projects (never beside them), on
+    // one browser, and sets desktop and phone sizes itself.
+    {
+      name: 'focused-inbox',
+      testMatch: FOCUSED_INBOX_SPEC,
+      dependencies: ['pixel-7', 'galaxy-s24', 'iphone-14', 'desktop-chrome'],
+      use: { ...devices['Desktop Chrome'], ...shared },
+    },
   ],
   webServer: {
     command: 'node e2e/mobile/serve.mjs',

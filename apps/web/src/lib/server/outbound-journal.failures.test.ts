@@ -178,10 +178,13 @@ function materializationDb(
   initialJournal: OutboundJournalRow,
   targets: OutboundJournalTargetRow[],
   attachments: OutboundJournalAttachmentRow[],
-  inbox: { rules: InboxRuleRow[] | 'unavailable'; address: string } | null = null,
+  inbox: { rules: InboxRuleRow[] | 'unavailable'; address: string; focus?: Record<string, unknown> } | null = null,
   lateDeliveryFailures: string[] = [],
 ) {
   let journal = { ...initialJournal };
+  const focusLookups: unknown[][] = [];
+  const focusWrites: unknown[][] = [];
+  const batchOrder: string[] = [];
   const messageWrites: unknown[][] = [];
   const messageInserts: FakeStatement[] = [];
   const attachmentWrites: unknown[][] = [];
@@ -201,6 +204,11 @@ function materializationDb(
           return (target ? { materialized_at: target.materialized_at } : null) as T | null;
         }
         if (inbox && query.includes('SELECT address FROM mailboxes')) return { address: inbox.address } as T;
+        // Focused Inbox lookup (docs/focused-inbox.md); off unless a test says otherwise.
+        if (query.includes('WITH cfg AS')) {
+          focusLookups.push(statement.values);
+          return (inbox?.focus ?? { active: 0 }) as T;
+        }
         throw new Error(`Unexpected first query: ${query}`);
       },
       async all<T>() {
@@ -237,6 +245,11 @@ function materializationDb(
     async batch(rawStatements: D1PreparedStatement[]) {
       const statements = rawStatements as unknown as FakeStatement[];
       return statements.map((statement) => {
+        batchOrder.push(statement.query.trim().split(/\s+/).slice(0, 3).join(' '));
+        if (statement.query.includes('SET focus_class')) {
+          focusWrites.push(statement.values);
+          return { meta: { changes: 1 } };
+        }
         if (statement.query.includes('INSERT INTO messages')) {
           messageWrites.push(statement.values);
           messageInserts.push(statement);
@@ -260,7 +273,7 @@ function materializationDb(
     },
   } as unknown as D1Database;
 
-  return { attachmentWrites, db, getJournal: () => journal, messageInserts, messageWrites };
+  return { attachmentWrites, batchOrder, db, focusLookups, focusWrites, getJournal: () => journal, messageInserts, messageWrites };
 }
 
 afterEach(() => {
@@ -549,7 +562,7 @@ describe('inbox rules on internal delivery', () => {
     return { id, name: `Rule ${id}`, is_enabled: 1, stop_processing: 0, definition: JSON.stringify(definition) };
   }
 
-  async function deliverInternally(rules: InboxRuleRow[] | 'unavailable') {
+  async function deliverInternally(rules: InboxRuleRow[] | 'unavailable', focus?: Record<string, unknown>) {
     const journal = acceptedJournal({
       html_sha256: await digest('<p>The body</p>'),
       text_sha256: await digest('The body has the agenda'),
@@ -569,9 +582,9 @@ describe('inbox rules on internal delivery', () => {
     seed(journal.html_r2_key, '<p>The body</p>', { httpMetadata: { contentType: 'text/html; charset=utf-8' } });
     seed(journal.text_r2_key, 'The body has the agenda');
     seed(attachment.staging_r2_key, 'report');
-    const harness = materializationDb(journal, [target], [attachment], { rules, address: 'colleague@example.com' });
+    const harness = materializationDb(journal, [target], [attachment], { rules, address: 'colleague@example.com', focus });
     const result = await materializeOutboundJournal(harness.db, bucket, journal.id);
-    return { result, message: insertedMessage(harness.messageInserts[0]) };
+    return { result, message: insertedMessage(harness.messageInserts[0]), harness };
   }
 
   it('files, marks read and stars the colleague copy, and raises no alert for it', async () => {
@@ -609,5 +622,40 @@ describe('inbox rules on internal delivery', () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  describe('Focused Inbox on internal delivery (docs/focused-inbox.md)', () => {
+    // The colleague copy comes from a cmail mailbox, so it is "internal" unless
+    // the receiving mailbox has an entry for that sender or domain.
+    it('stores nothing when Focused Inbox is off', async () => {
+      const { message, harness } = await deliverInternally([]);
+      expect(message).toMatchObject({ folder: 'inbox' });
+      expect(harness.focusLookups).toHaveLength(1);
+      expect(harness.focusWrites).toEqual([]);
+    });
+
+    it('sorts the Inbox copy as internal, in the same batch right after the message row', async () => {
+      const { message, harness } = await deliverInternally([], { active: 1, address_class: null, domain_class: null, correspondent: 0, recent_from_sender: 0 });
+      expect(message).toMatchObject({ folder: 'inbox' });
+      expect(harness.focusLookups[0]?.[0]).toBe('mailbox-colleague');
+      expect(harness.focusWrites).toEqual([['focused', 'internal', 'message-internal']]);
+      const at = harness.batchOrder.findIndex((entry) => entry.startsWith('INSERT INTO messages'));
+      expect(harness.batchOrder[at + 1]).toBe('UPDATE messages SET');
+      expect(harness.batchOrder.at(-1)).toBe('UPDATE outbound_send_targets SET');
+    });
+
+    it('honours the receiving mailbox\'s own entry', async () => {
+      const { harness } = await deliverInternally([], { active: 1, address_class: 'other', domain_class: null, correspondent: 0, recent_from_sender: 0 });
+      expect(harness.focusWrites).toEqual([['other', 'sender_override', 'message-internal']]);
+    });
+
+    it('does not look when an inbox rule files the copy away', async () => {
+      const { message, harness } = await deliverInternally([
+        rule('r1', { conditions: { from: ['example.com'] }, actions: { moveTo: 'archive' } }),
+      ], { active: 1 });
+      expect(message).toMatchObject({ folder: 'archive' });
+      expect(harness.focusLookups).toEqual([]);
+      expect(harness.focusWrites).toEqual([]);
+    });
   });
 });

@@ -21,6 +21,8 @@ import { sanitizeSenderDisplayName, sendEmail } from '#lib/server/outbound.js';
 import { consumeCalendarOutboundLimits } from '#lib/server/calendar-outbound.js';
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 import { deliveryStatus, type DeliveryEventView, type DeliveryStatus } from '#lib/mail/delivery-status.js';
+import { mailboxFocusEnabled } from '#lib/server/focused-inbox.js';
+import { FOCUS_REASON_TEXT, isFocusReason } from '@cmail/shared/focused-inbox';
 
 interface InviteViewModel {
   eventId: string | null;
@@ -223,6 +225,16 @@ export const load: PageServerLoad = async ({ locals, platform, params, url }) =>
     ? await loadInvite(env.DB, env.STORAGE, message.id, message.mailbox_address, icsAttachment)
     : null;
 
+  // Focused Inbox (docs/focused-inbox.md): only for a received Inbox message
+  // in a mailbox that is sorted now. null renders nothing.
+  const focus = message.folder === 'inbox' && message.direction !== 'outbound'
+    && await mailboxFocusEnabled(env.DB, message.mailbox_id)
+    ? {
+      current: message.focus_class === 'other' ? 'other' as const : 'focused' as const,
+      why: isFocusReason(message.focus_reason) ? FOCUS_REASON_TEXT[message.focus_reason] : 'Not sorted yet: it arrived before Focused Inbox was on.',
+    }
+    : null;
+
   return {
     message,
     body,
@@ -252,6 +264,8 @@ export const load: PageServerLoad = async ({ locals, platform, params, url }) =>
       : '',
     returnSearch: (url.searchParams.get('q') || '').slice(0, 200),
     returnPage: Math.max(1, Math.min(10000, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1)),
+    returnView: url.searchParams.get('view') === 'other' ? 'other' : '',
+    focus,
   };
 };
 

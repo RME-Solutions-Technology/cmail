@@ -3,6 +3,7 @@ import worker, { RECIPIENT_UNAVAILABLE_SMTP_RESPONSE } from '../index';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { GUARDS_OFF } from '../testing/delivery';
 import { JOURNAL_REJECT_RESPONSE } from './ingest';
+import { FOCUS_LOOKUP_SQL } from '@cmail/shared/focused-inbox';
 import { AUTHSERV, DOMAIN, JOURNAL, NDR, NDR_DOMAIN, OTHER_TENANT, TENANT, defaultEnvelope, innerMessage, journalReport } from './fixtures';
 
 // The Exchange mirror against every real migration (node:sqlite), driving
@@ -584,6 +585,11 @@ describe('Exchange mirror: off means unchanged', () => {
     expect(configuredOn.seen).toEqual(plain.seen);
     expect(configuredOn.writes).toEqual(plain.writes);
     expect(plain.writes.length).toBeGreaterThan(0);
-    expect(plain.seen.some((entry) => /org_settings|exchange_mirror|mailbox_aliases/.test(entry.sql))).toBe(false);
+    // The one org_settings read on the normal path is Focused Inbox's own
+    // switch (docs/focused-inbox.md), identical in both runs; nothing reads
+    // a mirror setting.
+    const focusLookup = FOCUS_LOOKUP_SQL.replace(/\s+/g, ' ').trim();
+    expect(plain.seen.some((entry) => entry.sql !== focusLookup
+      && /org_settings|exchange_mirror|mailbox_aliases/.test(entry.sql))).toBe(false);
   });
 });

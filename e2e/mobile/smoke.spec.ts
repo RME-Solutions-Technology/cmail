@@ -17,6 +17,21 @@ test.describe('signed-out pages', () => {
   }
 });
 
+// Opening an unread message marks it read with a background request. The
+// page must still settle (network idle): the response body is consumed.
+test.describe('an unread message', () => {
+  test.use({ as: 'user-sam' });
+
+  test('opens, settles and is marked read', async ({ page, consoleErrors }, info) => {
+    const id = `msg-sam-unread-${info.project.name}`;
+    await open(page, `/mail/${id}`);
+    await expect(page.locator('article h1')).toHaveText(`Hall keys (${info.project.name})`);
+    await open(page, '/mail?mailbox=mb-sam');
+    await expect(page.locator('.mail-row', { hasText: `Hall keys (${info.project.name})` })).not.toHaveClass(/unread/);
+    expect(consoleErrors, consoleErrors.join('\n')).toEqual([]);
+  });
+});
+
 test.describe('signed in as a manager', () => {
   test.use({ as: 'user-mia' });
 

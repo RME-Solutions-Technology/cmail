@@ -31,6 +31,7 @@ and *standby* are defined in the [Glossary](glossary.md).
 - [Shared mailboxes](shared-mailboxes.md): team addresses, Send as, Full access.
 - [Email signatures](signatures.md): personal and organisation signatures.
 - [Inbox rules](inbox-rules.md): file mail automatically.
+- [Focused Inbox](focused-inbox.md): Focused and Other tabs (off by default), how mail is sorted and why.
 - [Spam and quarantine](spam-and-quarantine.md): scoring, quarantine, sender rules.
 - [AI agents and MCP](mcp.md): connect Claude or another AI app.
 - [Mail client connectivity](mail-client-connectivity.md): why there is no IMAP yet, and the plan.

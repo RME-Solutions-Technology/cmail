@@ -130,6 +130,10 @@ export interface Message {
   spam_score: number | null;
   /** 1 when the mailbox had no prior correspondence with the sender. */
   sender_first_contact: number;
+  /** Focused Inbox tab (migration 0031): null when never sorted, shown under Focused. */
+  focus_class?: 'focused' | 'other' | null;
+  /** Short code of the signal that sorted it (FOCUS_REASONS in focused-inbox.ts). */
+  focus_reason?: string | null;
   received_at: string;
   created_at: string;
 }

@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { goto, invalidateAll } from '$app/navigation';
   import CalendarInvite from '#lib/mail/CalendarInvite.svelte';
+  import FocusMove from '#lib/mail/FocusMove.svelte';
   import MessageAttachments from '#lib/mail/MessageAttachments.svelte';
   import MessageBody from '#lib/mail/MessageBody.svelte';
   import MessageMetadata from '#lib/mail/MessageMetadata.svelte';
@@ -46,6 +47,7 @@
     if (data.returnFolder) params.set('folder', data.returnFolder);
     if (data.returnMailbox) params.set('mailbox', data.returnMailbox);
     if (data.returnSearch) params.set('q', data.returnSearch);
+    if (data.returnView) params.set('view', data.returnView);
     if (data.returnPage > 1) params.set('page', String(data.returnPage));
     return params.toString();
   });
@@ -82,6 +84,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, folder: targetFolder || undefined }),
       });
+      // Always finish reading the response: an unread body keeps the request
+      // open, so the page never settles (seen opening an unread message).
+      await response.body?.cancel().catch(() => undefined);
       if (!response.ok) throw new Error('Couldn\'t update message');
       if (action === 'star') starred = !starred;
       if (action === 'read') await invalidateAll();
@@ -139,6 +144,16 @@
   <article class="card reading">
     <h1>{data.message.subject || '(no subject)'}</h1>
     <MessageMetadata message={data.message} delivery={data.delivery} locale={data.locale} timeZone={data.timeZone} {mailboxHref} />
+    {#if data.focus}
+      <FocusMove
+        messageId={data.message.id}
+        current={data.focus.current}
+        why={data.focus.why}
+        sender={data.message.from_address}
+        canMove={hasFullControl}
+        onMoved={() => goto(returnHref, { invalidateAll: true })}
+      />
+    {/if}
     <MessageSafety message={data.message} riskyLinks={data.riskyLinks} />
     <MessageAttachments attachments={data.attachments} />
     {#if data.invite}
