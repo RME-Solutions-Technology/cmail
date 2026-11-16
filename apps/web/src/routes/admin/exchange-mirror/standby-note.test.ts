@@ -48,8 +48,7 @@ describe('standby "switch sooner" note', () => {
     for (const enabled of [false, true]) {
       const { body } = render(ExchangeMirrorPage, { props: { data: { overview: mirrorOverview(enabled), appName: 'cmail' }, form: null } as never });
       expect(body).toContain('data-testid="standby-sooner-note"');
-      const text = body.replace(/<!--[^>]*-->/g, '');
-      expect(text.includes(STANDBY_SWITCH_SOONER_NOTE) || text.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
+      expect(body.includes(STANDBY_SWITCH_SOONER_NOTE) || body.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
       expect(body).toContain('Graph source (recommended)');
       expect(body).toContain('not recommended with Cloudflare Email Routing');
       expect(body.includes('value="graph_run_now"')).toBe(enabled);
@@ -59,7 +58,6 @@ describe('standby "switch sooner" note', () => {
   it('renders on Admin > Standby, even when that page has nothing else to show', () => {
     const { body } = render(StandbyPage, { props: { data: { overview: null, appName: 'cmail' }, form: null } as never });
     expect(body).toContain('data-testid="standby-sooner-note"');
-    const text = body.replace(/<!--[^>]*-->/g, '');
-    expect(text.includes(STANDBY_SWITCH_SOONER_NOTE) || text.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
+    expect(body.includes(STANDBY_SWITCH_SOONER_NOTE) || body.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
   });
 });
