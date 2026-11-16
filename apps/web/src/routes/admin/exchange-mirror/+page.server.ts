@@ -17,7 +17,7 @@ export const actions: Actions = {
     const form = await request.formData();
     const action = parseExchangeMirrorAdminAction(form.get('action'));
     if (!action) return fail(400, { error: 'Unknown action' });
-    const result = await applyExchangeMirrorAdminAction(env, locals.user, action);
+    const result = await applyExchangeMirrorAdminAction(env, locals.user, action, { days: form.get('days') });
     if (!result.ok) return fail(result.status, { error: result.error });
     return { success: result.message };
   },

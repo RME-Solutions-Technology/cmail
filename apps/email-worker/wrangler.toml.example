@@ -214,6 +214,16 @@ M365_JOURNAL_MIRROR_SENT = "false"
 # Subrequests one report may use for filing (about 4 + attachments per copy).
 # Raise [limits] subrequests first if you raise this above 10,000.
 M365_JOURNAL_SUBREQUEST_BUDGET = "8000"
+# Exchange mirror, Graph source (recommended; docs/exchange-mirror.md#graph-source-recommended).
+# Uses the Microsoft 365 sync app (M365_TENANT_ID, M365_CLIENT_ID, M365_CLIENT_SECRET)
+# with "Application Mail.Read" assigned in Exchange Online RBAC for Applications.
+# Off until a manager turns it on in Admin > Exchange mirror.
+# Hours back the first pull of each folder starts (1 to 168).
+M365_GRAPH_MIRROR_LOOKBACK_HOURS = "24"
+# Most messages the first pull of one folder files (1 to 5000); "Import older mail" in Admin lifts it.
+M365_GRAPH_MIRROR_INITIAL_CAP = "500"
+# "false" leaves out the Archive folder (Inbox and Sent Items only).
+M365_GRAPH_MIRROR_ARCHIVE = "true"
 
 [triggers]
 # 17 3 * * *: retention (off unless RETENTION_JOBS_ENABLED).
@@ -221,7 +231,9 @@ M365_JOURNAL_SUBREQUEST_BUDGET = "8000"
 # */15 * * * *: Microsoft 365 sync and standby copy-back (each returns at once
 # unless switched on in Admin).
 # */10 * * * *: standby probe (returns at once unless switched on in Admin).
-crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *", "*/10 * * * *"]
+# */5 * * * *: Exchange mirror Graph source (returns at once unless switched on;
+# without this cron it also runs on */10).
+crons = ["17 3 * * *", "7 * * * *", "*/15 * * * *", "*/10 * * * *", "*/5 * * * *"]
 
 # Optional: the shared mailbox access collector (Cloudflare Container, read
 # only). Uncomment to use it; `wrangler deploy` then builds the image with

@@ -1,6 +1,6 @@
 ---
-title: "Exchange mirror (warm standby from Exchange Online journaling)"
-summary: "How to keep cmail a live copy of every Exchange Online mailbox from one journal rule, with no setup per address."
+title: "Exchange mirror (warm standby of Exchange Online)"
+summary: "How to keep cmail a live copy of every Exchange Online mailbox, from Microsoft Graph (recommended) or a journal rule, with no setup per address."
 applies_to: standby
 audience: [operator, manager]
 switch: "Admin > Exchange mirror"
@@ -8,9 +8,16 @@ last_reviewed: 2026-11-16
 related: [onboarding-microsoft-365.md, credentials.md, standby-switch.md, multi-domain.md]
 ---
 
-# Exchange mirror (warm standby from Exchange Online journaling)
+# Exchange mirror (warm standby of Exchange Online)
 
-Status: **built, off by default, running on one Microsoft 365 tenant
+Two sources feed the mirror. The **[Graph source](#graph-source-recommended)
+(recommended)** reads each mailbox from Microsoft 365 with Microsoft Graph.
+The **journal source** receives Exchange journal reports by email; with
+Cloudflare Email Routing it loses mail from senders whose DMARC policy is
+`p=reject` ([why](#why-not-journaling-over-cloudflare-email-routing)), so it
+is not recommended there.
+
+Journal source status: **built, off by default, running on one Microsoft 365 tenant
 since 16 November 2026.** Live journal reports from that tenant pass the
 checks in [How a report is trusted](#how-a-report-is-trusted) and are filed.
 What a live report carries is in
@@ -22,9 +29,19 @@ cmail's main use is primary email for your organisation. This feature is
 for the other case: an organisation that stays on Exchange Online and wants
 cmail as a live copy ("warm standby") of every mailbox, so that if Exchange
 fails, people already have their recent mail in cmail. It needs **no setup
-per address**: one Exchange journal rule, one Cloudflare Email Routing rule
-and two cmail switches cover a tenant of any size (built for 200+ seats and
-500+ addresses).
+per address**. The Graph source needs one Exchange role assignment and one
+cmail switch; the journal source one Exchange journal rule, one Cloudflare
+Email Routing rule and two cmail switches. Both cover a tenant of any size
+(built for 200+ seats and 500+ addresses).
+
+> **If Exchange is down, switch as soon as you can:** until you switch, new
+> mail is not received here either (the mirror reads from Microsoft 365).
+> Mail sent to you during an Exchange outage is held and retried by the
+> sender's server for a few days, so it arrives once the switch is done.
+> See [Switch mail to the cmail standby](standby-switch.md).
+
+The diagram shows the journal source; the Graph source has
+[its own](#how-it-works).
 
 ```
  Exchange Online                     Cloudflare Email Routing       cmail email Worker
@@ -40,6 +57,11 @@ and two cmail switches cover a tenant of any size (built for 200+ seats and
 
 **In this article**
 
+- [Graph source (recommended)](#graph-source-recommended)
+  - [Why not journaling over Cloudflare Email Routing](#why-not-journaling-over-cloudflare-email-routing)
+  - [Permission: Mail.Read, scoped with RBAC for Applications](#permission-mailread-scoped-with-rbac-for-applications)
+  - [How to set up the Graph source](#how-to-set-up-the-graph-source)
+- [Journal source (not recommended with Cloudflare Email Routing)](#journal-source-not-recommended-with-cloudflare-email-routing)
 - [Why journaling](#why-journaling)
 - [What is and is not mirrored](#what-is-and-is-not-mirrored)
 - [How a report is trusted](#how-a-report-is-trusted)
@@ -52,6 +74,216 @@ and two cmail switches cover a tenant of any size (built for 200+ seats and
 - [How to turn it off and roll back](#how-to-turn-it-off-and-roll-back)
 - [What is not verified](#what-is-not-verified)
 - [How to test](#how-to-test)
+
+## Graph source (recommended)
+
+Status: **built, off by default, not yet run on a live tenant.** The code
+paths are covered by tests against a fake Microsoft Graph (see
+[How to test](#how-to-test)).
+
+> **If Exchange is down, switch as soon as you can:** until you switch, new
+> mail is not received here either (the mirror reads from Microsoft 365).
+> Mail sent to you during an Exchange outage is held and retried by the
+> sender's server for a few days, so it arrives once the switch is done.
+> See [Switch mail to the cmail standby](standby-switch.md).
+
+### Why not journaling over Cloudflare Email Routing
+
+A journal report carries the **original** sender in its From (seen live, see
+[What Exchange Online actually stamps](#what-exchange-online-actually-stamps)).
+Cloudflare Email Routing checks DMARC for the From domain of every message it
+receives and refuses mail whose domain publishes `p=reject` and fails
+([postmaster](https://developers.cloudflare.com/email-service/reference/postmaster/#mail-authentication-requirement));
+this is not configurable. A journal report is sent by Exchange, not by the
+original sender, so it always fails that sender's DMARC. Every message from a
+sender with `p=reject` (large mail providers, social networks, banks, many
+ISPs) is therefore refused before cmail sees it, and the refusals show up in
+those senders' DMARC aggregate reports. In practice that is a large share of
+inbound mail. The journal source stays in cmail for other routes, but is
+**not recommended with Cloudflare Email Routing**.
+
+### How it works
+
+```
+ Microsoft 365 (Exchange Online)          cmail email Worker (cron, every 5 minutes)
+ ───────────────────────────────          ─────────────────────────────────────────────
+ each linked mailbox:                ◄──  switch on? lease, round robin over mailboxes
+   Inbox, Sent Items, Archive             GET .../mailFolders/{folder}/messages/delta
+   (Graph delta query, app-only)          already here (Message-ID)? count, no download
+                                    ◄──   GET .../messages/{id}/$value (MIME)
+                                          file through the mirror's own filing code
+```
+
+- **Which mailboxes:** every active cmail mailbox the
+  [Microsoft 365 sync](m365-sync.md) linked to a Microsoft 365 object: each
+  person's own mailbox and each linked shared mailbox, on any of the
+  organisation's domains ([Multiple mail domains](multi-domain.md)). Nothing
+  to set up per address.
+- **Which folders:** the well-known folders `inbox`, `sentitems` and
+  `archive` (`M365_GRAPH_MIRROR_ARCHIVE = "false"` leaves Archive out).
+  Inbox copies go to Inbox, Archive copies to Archive, Sent Items copies to
+  Sent (with the Bcc list, which only the sender's copy shows). Mail a rule
+  moved into another folder before the mirror read it is not mirrored.
+- **What is new:** a Graph delta query per mailbox and folder
+  ([message: delta](https://learn.microsoft.com/en-us/graph/api/message-delta)),
+  asking only for `internetMessageId`, `receivedDateTime` and `isDraft`, 50 per
+  page. The next or delta link is stored per mailbox and folder
+  (`graph_mirror_folders`, migration `0033`). Drafts, `@removed` entries and
+  change events for mail older than the round (Graph also reports read-state
+  changes) are never filed.
+- **Exactly once:** before anything is downloaded, the Message-ID is looked
+  up in the mailbox. An Inbox copy has the same id the normal inbound path
+  and the journal source give it (mailbox + Message-ID), and a Sent copy the
+  same id as the journal source's Sent copy; a Sent copy is also skipped when
+  the mailbox already has a Sent message with that Message-ID (mail cmail sent
+  itself, or [copied back](copy-back.md) into Exchange). So the Graph and
+  journal sources can be on together during a change-over: each message is
+  filed once, and a replayed delta page files nothing new.
+- **Filing:** the MIME (`GET /users/{id}/messages/{id}/$value`) goes through
+  the same code as a journal report's original: the same HTML sanitizer,
+  body, attachment, blocked-type and size limits, storage quota, an
+  organisation-wide sender block rule (to Spam), no inbox rules, no
+  forwarding, no auto-reply, no notification, filed **as read** with the time
+  Exchange received it. It is
+  trusted as coming from the tenant (read with the app's own token), so no
+  SMTP authentication headers are checked.
+- **Colleagues and Focused Inbox:** mail a user of this tenant sent carries
+  Exchange's `X-MS-Exchange-CrossTenant-AuthAs: Internal` and this tenant's
+  id, as on the journal path, so Focused Inbox treats the sender as a
+  colleague. Internet mail does not. cmail's own colleague mail sent through
+  Exchange is matched as on the journal path
+  ([Mail sent from cmail to colleagues](#mail-sent-from-cmail-to-colleagues)).
+- **First pull and cap:** a folder seen for the first time is read from now
+  minus `M365_GRAPH_MIRROR_LOOKBACK_HOURS` (default 24), newest first, using
+  the one filter and the one order message delta supports
+  (`receivedDateTime ge`, `receivedDateTime desc`), and files at most
+  `M365_GRAPH_MIRROR_INITIAL_CAP` messages (default 500); older ones are
+  counted as "left out", never filed silently. **Import older mail** in Admin
+  (1 to 90 days) starts every folder again from that far back, with a cap of
+  20,000 per folder; mail already filed is not filed twice.
+- **Expired token (410):** the folder starts again from the newest message of
+  its last finished round, less one hour (a folder still paging starts again
+  from its round's own start), never from the beginning. No cap applies to
+  this catch-up; mail already filed is counted, not downloaded again. A
+  message moved into Archive during the gap with an older received time is
+  not picked up.
+- **Throttling:** 429, 503 and 504 honour `Retry-After` (in place when 5
+  seconds or less; otherwise that mailbox waits and the others go on;
+  [throttling](https://learn.microsoft.com/en-us/graph/throttling)). A message
+  that could not be read or stored, or that the run's budget could not cover,
+  keeps its page, which is read again next time.
+- **Refused mailboxes:** a 403 (outside the RBAC scope below, or no
+  permission) is retried hourly and counted in Admin; when every mailbox is
+  refused, Admin says the permission is missing.
+- **Bounded work:** each run stops starting new work after 60 seconds, 400
+  Graph requests or 5,000 subrequests in all, reads at most 4 pages per folder
+  per visit, and works the mailboxes round robin from where the last run
+  stopped, so every mailbox is reached however large the tenant
+  ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests)).
+  A lease on `graph_mirror_state` keeps two runs apart. It runs on the
+  `*/5 * * * *` cron, and on `*/10 * * * *` too for an instance whose
+  wrangler file does not have the new cron yet.
+
+What it does not do: it never writes, moves, deletes or sends anything in
+Microsoft 365, and it does not mirror read state, flags, moves or deletions
+made in Outlook after a message was filed.
+
+### Permission: Mail.Read, scoped with RBAC for Applications
+
+The Graph source uses the **Microsoft 365 sync app** (the same
+`M365_TENANT_ID`, `M365_CLIENT_ID` and `M365_CLIENT_SECRET`;
+[credentials](credentials.md#microsoft-365-sync-app)). It needs to read mail,
+which is `Mail.Read` (`Mail.ReadBasic.All` cannot read the message body or
+MIME). Grant it **in Exchange Online, scoped to the mirrored mailboxes**, with
+[RBAC for Applications](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac),
+which Microsoft says "replaces Application Access Policies":
+
+- **Do not** add `Mail.Read` as an Entra (Microsoft Graph) application
+  permission with admin consent. Entra and Exchange grants add up: an Entra
+  `Mail.Read` covers every mailbox in the tenant, so a scope in Exchange would
+  then have "no effective resource scoping" (Microsoft's FAQ on the same page).
+- Needs Exchange **Organization Management** (Exchange Administrator has it).
+- Changes take 30 minutes to 2 hours to apply (Exchange's cache);
+  `Test-ServicePrincipalAuthorization` shows the result at once.
+
+With Exchange Online PowerShell (`Connect-ExchangeOnline`), using the sync
+app's IDs from **Entra > Enterprise applications** (not App registrations):
+
+```powershell
+# Pointer to the sync app's service principal.
+New-ServicePrincipal -AppId <sync-app-application-id> -ObjectId <sync-app-service-principal-object-id> -DisplayName "cmail Microsoft 365 sync"
+
+# Scope, option A (recommended; the setup in use on a live tenant): every user and shared mailbox, rooms and equipment left out.
+New-ManagementScope -Name "cmail mirror mailboxes" -RecipientRestrictionFilter "RecipientTypeDetails -eq 'UserMailbox' -or RecipientTypeDetails -eq 'SharedMailbox'"
+
+# Scope, option B: direct members of one mail-enabled group (nested groups do not count).
+# New-ManagementScope -Name "cmail mirror mailboxes" -RecipientRestrictionFilter "MemberOfGroup -eq '<group distinguished name>'"
+
+# Mail.Read on those mailboxes only. Read only: no write, no send.
+New-ManagementRoleAssignment -App <sync-app-service-principal-object-id> -Role "Application Mail.Read" -CustomResourceScope "cmail mirror mailboxes"
+
+# Check: InScope True for a mirrored mailbox, False for one outside the scope.
+Test-ServicePrincipalAuthorization -Identity <sync-app-service-principal-object-id> -Resource person@example.com
+Test-ServicePrincipalAuthorization -Identity <sync-app-service-principal-object-id> -Resource room@example.com
+```
+
+The token is the normal client-credentials token (`https://graph.microsoft.com/.default`); with no Entra `Mail.Read` it carries no mail permission itself, and Exchange applies the role per mailbox: in-scope mailboxes are read, any other answers 403 and is shown in Admin as outside the scope, without stopping the run for the rest.
+
+`New-ServicePrincipal` is needed once per app; if the sync app already has a
+pointer (for example for `Application MailboxSettings.Read`), skip it. The
+group's distinguished name comes from `Get-Group "<group name>" | Select-Object DistinguishedName`.
+
+To remove it later:
+`Remove-ManagementRoleAssignment -Identity "<assignment name from Get-ManagementRoleAssignment -RoleAssignee <object id>>"`.
+
+### How to set up the Graph source
+
+Every step that changes a live system needs the owner's yes.
+
+1. The [Microsoft 365 sync](m365-sync.md) is on and out of dry run, so
+   mailboxes are linked.
+2. Apply migration `0033` (`pnpm db:migrate`). It adds two tables and changes
+   no existing row.
+3. Assign `Application Mail.Read` with the commands above, and check with
+   `Test-ServicePrincipalAuthorization`.
+4. Optional Worker vars (defaults shown): `M365_GRAPH_MIRROR_LOOKBACK_HOURS =
+   "24"`, `M365_GRAPH_MIRROR_INITIAL_CAP = "500"`,
+   `M365_GRAPH_MIRROR_ARCHIVE = "true"`. Add `"*/5 * * * *"` to the email
+   Worker's `[triggers] crons` (without it the source runs every 10 minutes).
+   Deploy the email Worker and web app.
+5. Admin > Exchange mirror > **Turn Graph source on**, then **Run now**.
+   Within a few minutes Admin shows the mailboxes covered and the messages
+   filed. "Permission missing" means step 3 has not reached Exchange's cache
+   yet (up to 2 hours) or was not done.
+6. If the journal source was in use: leave both on for a day (each message is
+   filed once), then disable the journal rule
+   (`Disable-JournalRule -Identity "cmail mirror"`) and turn the journal
+   source off.
+
+To turn it off: Admin > Exchange mirror > **Turn Graph source off**. Nothing
+more is read; mail already filed stays. Remove the role assignment if it is
+not coming back. Migration `0033` is additive; leaving it applied is
+harmless.
+
+### Admin
+
+Admin > Exchange mirror, **Graph source (recommended)** (managers only): the
+switch (audited, `org.graph_mirror_toggled`), **Run now** (one bounded run,
+audited), **Import older mail** (audited), the settings the Worker reports,
+and the status: last run, last clean run, mailboxes covered, filed today (to
+Inbox or Archive, and to Sent), already here, skipped and left out, the last
+error code in plain words, mailboxes refused, and "permission missing". It
+holds counts and codes only; the mail trace has one line per filed copy, as
+for any delivery. Skipped copies are audited
+(`graph_mirror.copies_skipped`, counts and the first reason, at most one row
+per run).
+
+## Journal source (not recommended with Cloudflare Email Routing)
+
+Everything from here to [How to test](#how-to-test) describes the journal
+source. With Cloudflare Email Routing it loses mail from every sender whose
+DMARC policy is `p=reject` ([why](#why-not-journaling-over-cloudflare-email-routing));
+use the [Graph source](#graph-source-recommended) instead.
 
 ## Why journaling
 
@@ -89,7 +321,7 @@ Alternatives Microsoft offers, and why they were not used:
 | Mail flow rule "Bcc the message to" | In Exchange Online it cannot target a distribution group ([mail flow rule actions](https://learn.microsoft.com/en-us/exchange/security-and-compliance/mail-flow-rules/mail-flow-rule-actions)). The copy is a normal outbound message with the headers of a delivery, not an envelope: it does not say who got the message by Bcc or through a group, so cmail could not file it per recipient. It also goes through outbound spam policy and sending limits like any mail. |
 | Forwarding per mailbox | Setup per address (the opposite of the goal), and automatic external forwarding is blocked by Exchange Online's default outbound spam policy. |
 | Microsoft 365 retention (Purview) | Keeps data inside Microsoft 365. Microsoft recommends it where possible ([Journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/journaling)), but it does not help when Exchange Online itself is down. |
-| Graph mailbox copy (cmail's copy-back in reverse) | Needs `Mail.Read` on every mailbox, polling per mailbox and much more API traffic; journaling pushes each message once. |
+| Graph mailbox copy (cmail's copy-back in reverse) | Needs `Mail.Read` on every mailbox, polling per mailbox and much more API traffic; journaling pushes each message once. **Since built as the [Graph source](#graph-source-recommended)**, because journal reports over Cloudflare Email Routing lose mail from `p=reject` senders. |
 
 Microsoft calls journaling "an older feature from Exchange". It is still
 documented and supported for exactly this use: a copy outside Exchange.
@@ -721,9 +953,21 @@ real tenant:
 ## How to test
 
 ```sh
-pnpm --filter @cmail/email-worker exec vitest run src/exchange-mirror/ src/m365-sync/aliases.sql.node.test.ts
-pnpm --filter @cmail/web exec vitest run src/lib/server/exchange-mirror-admin.test.ts src/routes/admin/exchange-mirror/
+pnpm --filter @cmail/email-worker exec vitest run src/exchange-mirror/ src/graph-mirror/ src/m365-sync/aliases.sql.node.test.ts
+pnpm --filter @cmail/web exec vitest run src/lib/server/exchange-mirror-admin.test.ts src/lib/server/graph-mirror-admin.test.ts src/routes/admin/exchange-mirror/
 ```
+
+The Graph source tests (`apps/email-worker/src/graph-mirror/graph-mirror.sql.node.test.ts`)
+run the real filing code on a real SQLite database with every migration,
+against a fake Microsoft Graph: Inbox, Archive and Sent copies per linked
+mailbox; replays and read-state changes counted without a download; a
+message filed once whichever source brings it first; no second Sent copy of
+cmail's own mail; Focused Inbox colleague proof; size, Message-ID and
+attachment limits; the first-pull window and cap; Import older mail; 429 per
+mailbox and while reading a message; 410 from the watermark; permission
+missing and a mailbox outside the scope; rejected credentials; the budget
+with resume and no message downloaded twice; and the switch off being inert.
+The web tests check the Admin actions and that the standby note renders.
 
 The Worker tests drive the real inbound handler on a real SQLite database
 with every migration, with reports shaped like Exchange's

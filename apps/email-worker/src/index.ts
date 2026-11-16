@@ -21,6 +21,8 @@ import {
 } from './standby/standby';
 import type { StandbyEnv } from '@cmail/shared/standby';
 import { isJournalAddress, type ExchangeMirrorEnv } from '@cmail/shared/exchange-mirror';
+import { graphMirrorConfig, type GraphMirrorEnv } from '@cmail/shared/graph-mirror';
+import { GRAPH_MIRROR_CRON, runGraphMirrorTick } from './graph-mirror/run';
 import { exchangeMirrorConfigDiagnostic, handleJournalDelivery, type InboundTools } from './exchange-mirror/ingest';
 import { runAliasSyncTick } from './m365-sync/aliases';
 import { runWelcomeTick, welcomeConfigDiagnostic, type WelcomeWorkerEnv } from './m365-welcome/welcome';
@@ -72,7 +74,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, GraphMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
   /** Subrequests one Exchange journal report may use for filing (docs/exchange-mirror.md). */
   M365_JOURNAL_SUBREQUEST_BUDGET?: string | number;
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
@@ -826,6 +828,26 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/exchange-mirror/config' && request.method === 'GET') {
     return Response.json(exchangeMirrorConfigDiagnostic(env));
   }
+  // Exchange mirror, Graph source: configuration by setting name only, and
+  // "Run now" from Admin (one bounded tick; the lease still applies).
+  if (url.pathname === '/internal/graph-mirror/config' && request.method === 'GET') {
+    const check = graphMirrorConfig(env);
+    return Response.json(check.configured
+      ? { configured: true, folders: check.config.folders, lookbackHours: check.config.lookbackHours, initialCap: check.config.initialCap }
+      : { configured: false, problems: check.problems });
+  }
+  if (url.pathname === '/internal/graph-mirror/run' && request.method === 'POST') {
+    try {
+      const result = await runGraphMirrorTick(env, INBOUND_TOOLS, { force: true, budgets: { timeMs: GRAPH_MIRROR_RUN_NOW_MS } });
+      // Status and counts only.
+      return Response.json(result.status === 'worked'
+        ? { status: result.status, filed: result.counts.filed + result.counts.sentFiled, complete: result.complete, error: result.error }
+        : { status: result.status });
+    } catch (caught) {
+      console.error('Graph mirror run failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      return Response.json({ status: 'error' }, { status: 503 });
+    }
+  }
   // Microsoft 365 welcome emails (docs/m365-welcome-emails.md): whether this
   // Worker can send at all, by setting name only.
   if (url.pathname === '/internal/m365-welcome/config' && request.method === 'GET') {
@@ -889,7 +911,10 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
 
 // The inbound path's own content helpers, shared with the Exchange mirror so
 // a mirrored copy is cleaned and limited exactly like a delivered one.
-const INBOUND_TOOLS: InboundTools = {
+/** "Run now" from Admin waits for the tick, so it gets a shorter time budget than the cron. */
+const GRAPH_MIRROR_RUN_NOW_MS = 20_000;
+
+export const INBOUND_TOOLS: InboundTools = {
   getInboundLimit,
   getAttachmentLimit,
   getDecodedBodyLimit,
@@ -981,6 +1006,21 @@ export default {
         console.error('Standby copy-back failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
       }));
       return;
+    }
+    // Exchange mirror, Graph source: its own */5 cron, and the */10 one too
+    // so an instance whose wrangler file predates the */5 cron still pulls.
+    // Returns after one settings read unless switched on; a lease and a
+    // minimum interval keep two crons in the same minute to one run.
+    if (controller.cron === GRAPH_MIRROR_CRON || controller.cron === STANDBY_PROBE_CRON) {
+      ctx.waitUntil(runGraphMirrorTick(env, INBOUND_TOOLS).then((result) => {
+        // Counts and codes only, never addresses or content.
+        if (result.status === 'worked') console.log('Graph mirror ran', { ...result.counts, mailboxes: result.mailboxes, visited: result.visited, complete: result.complete, error: result.error });
+        else if (result.status === 'error' || result.status === 'not_installed') console.warn('Graph mirror', { status: result.status, code: result.status === 'error' ? result.code : undefined });
+        else if (result.status === 'not_configured') console.warn('Graph mirror', { status: result.status, problems: result.problems });
+      }, (caught: unknown) => {
+        console.error('Graph mirror failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      if (controller.cron === GRAPH_MIRROR_CRON) return;
     }
     // Standby probe: returns at once unless a manager turned the standby
     // address on in Admin. See docs/standby-probe.md.

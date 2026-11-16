@@ -34,6 +34,12 @@ related: [standby-probe.md, copy-back.md, credentials.md]
 | A mix of both | Either, unpredictably | Run the switch-back **dry run** with the apply snapshot and follow what it says; it never changes anything without `--apply`. |
 | A script ended with exit code 2, 3 or 4 | Unknown until checked | Read its last lines: they print the snapshot path and the exact command. See [Exit codes](#exit-codes). |
 
+> **If Exchange is down, switch as soon as you can:** until you switch, new
+> mail is not received here either (the [Exchange mirror](exchange-mirror.md#graph-source-recommended)
+> reads from Microsoft 365). Mail sent to you during an Exchange outage is
+> held and retried by the sender's server for a few days, so it arrives once
+> the switch is done.
+
 Always: **dry run first, owner's yes, then `--apply`**, run by a person at a
 terminal. The apply snapshot is the file the switch printed as "Rollback
 snapshot saved and checked" (`standby-snapshots/<domain>-<time>-switch-apply.json`).

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { EXCHANGE_MIRROR_REASON_TEXT } from '@cmail/shared/exchange-mirror';
+  import { GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS, GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
 
   let { data, form } = $props();
   const overview = $derived(data.overview);
@@ -9,8 +10,11 @@
     return ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '—';
   }
   function reasonText(code: string): string {
-    return EXCHANGE_MIRROR_REASON_TEXT[code] ?? code;
+    return EXCHANGE_MIRROR_REASON_TEXT[code] ?? GRAPH_MIRROR_REASON_TEXT[code] ?? code;
   }
+  const FOLDER_NAMES: Record<string, string> = { inbox: 'Inbox', sentitems: 'Sent Items', archive: 'Archive' };
+  const graph = $derived(overview?.graph);
+  const graphToday = $derived(graph?.status && graph.status.day === new Date(overview?.now ?? 0).toISOString().slice(0, 10) ? graph.status.today : null);
   const ALIAS_RESULT: Record<string, string> = {
     ok: 'Imported',
     dry_run: 'Dry run (nothing written)',
@@ -26,7 +30,7 @@
   <header class="page-heading">
     <p class="eyebrow">Mail</p>
     <h1 id="mirror-heading">Exchange mirror</h1>
-    <p>Keeps cmail a live copy of your Exchange Online mail. One Exchange journal rule sends a copy of every message to one secret address; cmail files the original into each person's mailbox (and the sender's Sent). Off by default. Nothing here changes how cmail receives its own mail.</p>
+    <p>Keeps cmail a live copy of your Exchange Online mail, so people already have their recent mail here if Exchange fails. The Graph source (recommended) reads each linked mailbox from Microsoft 365; the older journal source receives a copy of every message by email. Both are off by default and can run together: a message that arrives by both is filed once. Nothing here changes how cmail receives its own mail.</p>
   </header>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
@@ -48,10 +52,88 @@
       <p class="muted">The email Worker could not be asked about its settings. If they are missing, it refuses every journal report.</p>
     {/if}
 
+    {#if graph}
+      <section class="card" aria-labelledby="graph-heading">
+        <div class="switch-head">
+          <div>
+            <h2 id="graph-heading">Graph source (recommended)</h2>
+            <p class="muted">Reads new mail from each mailbox the Microsoft 365 sync linked (people and shared mailboxes) every few minutes, with the sync's app and the Exchange role "Application Mail.Read". Copies are filed as read, with no notification and no rules. Unlike the journal source, mail from senders with a strict DMARC policy is not lost.</p>
+          </div>
+          <span class="state-badge" class:on={graph.enabled}>{graph.enabled ? 'On' : 'Off'}</span>
+        </div>
+        <div class="notice notice-warning standby-note" role="note" data-testid="standby-sooner-note">{STANDBY_SWITCH_SOONER_NOTE}</div>
+        {#if !graph.installed}
+          <div class="notice notice-error" role="alert">Database migration 0033 has not been applied. Run <code>pnpm db:migrate</code> first.</div>
+        {/if}
+        {#if graph.config.state === 'not_configured'}
+          <div class="notice notice-warning" role="status">
+            <strong>Not configured.</strong> The email Worker needs these settings first:
+            <ul>{#each graph.config.problems as problem}<li>{problem}</li>{/each}</ul>
+          </div>
+        {/if}
+        {#if graph.status?.permissionMissing}
+          <div class="notice notice-error" role="alert">Microsoft Graph refused every mailbox. Assign "Application Mail.Read" to the app in Exchange Online (see the guide), then wait up to two hours for Exchange to pick it up.</div>
+        {:else if graph.status && graph.status.denied > 0}
+          <div class="notice notice-warning" role="status">{graph.status.denied} mailbox{graph.status.denied === 1 ? ' is' : 'es are'} outside the app's Exchange RBAC scope, so {graph.status.denied === 1 ? 'it is' : 'they are'} not mirrored.</div>
+        {/if}
+        <div class="actions">
+          <form method="POST">
+            <input type="hidden" name="action" value={graph.enabled ? 'graph_disable' : 'graph_enable'} />
+            <button type="submit" class="btn {graph.enabled ? 'btn-outline-danger' : 'btn-primary'}"
+              disabled={!graph.enabled && (!graph.installed || graph.config.state === 'not_configured')}>
+              {graph.enabled ? 'Turn Graph source off' : 'Turn Graph source on'}
+            </button>
+          </form>
+          {#if graph.enabled}
+            <form method="POST">
+              <input type="hidden" name="action" value="graph_run_now" />
+              <button type="submit" class="btn">Run now</button>
+            </form>
+          {/if}
+        </div>
+        {#if graph.config.state === 'configured'}
+          <dl class="facts">
+            <div><dt>Folders</dt><dd>{graph.config.folders.map((folder) => FOLDER_NAMES[folder] ?? folder).join(', ')}</dd></div>
+            <div><dt>First pull</dt><dd>Last {graph.config.lookbackHours} hours, at most {graph.config.initialCap} messages per folder</dd></div>
+          </dl>
+        {/if}
+        {#if graph.status}
+          <dl class="facts">
+            <div><dt>Last run</dt><dd>{when(graph.status.lastRunAt)}</dd></div>
+            <div><dt>Last clean run</dt><dd>{when(graph.status.lastOkAt)}</dd></div>
+            <div><dt>Mailboxes covered</dt><dd>{graph.status.mailboxes}</dd></div>
+            <div><dt>Filed today</dt><dd>{graphToday?.filed ?? 0} to Inbox or Archive, {graphToday?.sentFiled ?? 0} to Sent</dd></div>
+            <div><dt>Already here today</dt><dd>{graphToday?.duplicates ?? 0}</dd></div>
+            <div><dt>Not filed today</dt><dd>{graphToday?.skipped ?? 0} skipped, {graphToday?.capped ?? 0} older messages left out</dd></div>
+            <div><dt>Last filed</dt><dd>{when(graph.status.lastFiledAt)}</dd></div>
+          </dl>
+          {#if graph.status.lastError}
+            <p class="muted">Last error ({when(graph.status.lastErrorAt)}): <code>{graph.status.lastError}</code> {reasonText(graph.status.lastError)}</p>
+          {/if}
+          {#if graphToday?.skipped || graphToday?.capped}
+            {#if graph.status.lastSkipReason}<p class="muted">First reason today: <code>{graph.status.lastSkipReason}</code> {reasonText(graph.status.lastSkipReason)}</p>{/if}
+          {/if}
+        {/if}
+        {#if graph.enabled}
+          <form method="POST" class="inline-form">
+            <input type="hidden" name="action" value="graph_import_older" />
+            <label for="import-days">Import older mail: the last</label>
+            <input id="import-days" name="days" type="number" min="1" max={GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS} value="7" required />
+            <span>days</span>
+            <button type="submit" class="btn">Import</button>
+          </form>
+          {#if graph.importOlderPending}
+            <p class="muted">Requested: the last {graph.importOlderPending.days} days, on the next run.</p>
+          {/if}
+        {/if}
+      </section>
+    {/if}
+
     <section class="card" aria-labelledby="switch-heading">
       <div class="switch-head">
         <div>
-          <h2 id="switch-heading">Exchange mirror</h2>
+          <h2 id="switch-heading">Journal source (not recommended with Cloudflare Email Routing)</h2>
+          <p class="muted">Journal reports carry the original sender in From, so Cloudflare Email Routing refuses reports for mail from senders whose DMARC policy is reject, and that mail never reaches cmail. Use the Graph source instead.</p>
           <p class="muted">Off means mail to the journal address is refused like any unknown address and nothing is filed.</p>
         </div>
         <span class="state-badge" class:on={overview.enabled}>{overview.enabled ? 'On' : 'Off'}</span>
@@ -178,6 +260,9 @@
   .facts dt { color: var(--text-muted); font-size: 12px; }
   .facts dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .table-wrap { overflow-x: auto; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+  .inline-form input[type='number'] { width: 5em; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th, td { padding: 6px 8px; text-align: left; }
 </style>
