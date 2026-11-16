@@ -170,10 +170,14 @@ export function parseRetryAfter(value: string | null | undefined, now = Date.now
   return Math.max(0, Math.ceil((date - now) / 1000));
 }
 
-async function readCapped(response: Response): Promise<string> {
+/** The body as bytes, or null when it is larger than `maxBytes` (the rest is not read). */
+async function readBytesCapped(response: Response, maxBytes: number): Promise<Uint8Array | null> {
   const declared = Number(response.headers.get('content-length') || 0);
-  if (declared > MAX_BODY_BYTES) throw new GraphError('bad_response', response.status);
-  if (!response.body) return '';
+  if (declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (!response.body) return new Uint8Array(0);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -181,9 +185,9 @@ async function readCapped(response: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
+    if (total > maxBytes) {
       await reader.cancel().catch(() => undefined);
-      throw new GraphError('bad_response', response.status);
+      return null;
     }
     chunks.push(value);
   }
@@ -193,6 +197,12 @@ async function readCapped(response: Response): Promise<string> {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return bytes;
+}
+
+async function readCapped(response: Response): Promise<string> {
+  const bytes = await readBytesCapped(response, MAX_BODY_BYTES);
+  if (!bytes) throw new GraphError('bad_response', response.status);
   return new TextDecoder().decode(bytes);
 }
 
@@ -281,6 +291,45 @@ export class GraphClient {
    * result, so the caller must look before trying again.
    */
   protected async graphJson(url: string, init: { method: 'GET' | 'POST' | 'PATCH'; body?: string; retryInPlace?: boolean; headers?: Record<string, string> }): Promise<unknown> {
+    const response = await this.graphResponse(url, { ...init, accept: 'application/json' });
+    let parsed: unknown = null;
+    const text = await readCapped(response);
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      throw new GraphError('bad_response', response.status);
+    }
+    if (!response.ok) {
+      if (RESYNC_STATUSES.has(response.status) && RESYNC_CODE.test(errorCodeOf(parsed))) throw new GraphError('resync_required', response.status);
+      throw new GraphError(response.status >= 500 ? 'throttled' : 'http_error', response.status, null);
+    }
+    return parsed;
+  }
+
+  /**
+   * One GET whose body is raw bytes (a message's MIME,
+   * `.../messages/{id}/$value`), with the same token, URL, throttling and
+   * error rules as graphJson. Null when the body is larger than `maxBytes`
+   * (the rest is not read).
+   */
+  protected async graphBytes(url: string, maxBytes: number): Promise<Uint8Array | null> {
+    const response = await this.graphResponse(url, { method: 'GET', accept: '*/*' });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new GraphError(response.status >= 500 ? 'throttled' : 'http_error', response.status, null);
+    }
+    return readBytesCapped(response, maxBytes);
+  }
+
+  /**
+   * Sends one request and handles what every Graph call shares: in-place
+   * retry of short throttling waits, 410 (resync) and 401/403. Any other
+   * status is returned for the caller to read.
+   */
+  private async graphResponse(
+    url: string,
+    init: { method: 'GET' | 'POST' | 'PATCH'; body?: string; retryInPlace?: boolean; headers?: Record<string, string>; accept: string },
+  ): Promise<Response> {
     if (!isGraphUrl(url)) throw new GraphError('bad_response', 0);
     for (let attempt = 0; ; attempt += 1) {
       const token = await this.accessToken();
@@ -288,7 +337,7 @@ export class GraphClient {
         method: init.method,
         headers: {
           Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
+          Accept: init.accept,
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
           ...init.headers,
         },
@@ -311,18 +360,7 @@ export class GraphClient {
         await response.body?.cancel().catch(() => undefined);
         throw new GraphError('unauthorized', response.status);
       }
-      let parsed: unknown = null;
-      const text = await readCapped(response);
-      try {
-        parsed = text ? JSON.parse(text) : null;
-      } catch {
-        throw new GraphError('bad_response', response.status);
-      }
-      if (!response.ok) {
-        if (RESYNC_STATUSES.has(response.status) && RESYNC_CODE.test(errorCodeOf(parsed))) throw new GraphError('resync_required', response.status);
-        throw new GraphError(response.status >= 500 ? 'throttled' : 'http_error', response.status, null);
-      }
-      return parsed;
+      return response;
     }
   }
 

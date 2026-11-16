@@ -551,11 +551,18 @@ describe('standby wiring in the email Worker', () => {
 
   it('runs on its own cron and, while off, only reads the switch', async () => {
     const first = vi.fn(async () => null);
-    const db = { prepare: vi.fn(() => ({ bind: () => ({ first }) })) };
+    const all = vi.fn(async () => ({ results: [] }));
+    const db = { prepare: vi.fn(() => ({ bind: () => ({ first, all }) })) };
     const waits: Promise<unknown>[] = [];
     await worker.scheduled({ cron: STANDBY_PROBE_CRON } as ScheduledController, { DB: db } as never, { waitUntil: (promise: Promise<unknown>) => waits.push(promise) } as never);
     await Promise.all(waits);
-    expect(db.prepare).toHaveBeenCalledTimes(1);
-    expect(String((db.prepare.mock.calls[0] as unknown[])[0])).toContain('org_settings');
+    // This cron also runs the Exchange mirror's Graph source (a fallback for
+    // wrangler files without its */5 cron): while both are off, each reads
+    // its own switch once and nothing else.
+    expect(db.prepare).toHaveBeenCalledTimes(2);
+    const sql = db.prepare.mock.calls.map((call) => String((call as unknown[])[0]));
+    expect(sql.every((text) => text.includes('org_settings'))).toBe(true);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(all).toHaveBeenCalledTimes(1);
   });
 });

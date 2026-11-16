@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
   import { STANDBY_REASON_TEXT } from '@cmail/shared/standby';
+  import { STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
 
   let { data, form } = $props();
   const overview = $derived(data.overview);
@@ -49,6 +50,8 @@
     <h1 id="standby-heading">Standby test</h1>
     <p>Each person's address also works on the standby subdomain, for example <code>name@standby.your-domain</code>, and delivers to the same mailbox. Once a day cmail sends itself a test message to that address through Cloudflare and checks it arrives. A green light means mail sent to the standby address reached cmail; it does not mean your main mail domain points here.</p>
   </header>
+
+  <div class="notice notice-warning" role="note" data-testid="standby-sooner-note"><strong>Switching to the standby:</strong> {STANDBY_SWITCH_SOONER_NOTE}</div>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
   {#if form?.success}<div class="notice notice-success" role="status">{form.success}</div>{/if}
