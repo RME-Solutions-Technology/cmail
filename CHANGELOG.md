@@ -14,7 +14,7 @@ Notable changes to cmail are recorded here. The project follows
 
 ## [0.9.0-beta.1] - 2026-11-16
 
-First beta. cMail is feature-complete for its main job, primary email for a small organisation, and adds optional (off by default) Microsoft 365 add-ons: directory and shared-mailbox sync, Microsoft sign-in for synced staff, welcome emails, the Exchange mirror (journaling), shared-mailbox access sync, the standby test, switch and copy-back, and passkey sign-in. Licence: Apache-2.0 from this release.
+First beta. cMail is feature-complete for its main job, primary email for your organisation, and adds optional (off by default) Microsoft 365 add-ons: directory and shared-mailbox sync, Microsoft sign-in for synced staff, welcome emails, the Exchange mirror (journaling), shared-mailbox access sync, the standby test, switch and copy-back, and passkey sign-in. Licence: Apache-2.0 from this release.
 
 ### Fixed
 - Exchange mirror: live journal reports sometimes carry no `X-MS-Exchange-CrossTenant-Id`, and were refused as `wrong_tenant`. The tenant id header is now optional on the outer report: when present it must include this tenant's id (only other ids: refused), and when absent it is not a reason to refuse. With `M365_JOURNAL_REQUIRE_AUTH = "true"`, the SPF path now needs SPF for `M365_JOURNAL_NDR_DOMAIN` (as recorded by Cloudflare) plus `X-MS-Exchange-CrossTenant-AuthAs: Internal` on the outer report, instead of the tenant id. New docs section "What Exchange Online actually stamps", from a live diagnostic. No migration. docs/exchange-mirror.md.
