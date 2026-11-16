@@ -193,18 +193,19 @@ STANDBY_PROBE_TIMEOUT_MINUTES = "10"
 # it to exactly what refused-report diagnostics show real reports are signed
 # with (typically <tenant>.onmicrosoft.com). The default, MAIL_DOMAIN, also
 # matches cmail's own outgoing DKIM: replace it. DKIM proves only that the
-# domain signed SOME message; the journal token is the real boundary. M365_TENANT_ID above, when set, must match the report's tenant.
+# domain signed SOME message; the journal token is the real boundary. M365_TENANT_ID above: a report's
+# tenant id header is optional, but when present it must include it.
 M365_JOURNAL_SENDER_DOMAINS = ""
 # Domain of the "undeliverable journal reports" address (JournalingReportNdrTo):
 # live reports use it as their MAIL FROM. An SPF pass recorded for it plus
-# this tenant's id on the report also passes. Use a dedicated domain whose SPF
+# X-MS-Exchange-CrossTenant-AuthAs: Internal on the report also passes. Use a dedicated domain whose SPF
 # lists only include:spf.protection.outlook.com and include:_spf.mx.cloudflare.net.
-# The tenant id header is attacker-settable and this relies on Exchange Online
+# These headers are attacker-settable and this relies on Exchange Online
 # not letting other tenants use this MAIL FROM (unverified); the journal
 # token is the real boundary. Optional.
 M365_JOURNAL_NDR_DOMAIN = ""
-# "false" skips the SPF/DKIM/DMARC check (weaker; see the docs). Needs
-# M365_TENANT_ID, and every report must then carry that tenant id. Default "true".
+# "false" skips the SPF/DKIM check (weaker: the token is then the only real
+# protection; see the docs). Needs M365_TENANT_ID. Default "true".
 M365_JOURNAL_REQUIRE_AUTH = "true"
 # "true" also files the sender's copy into Sent (needs M365_TENANT_ID). Keep
 # "false" until a live test shows originals carry the tenant headers.

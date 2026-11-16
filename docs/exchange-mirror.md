@@ -161,17 +161,18 @@ a day, the daily count is always exact). It never reaches a mailbox.
 3. **It is a journal report:** it carries the `X-MS-Journal-Report` header
    that Exchange adds to every journal report. Any sender can add it too.
 4. **Our tenant:** only the OUTER report's own headers are read, never the
-   attached original's. With `M365_TENANT_ID` set, the report is ours when
-   our id is among its `X-MS-Exchange-CrossTenant-Id` headers; a report can
-   carry several (seen live: the original sender's tenant for mail from
-   another Microsoft 365 organisation, and ours). A report whose tenant
-   headers are all other tenants' is refused (`wrong_tenant`). Microsoft
+   attached original's. The `X-MS-Exchange-CrossTenant-Id` header is
+   **optional** on the outer report: live reports sometimes carry none, and
+   then this check does not refuse. When it is present, it must include your
+   `M365_TENANT_ID`; a report can carry several (seen live: the original
+   sender's tenant for mail from another Microsoft 365 organisation, and
+   yours). A report whose tenant headers are all other tenants' is refused
+   (`wrong_tenant`). Microsoft
    does not document which tenant headers Exchange Online stamps on an
    outbound journal report; `X-MS-Exchange-Organization-*` headers are
    removed by the header firewall when a message leaves an Exchange
    organization ([header firewall](https://learn.microsoft.com/en-us/exchange/header-firewall-exchange-2013-help)),
-   so they are not used. With check 5 on, a report with no tenant header at
-   all is decided by check 5a; check 5b and check 5 off need our id.
+   so they are not used.
    **This header is attacker-settable:** anyone sending to the journal
    address can write your tenant id into it. It catches honest mistakes
    (another tenant's journal rule pointed here), not attacks.
@@ -194,11 +195,13 @@ a day, the daily count is always exact). It never reaches a mailbox.
    - **b.** an **SPF pass** that Cloudflare's record says was checked for the
      envelope MAIL FROM (`smtp.mailfrom`; the SMTP envelope must agree; no
      fallback to the envelope alone) whose domain is `M365_JOURNAL_NDR_DOMAIN`,
-     **and** your tenant id on the report. This is only as strong as
-     Exchange Online's enforcement that no other tenant can send with a
-     MAIL FROM on your NDR domain, which Microsoft does not document
-     (**unverified**): its sending servers are shared by every tenant, and the
-     tenant id header can be forged. Use a dedicated domain for the
+     **and** `X-MS-Exchange-CrossTenant-AuthAs: Internal` on the outer report
+     (every instance, at least one; seen on every live report), with check 4
+     passed. This is only as strong as Exchange Online's enforcement that no
+     other tenant can send with a MAIL FROM on your NDR domain, which
+     Microsoft does not document (**unverified**): its sending servers are
+     shared by every tenant, and the AuthAs and tenant id headers can be
+     forged. Use a dedicated domain for the
      undeliverable-reports address, see `M365_JOURNAL_NDR_DOMAIN` in Setup.
 
    **DMARC on the From is not used.** A live journal report's From is the
@@ -555,6 +558,26 @@ the old address refuses them, and retries.
 5. The alias import: turn it off. To remove imported aliases, delete the rows
    in `mailbox_aliases` (they are used only by the mirror).
 6. The migration is additive; leaving it applied is harmless.
+
+## What Exchange Online actually stamps
+
+From the safe diagnostic of a live outer journal report (16 Nov 2026; tenant
+and server names left out):
+
+| Header on the outer report | Seen |
+|---|---|
+| `Authentication-Results` (Cloudflare's) | `dmarc=fail header.from=<the original external sender's domain>; spf=pass smtp.mailfrom=<the NDR domain>; arc=none`. No `dkim=` result. `smtp.mailfrom` is recorded as a bare domain. |
+| `X-MS-Journal-Report` | present, empty |
+| `X-MS-Exchange-CrossTenant-AuthAs` | `Internal` |
+| `X-MS-Exchange-CrossTenant-AuthSource` | your tenant's Exchange Online server (`….PROD.OUTLOOK.COM`) |
+| `X-MS-Exchange-CrossTenant-FromEntityHeader` | `Hosted` |
+| `X-MS-Exchange-CrossTenant-OriginalArrivalTime` | a date |
+| `X-MS-Exchange-CrossTenant-Network-Message-Id` | a GUID |
+| `X-MS-Exchange-CrossTenant-Id` | **absent** on this report (another, earlier report carried your id, and one from another Microsoft 365 organisation's sender carried theirs and yours) |
+| `DKIM-Signature` | **absent**: check 5a cannot pass on such reports |
+
+So with authentication on, these reports pass by check 5b: SPF for the NDR
+domain plus AuthAs `Internal`.
 
 ## What is not verified
 
