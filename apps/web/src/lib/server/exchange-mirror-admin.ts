@@ -18,10 +18,22 @@ import {
   type ExchangeMirrorDay,
 } from '@cmail/shared/exchange-mirror';
 import {
+  GRAPH_IMPORT_SETTING_ESTIMATE,
+  GRAPH_IMPORT_SETTING_JOB,
+  GRAPH_IMPORT_SETTING_REQUEST,
+  graphImportFigures,
+  graphImportPeriod,
+  graphImportPeriodAt,
+  parseGraphImportEstimate,
+  parseGraphImportJob,
+  parseGraphImportRequest,
+  type GraphImportEstimate,
+  type GraphImportFigures,
+  type GraphImportJob,
+} from '@cmail/shared/graph-import';
+import {
   GRAPH_MIRROR_FOLDERS,
-  GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS,
   GRAPH_MIRROR_SETTING_ENABLED,
-  GRAPH_MIRROR_SETTING_IMPORT_OLDER,
   loadGraphMirrorStatus,
   loadGraphMirrorSwitch,
   type GraphMirrorFolder,
@@ -47,8 +59,20 @@ export interface GraphMirrorOverview {
   installed: boolean;
   config: GraphMirrorWorkerConfig;
   status: GraphMirrorStatus | null;
-  /** An "Import older mail" request the Worker has not applied yet. */
-  importOlderPending: { days: number; requestedAt: number } | null;
+  import: GraphImportOverview;
+}
+
+/** "Import older mail" (docs/exchange-mirror.md#import-older-mail): what the Admin page shows. */
+export interface GraphImportOverview {
+  /** The last dry run (or the recount made when Start was pressed). */
+  estimate: GraphImportEstimate | null;
+  /** Its figures: Cloudflare storage impact, cost, time. */
+  figures: GraphImportFigures | null;
+  /** Largest mailboxes of the estimate, with their addresses. */
+  mailboxes: Array<{ address: string; messages: number; bytes: number }>;
+  job: GraphImportJob | null;
+  /** A request the Worker has not picked up yet (its next run, within a few minutes). */
+  requestPending: 'estimate' | 'start' | null;
 }
 
 export interface ExchangeMirrorOverview {
@@ -136,23 +160,61 @@ export async function graphMirrorWorkerConfig(service: unknown): Promise<GraphMi
   }
 }
 
+const EMPTY_IMPORT: GraphImportOverview = { estimate: null, figures: null, mailboxes: [], job: null, requestPending: null };
+
+async function loadImportRecords(db: D1Database): Promise<{ request: ReturnType<typeof parseGraphImportRequest>; estimate: GraphImportEstimate | null; job: GraphImportJob | null }> {
+  const { results } = await db.prepare('SELECT key, value FROM org_settings WHERE key IN (?, ?, ?)')
+    .bind(GRAPH_IMPORT_SETTING_REQUEST, GRAPH_IMPORT_SETTING_ESTIMATE, GRAPH_IMPORT_SETTING_JOB).all<{ key: string; value: string }>();
+  const values = new Map((results ?? []).map((row) => [row.key, row.value]));
+  return {
+    request: parseGraphImportRequest(values.get(GRAPH_IMPORT_SETTING_REQUEST)),
+    estimate: parseGraphImportEstimate(values.get(GRAPH_IMPORT_SETTING_ESTIMATE)),
+    job: parseGraphImportJob(values.get(GRAPH_IMPORT_SETTING_JOB)),
+  };
+}
+
+/** The figures an estimate shows (and Start checks): the same function the Worker uses at the recount. */
+function estimateFigures(estimate: GraphImportEstimate): GraphImportFigures {
+  return graphImportFigures({ messages: estimate.messages, bytes: estimate.bytes, d1UsedBytes: estimate.d1UsedBytes >= 0 ? estimate.d1UsedBytes : null, period: estimate.period });
+}
+
+async function loadImportOverview(db: D1Database): Promise<GraphImportOverview> {
+  try {
+    const { request, estimate, job } = await loadImportRecords(db);
+    const top = estimate?.status === 'done' ? estimate.perMailbox.slice(0, 10) : [];
+    const names = new Map<string, string>();
+    if (top.length) {
+      const { results } = await db.prepare(`SELECT id, address FROM mailboxes WHERE id IN (${top.map(() => '?').join(', ')})`)
+        .bind(...top.map((row) => row[0])).all<{ id: string; address: string }>();
+      for (const row of results ?? []) names.set(row.id, row.address);
+    }
+    const handled = Boolean(request && estimate && estimate.requestSeq === request.seq);
+    return {
+      estimate,
+      figures: estimate ? estimateFigures(estimate) : null,
+      mailboxes: top.map(([id, messages, bytes]) => ({ address: names.get(id) ?? 'a mailbox', messages, bytes })),
+      job,
+      requestPending: request && !handled && job?.status !== 'running' ? request.kind : null,
+    };
+  } catch {
+    console.error('Import older mail: its records could not be read');
+    return EMPTY_IMPORT;
+  }
+}
+
 async function loadGraphMirrorOverview(env: { DB: D1Database; EMAIL_SERVICE?: unknown }): Promise<GraphMirrorOverview> {
   const [value, config] = await Promise.all([
-    loadGraphMirrorSwitch(env.DB).catch(() => ({ enabled: false, importOlder: null })),
+    loadGraphMirrorSwitch(env.DB).catch(() => ({ enabled: false })),
     graphMirrorWorkerConfig(env.EMAIL_SERVICE),
   ]);
   let installed = true;
   let status: GraphMirrorStatus | null = null;
-  let importOlderDone = 0;
   try {
     status = await loadGraphMirrorStatus(env.DB);
-    const row = await env.DB.prepare('SELECT import_older_done FROM graph_mirror_state WHERE id = 1').first<{ import_older_done: number }>();
-    importOlderDone = Number(row?.import_older_done ?? 0);
   } catch {
     installed = false;
   }
-  const pending = value.importOlder && value.importOlder.requestedAt > importOlderDone ? value.importOlder : null;
-  return { enabled: value.enabled, installed, config, status, importOlderPending: pending };
+  return { enabled: value.enabled, installed, config, status, import: installed ? await loadImportOverview(env.DB) : EMPTY_IMPORT };
 }
 
 export async function loadExchangeMirrorOverview(
@@ -205,22 +267,27 @@ export async function loadExchangeMirrorOverview(
 
 export type ExchangeMirrorAdminAction = 'enable' | 'disable' | 'alias_enable' | 'alias_disable' | 'alias_approve_removals'
   | 'colleague_send_enable' | 'colleague_send_disable'
-  | 'graph_enable' | 'graph_disable' | 'graph_run_now' | 'graph_import_older';
+  | 'graph_enable' | 'graph_disable' | 'graph_run_now' | 'graph_import_estimate' | 'graph_import_start' | 'graph_import_stop';
 
 const ACTIONS: ReadonlySet<string> = new Set([
   'enable', 'disable', 'alias_enable', 'alias_disable', 'alias_approve_removals', 'colleague_send_enable', 'colleague_send_disable',
-  'graph_enable', 'graph_disable', 'graph_run_now', 'graph_import_older',
+  'graph_enable', 'graph_disable', 'graph_run_now', 'graph_import_estimate', 'graph_import_start', 'graph_import_stop',
 ]);
-
-/** "Import older mail": whole days, 1 to GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS. Null for anything else. */
-export function parseImportOlderDays(value: unknown): number | null {
-  if (typeof value !== 'string' || !/^\d{1,3}$/.test(value.trim())) return null;
-  const days = Number(value.trim());
-  return days >= 1 && days <= GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS ? days : null;
-}
 
 export function parseExchangeMirrorAdminAction(value: unknown): ExchangeMirrorAdminAction | null {
   return typeof value === 'string' && ACTIONS.has(value) ? value as ExchangeMirrorAdminAction : null;
+}
+
+/** Form values for the import actions; every one is checked again here. */
+export interface GraphImportInput {
+  /** The slider position, 0 to 7. */
+  stop?: unknown;
+  /** Start: the estimate's id and the numbers the manager confirmed. */
+  estimateId?: unknown;
+  messages?: unknown;
+  bytes?: unknown;
+  confirmed?: unknown;
+  now?: number;
 }
 
 export type ExchangeMirrorAdminResult = { ok: true; message: string } | { ok: false; status: number; error: string };
@@ -243,7 +310,7 @@ export async function applyExchangeMirrorAdminAction(
   env: { DB: D1Database; EMAIL_SERVICE?: unknown },
   manager: { id: string },
   action: ExchangeMirrorAdminAction,
-  input: { days?: unknown; now?: number } = {},
+  input: GraphImportInput = {},
 ): Promise<ExchangeMirrorAdminResult> {
   const db = env.DB;
   const actor = { actor_id: manager.id, actor_role: 'manager' as const };
@@ -302,7 +369,7 @@ async function applyGraphAction(
   env: { DB: D1Database; EMAIL_SERVICE?: unknown },
   manager: { id: string },
   action: ExchangeMirrorAdminAction,
-  input: { days?: unknown; now?: number },
+  input: GraphImportInput,
 ): Promise<ExchangeMirrorAdminResult> {
   const db = env.DB;
   const actor = { actor_id: manager.id, actor_role: 'manager' as const };
@@ -321,14 +388,10 @@ async function applyGraphAction(
     await audit(db, { event_type: 'org.graph_mirror_toggled', ...actor, detail: 'Exchange mirror Graph source turned on' });
     return { ok: true, message: 'The Graph source is on. Within a few minutes cmail starts reading new mail from each linked mailbox.' };
   }
+  // Stop always works, even with the source off.
+  if (action === 'graph_import_stop') return applyImportAction(env, manager, action, input);
   if (!graph.enabled) return { ok: false, status: 409, error: 'Turn the Graph source on first' };
-  if (action === 'graph_import_older') {
-    const days = parseImportOlderDays(input.days);
-    if (days === null) return { ok: false, status: 400, error: `Choose 1 to ${GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS} days` };
-    await putValue(db, GRAPH_MIRROR_SETTING_IMPORT_OLDER, `${days}:${input.now ?? Date.now()}`, manager.id);
-    await audit(db, { event_type: 'org.graph_mirror_import_older', ...actor, detail: `Exchange mirror Graph source: import older mail, ${days} days` });
-    return { ok: true, message: `Requested. The next run reads the last ${days} days again; mail already filed is not filed twice.` };
-  }
+  if (action === 'graph_import_estimate' || action === 'graph_import_start') return applyImportAction(env, manager, action, input);
   // graph_run_now: one bounded run in the Worker; the lease still applies.
   if (!isFetcher(env.EMAIL_SERVICE)) return { ok: false, status: 503, error: 'The email Worker is not reachable from this app' };
   await audit(db, { event_type: 'org.graph_mirror_run_now', ...actor, detail: 'Exchange mirror Graph source: run now' });
@@ -344,4 +407,78 @@ async function applyGraphAction(
   } catch {
     return { ok: false, status: 503, error: 'The email Worker did not answer in time. The scheduled run continues.' };
   }
+}
+
+const COUNT = /^\d{1,15}$/;
+
+/**
+ * "Import older mail": ask for a dry run, confirm and start, or stop. Nothing
+ * here reads Microsoft 365; the email Worker does the work on its next run
+ * (within a few minutes) and writes the results back. Stop acts at once.
+ */
+async function applyImportAction(
+  env: { DB: D1Database },
+  manager: { id: string },
+  action: 'graph_import_estimate' | 'graph_import_start' | 'graph_import_stop',
+  input: GraphImportInput,
+): Promise<ExchangeMirrorAdminResult> {
+  const db = env.DB;
+  const actor = { actor_id: manager.id, actor_role: 'manager' as const };
+  const at = input.now ?? Date.now();
+  const { request, estimate, job } = await loadImportRecords(db);
+
+  if (action === 'graph_import_stop') {
+    // One statement: only a 'running' record changes, so a Worker write after this is a no-op.
+    const stopped = await db.prepare(
+      `UPDATE org_settings SET value = json_patch(value, ?), updated_at = datetime('now'), updated_by = ?
+       WHERE key IN (?, ?) AND json_extract(value, '$.status') = 'running'`,
+    ).bind(JSON.stringify({ status: 'stopped', finishedAt: at }), manager.id, GRAPH_IMPORT_SETTING_JOB, GRAPH_IMPORT_SETTING_ESTIMATE).run();
+    // A request the Worker has not picked up is withdrawn too.
+    await db.prepare('DELETE FROM org_settings WHERE key = ?').bind(GRAPH_IMPORT_SETTING_REQUEST).run();
+    if (Number(stopped.meta?.changes ?? 0) === 0 && !request) return { ok: true, message: 'Nothing was running.' };
+    await audit(db, { event_type: 'org.graph_mirror_import_stopped', ...actor, detail: 'Import older mail: stopped' });
+    return { ok: true, message: 'Stopped. Mail already imported stays; nothing more is read. You can run a new estimate and start again; mail already in cmail is not filed twice.' };
+  }
+
+  if (job?.status === 'running') return { ok: false, status: 409, error: 'An import is already running. Stop it first, or wait for it to finish.' };
+  if (estimate?.status === 'running' || (request && request.seq !== estimate?.requestSeq)) {
+    return { ok: false, status: 409, error: 'A count is already in progress. Wait for it to finish, or stop it.' };
+  }
+
+  if (action === 'graph_import_estimate') {
+    const period = graphImportPeriodAt(input.stop);
+    if (!period) return { ok: false, status: 400, error: 'Choose a period on the slider' };
+    await putValue(db, GRAPH_IMPORT_SETTING_REQUEST, JSON.stringify({ seq: crypto.randomUUID(), kind: 'estimate', period: period.key, at }), manager.id);
+    await audit(db, { event_type: 'org.graph_mirror_import_estimate', ...actor, detail: `Import older mail: estimate requested, ${period.label}` });
+    return { ok: true, message: `Counting ${period.label.toLowerCase()} of mail in every mirrored mailbox. Nothing is imported or written. It starts on the next scheduled run (within about 5 minutes) and shows its progress here.` };
+  }
+
+  // graph_import_start
+  if (!estimate || estimate.status !== 'done' || (estimate.then && !estimate.changed) || estimate.jobId || estimate.refused) {
+    return { ok: false, status: 409, error: 'Run an estimate first, and wait for it to finish.' };
+  }
+  if (typeof input.estimateId !== 'string' || input.estimateId !== estimate.id) {
+    return { ok: false, status: 409, error: 'That estimate is out of date. Review the new numbers.' };
+  }
+  const figures = estimateFigures(estimate);
+  if (figures.blocked) {
+    return { ok: false, status: 409, error: figures.blockReason === 'd1_over'
+      ? 'This import would take the database past its size limit, so it cannot start. Choose a shorter period.'
+      : 'The database size could not be read, so the storage limit cannot be checked. "All mail" cannot start; choose a shorter period.' };
+  }
+  const messages = typeof input.messages === 'string' && COUNT.test(input.messages) ? Number(input.messages) : -1;
+  const bytes = typeof input.bytes === 'string' && COUNT.test(input.bytes) ? Number(input.bytes) : -1;
+  if (input.confirmed !== 'yes') return { ok: false, status: 400, error: 'Tick the box to confirm you have read the warning and the numbers' };
+  if (messages !== estimate.messages || bytes !== estimate.bytes) {
+    return { ok: false, status: 409, error: 'The numbers on the page are not the current estimate. Review them and confirm again.' };
+  }
+  await putValue(db, GRAPH_IMPORT_SETTING_REQUEST, JSON.stringify({
+    seq: crypto.randomUUID(), kind: 'start', period: estimate.period, at, confirm: { messages, bytes },
+  }), manager.id);
+  await audit(db, {
+    event_type: 'org.graph_mirror_import_start',
+    ...actor,
+    detail: `Import older mail: confirmed ${graphImportPeriod(estimate.period)?.label ?? estimate.period}, about ${messages} messages and ${bytes} bytes; the Worker recounts first`,
+  });
+  return { ok: true, message: 'Confirmed. On its next run (within about 5 minutes) cmail counts again to check the numbers; if they moved by more than 20% it asks you again, otherwise the import starts. You can stop it at any time.' };
 }

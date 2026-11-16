@@ -13,8 +13,8 @@
 //    short lease on graph_mirror_state so two invocations never pull
 //    together, and skips if the last run was under MIN_INTERVAL_MS ago
 //    (several crons may fire in the same minute). "Run now" skips that wait.
-// 3. Applies a pending "Import older mail" request once: every folder starts
-//    a new round from that many days back.
+// 3. (After the live pull, below.) The finite "Import older mail" work, only
+//    while one is active the live pull is held to 70% of the run, see import.ts.
 // 4. Lists the mailboxes the Microsoft 365 sync linked (people and shared,
 //    in scope, active, on an organisation domain), and works them round
 //    robin from the saved cursor, so every mailbox is reached over a few
@@ -44,7 +44,6 @@ import { emptyMirrorCounts, mirrorDay, type ExchangeMirrorCounts } from '@cmail/
 import {
   emptyGraphMirrorCounts,
   graphMirrorConfig,
-  GRAPH_MIRROR_IMPORT_OLDER_CAP,
   loadGraphMirrorSwitch,
   parseGraphMirrorStatus,
   type GraphMirrorConfig,
@@ -53,11 +52,13 @@ import {
   type GraphMirrorFolder,
   type GraphMirrorStatus,
 } from '@cmail/shared/graph-mirror';
+import { GRAPH_IMPORT_LIVE_SHARE, GRAPH_IMPORT_MESSAGES_PER_RUN } from '@cmail/shared/graph-import';
 import { orgDomains } from '@cmail/shared/org-domains';
 import { GraphError } from '../m365-sync/graph';
 import { fileMirrorCopies, prepareMirrorContent, sentCopyId, type InboundTools, type JournalEnv } from '../exchange-mirror/ingest';
 import { headerValues } from '../exchange-mirror/verify';
 import { GraphMirrorClient, initialDeltaUrl, type DeltaMessage } from './graph';
+import { importHasWork, loadImportRecords, runImportPhase, type ImportRecords } from './import';
 
 export const GRAPH_MIRROR_CRON = '*/5 * * * *';
 
@@ -77,6 +78,8 @@ const DEFAULTS = {
   subrequests: 5_000,
   /** Delta pages per folder per tick, so one busy mailbox cannot starve the rest. */
   pagesPerFolder: 4,
+  /** "Import older mail": messages one run imports, at most (GRAPH_IMPORT_MESSAGES_PER_RUN). */
+  importMessages: GRAPH_IMPORT_MESSAGES_PER_RUN,
 };
 const MAX_NETWORK_ERRORS = 3;
 const DENIED_RETRY_MS = HOUR_MS;
@@ -108,13 +111,13 @@ export type GraphMirrorTickResult =
   | { status: 'worked'; mailboxes: number; visited: number; counts: GraphMirrorCounts; complete: boolean; error: string }
   | { status: 'error'; code: string };
 
-interface MailboxRow {
+export interface MailboxRow {
   mailbox_id: string;
   address: string;
   object_id: string;
 }
 
-interface FolderRow {
+export interface FolderRow {
   mailbox_id: string;
   folder: GraphMirrorFolder;
   link: string | null;
@@ -127,7 +130,7 @@ interface FolderRow {
 }
 
 /** Ends the whole run; the code goes to the status. */
-class RunStop extends Error {
+export class RunStop extends Error {
   constructor(readonly code: string) {
     super(code);
   }
@@ -207,13 +210,12 @@ function newRound(row: FolderRow, sinceMs: number, cap: number): void {
   row.round_filed = 0;
 }
 
-async function releaseLease(db: D1Database, fields: { cursor?: string; status?: GraphMirrorStatus; importOlderDone?: number }): Promise<void> {
+async function releaseLease(db: D1Database, fields: { cursor?: string; status?: GraphMirrorStatus }): Promise<void> {
   await db.prepare(
     `UPDATE graph_mirror_state SET lease_until = 0,
-       cursor = COALESCE(?, cursor), state = COALESCE(?, state),
-       import_older_done = COALESCE(?, import_older_done), updated_at = datetime('now')
+       cursor = COALESCE(?, cursor), state = COALESCE(?, state), updated_at = datetime('now')
      WHERE id = 1`,
-  ).bind(fields.cursor ?? null, fields.status ? JSON.stringify(fields.status) : null, fields.importOlderDone ?? null).run();
+  ).bind(fields.cursor ?? null, fields.status ? JSON.stringify(fields.status) : null).run();
 }
 
 function addCounts(target: GraphMirrorCounts, from: Partial<GraphMirrorCounts>): void {
@@ -223,11 +225,9 @@ function addCounts(target: GraphMirrorCounts, from: Partial<GraphMirrorCounts>):
 export async function runGraphMirrorTick(env: GraphMirrorWorkerEnv, tools: InboundTools, deps: GraphMirrorDeps = {}): Promise<GraphMirrorTickResult> {
   const db = env.DB;
   let enabled = false;
-  let importOlder: { days: number; requestedAt: number } | null = null;
   try {
     const value = await loadGraphMirrorSwitch(db);
     enabled = value.enabled;
-    importOlder = value.importOlder;
   } catch {
     console.error('Graph mirror switch could not be read; treated as off');
   }
@@ -237,13 +237,13 @@ export async function runGraphMirrorTick(env: GraphMirrorWorkerEnv, tools: Inbou
   const check = graphMirrorConfig(env);
 
   // Lease. The table is missing until migration 0033 is applied.
-  let leased: { cursor: string; import_older_done: number; state: string } | null;
+  let leased: { cursor: string; state: string } | null;
   try {
     await db.prepare('INSERT OR IGNORE INTO graph_mirror_state (id) VALUES (1)').run();
     leased = await db.prepare(
       `UPDATE graph_mirror_state SET lease_until = ?, updated_at = datetime('now')
-       WHERE id = 1 AND lease_until < ? RETURNING cursor, import_older_done, state`,
-    ).bind(now + LEASE_MS, now).first<{ cursor: string; import_older_done: number; state: string }>();
+       WHERE id = 1 AND lease_until < ? RETURNING cursor, state`,
+    ).bind(now + LEASE_MS, now).first<{ cursor: string; state: string }>();
   } catch {
     console.warn('Graph mirror: migration 0033 is not applied');
     return { status: 'not_installed' };
@@ -271,7 +271,6 @@ export async function runGraphMirrorTick(env: GraphMirrorWorkerEnv, tools: Inbou
   const skippedBefore = status.today.skipped;
   const runSkipReason = { value: '' };
 
-  let importOlderDone: number | undefined;
   const run: GraphMirrorCounts = emptyGraphMirrorCounts();
   let cursor = leased.cursor;
   let runError = '';
@@ -288,20 +287,6 @@ export async function runGraphMirrorTick(env: GraphMirrorWorkerEnv, tools: Inbou
     );
     mailboxes = (await linkedMailboxes(db)).filter((row) => !domains || domains.has(domainOf(row.address)));
     status.mailboxes = mailboxes.length;
-    // "Import older mail": every folder of every covered mailbox (rows made
-    // now for those not read yet) starts a new round from that far back, once.
-    if (importOlder && importOlder.requestedAt > Number(leased.import_older_done ?? 0)) {
-      const since = Math.max(0, now - importOlder.days * DAY_MS);
-      await db.prepare(
-        `UPDATE graph_mirror_folders SET link = NULL, link_kind = 'none', since_ms = ?, round_cap = ?, round_filed = 0,
-           retry_after_ms = 0, updated_at = datetime('now')`,
-      ).bind(since, GRAPH_MIRROR_IMPORT_OLDER_CAP).run();
-      const inserts = mailboxes.flatMap((mailbox) => config.folders.map((folder) => db.prepare(
-        `INSERT OR IGNORE INTO graph_mirror_folders (mailbox_id, folder, link_kind, since_ms, round_cap) VALUES (?, ?, 'none', ?, ?)`,
-      ).bind(mailbox.mailbox_id, folder, since, GRAPH_MIRROR_IMPORT_OLDER_CAP)));
-      for (let start = 0; start < inserts.length; start += 100) await db.batch(inserts.slice(start, start + 100));
-      importOlderDone = importOlder.requestedAt;
-    }
     if (!mailboxes.length) {
       complete = true;
     } else {
@@ -313,23 +298,40 @@ export async function runGraphMirrorTick(env: GraphMirrorWorkerEnv, tools: Inbou
         sleep: deps.sleep,
         now: deps.now,
       });
-      const outcome = await pullMailboxes({
+      // One cheap read: is a count or an import active? Then the live pull
+      // leaves part of the run for it (live mail still goes first).
+      const importRecords: ImportRecords = await loadImportRecords(db).catch(() => ({ request: null, estimate: null, job: null }));
+      const importActive = importHasWork(importRecords);
+      const liveBudgets = importActive
+        ? {
+          ...budgets,
+          timeMs: Math.floor(budgets.timeMs * GRAPH_IMPORT_LIVE_SHARE),
+          graph: Math.floor(budgets.graph * GRAPH_IMPORT_LIVE_SHARE),
+          subrequests: Math.floor(budgets.subrequests * GRAPH_IMPORT_LIVE_SHARE),
+        }
+        : budgets;
+      const puller: Puller = {
         env,
         tools,
         client,
         config,
         now,
-        budgets,
+        budgets: liveBudgets,
         started: Date.now(),
         run,
         status,
         runSkipReason,
         subrequests: 0,
-      }, mailboxes, cursor);
+      };
+      const outcome = await pullMailboxes(puller, mailboxes, cursor);
       cursor = outcome.cursor;
       visited = outcome.visited;
       complete = outcome.complete;
       runError = outcome.error;
+      // Live mail first: the finite import (count or old mail) gets what the
+      // live pull left, and the share held back for it.
+      puller.budgets = budgets;
+      if (!runError && importActive) runError = await runImportPhase(puller, mailboxes, importRecords);
     }
   } catch (caught) {
     runError = caught instanceof RunStop ? caught.code
@@ -376,13 +378,13 @@ export async function runGraphMirrorTick(env: GraphMirrorWorkerEnv, tools: Inbou
   } catch {
     console.error('Graph mirror: status details could not be read');
   }
-  await releaseLease(db, { cursor, status, importOlderDone });
+  await releaseLease(db, { cursor, status });
   if (runError && visited === 0 && run.filed + run.sentFiled + run.duplicates === 0) return { status: 'error', code: runError };
   return { status: 'worked', mailboxes: mailboxes.length, visited, counts: run, complete, error: runError };
 }
 
 /** What one tick's pull shares. */
-interface Puller {
+export interface Puller {
   env: GraphMirrorWorkerEnv;
   tools: InboundTools;
   client: GraphMirrorClient;
@@ -399,7 +401,7 @@ interface Puller {
   subrequests: number;
 }
 
-function outOfBudget(p: Puller): boolean {
+export function outOfBudget(p: Puller): boolean {
   return Date.now() - p.started >= p.budgets.timeMs
     || p.client.requests >= p.budgets.graph
     || p.subrequests + p.client.requests >= p.budgets.subrequests;
@@ -556,11 +558,12 @@ function firstHeader(headers: Email['headers'], name: string): string | undefine
  * Files one delta page's new messages into the mailbox. 'budget' or
  * 'store_failed': the page was not finished and must be read again.
  */
-async function fileDeltaPage(
+export async function fileDeltaPage(
   p: Puller,
   mailbox: MailboxRow,
   row: FolderRow,
   messages: DeltaMessage[],
+  fail: (caught: unknown) => Promise<never> = (caught) => folderError(p, row, caught),
 ): Promise<{ outcome: 'done' | 'budget' | 'store_failed'; newestMs: number }> {
   const { env, tools, run, status } = p;
   const sent = row.folder === 'sentitems';
@@ -604,7 +607,7 @@ async function fileDeltaPage(
       }
       // Throttling, refusal, network or an unreadable answer: stop the
       // mailbox without moving the link, so the page is read again.
-      return folderError(p, row, caught);
+      return fail(caught);
     }
     if (!mime) {
       skip('too_large');

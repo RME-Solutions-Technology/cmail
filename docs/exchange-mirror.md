@@ -61,6 +61,7 @@ The diagram shows the journal source; the Graph source has
   - [Why not journaling over Cloudflare Email Routing](#why-not-journaling-over-cloudflare-email-routing)
   - [Permission: Mail.Read, scoped with RBAC for Applications](#permission-mailread-scoped-with-rbac-for-applications)
   - [How to set up the Graph source](#how-to-set-up-the-graph-source)
+  - [Import older mail](#import-older-mail)
 - [Journal source (not recommended with Cloudflare Email Routing)](#journal-source-not-recommended-with-cloudflare-email-routing)
 - [Why journaling](#why-journaling)
 - [What is and is not mirrored](#what-is-and-is-not-mirrored)
@@ -158,9 +159,8 @@ inbound mail. The journal source stays in cmail for other routes, but is
   the one filter and the one order message delta supports
   (`receivedDateTime ge`, `receivedDateTime desc`), and files at most
   `M365_GRAPH_MIRROR_INITIAL_CAP` messages (default 500); older ones are
-  counted as "left out", never filed silently. **Import older mail** in Admin
-  (1 to 90 days) starts every folder again from that far back, with a cap of
-  20,000 per folder; mail already filed is not filed twice.
+  counted as "left out", never filed silently. To bring older mail in, use
+  [Import older mail](#import-older-mail) (a finite import, estimated first).
 - **Expired token (410):** the folder starts again from the newest message of
   its last finished round, less one hour (a folder still paging starts again
   from its round's own start), never from the beginning. No cap applies to
@@ -277,6 +277,123 @@ holds counts and codes only; the mail trace has one line per filed copy, as
 for any delivery. Skipped copies are audited
 (`graph_mirror.copies_skipped`, counts and the first reason, at most one row
 per run).
+
+### Import older mail
+
+Admin > Exchange mirror > Graph source > **Import older mail** (managers
+only, while the Graph source is on) brings older mail from Microsoft 365 into
+every mirrored mailbox (people and shared, all domains; Inbox, Sent Items and
+Archive). It is finite: a slider with the stops **1 week, 1 month, 2 months, 3
+months, 6 months, 12 months, 2 years and All mail** (the period is counted from
+the moment the import starts), and three steps.
+
+1. **Estimate first (dry run).** The email Worker counts, per mailbox and in
+   total, the messages the period holds, and estimates their size. It writes
+   no mail. It runs in the background, a few mailboxes per scheduled run
+   (every 5 minutes, inside the run's usual Graph request budget), and the
+   page shows its progress. The result shows:
+   - **Messages and size**, "about". Count: one Graph request per mailbox and
+     folder with `$count=true` and `ConsistencyLevel: eventual`
+     ([List messages](https://learn.microsoft.com/en-us/graph/api/user-list-messages)).
+     Size: Graph's message resource has **no size property**
+     ([message resource](https://learn.microsoft.com/en-us/graph/api/resources/message)),
+     so the size of the newest 50 messages of each folder is read from the MAPI
+     property `PidTagMessageSize` (`Integer 0x0E08`, an extended property) in
+     the same request, and the folder's size is its average times its count
+     (exact when the folder has 50 messages or fewer). A folder where no size
+     comes back is counted at an assumed 75 KB a message and the page says so.
+     "All mail" has no date filter, so it counts the whole folder (drafts
+     included; they are never filed, so the figures can be a little high).
+   - **Cloudflare storage impact.** The database now (D1 reports its size with
+     every statement), what the import adds (about 3 KB a message: the
+     `messages` row with its participants, snippet and indexes; bodies and
+     attachments are in R2), and the share of the limit afterwards. The limit
+     is **10 GB per database on Workers Paid** (500 MB on Free)
+     ([D1 limits](https://developers.cloudflare.com/d1/platform/limits/), read
+     17 November 2026). From 80% of it the page warns that the database would
+     be near its limit; **above 100% the import cannot start** (this applies to
+     every period, and "All mail" is the one that can get there). The estimate
+     leaves out a folder it could not count (the page says how many), so check
+     that number before you confirm. If the
+     database size cannot be read, "All mail" cannot start (a shorter period
+     can).
+   - **R2 cost per month**, "about": the added mail at **$0.015 per GB-month**
+     for R2 Standard storage, with the first 10 GB-month free
+     ([R2 pricing](https://developers.cloudflare.com/r2/pricing/), read 17
+     November 2026). The page shows the price before the free tier and the price
+     if nothing else uses the free tier. Request charges (Class A, $4.50 per
+     million, 1 million free) are small next to storage and are not included.
+   - **Time**, "about": the import files at most 250 messages per scheduled
+     run, one run every 5 minutes (3,000 an hour), so 100,000 messages is about
+     33 hours. Messages already in cmail are counted faster than that.
+2. **Warning and confirmation.** Before Start the page says plainly that a big
+   import uses storage that costs money on Cloudflare, can take hours or days,
+   runs in the background and can be stopped, and that nothing already in cmail
+   is changed or duplicated. Start needs the tick box and the exact numbers of
+   the estimate on the page; it is refused for an estimate that is still
+   running, for numbers that are not the current estimate, and when the storage
+   check above fails (all checked again on the server). When the Worker picks
+   Start up it **counts again first**: if the message count moved by more than
+   20% from what you confirmed, nothing starts and the page shows the new
+   numbers to confirm again.
+3. **The import**, in the background. **Stop** is always available and acts
+   at once on the record (a guarded status change, so the Worker's next write
+   is a no-op); the Worker notices it after the page it is filing (at most 50
+   messages, seconds). It also withdraws a waiting request and ends a running
+   count. The page shows
+   mailboxes done, messages filed, already here and skipped, the messages
+   remaining and the time left, and refreshes by itself. A mailbox or folder
+   Graph refuses is skipped and counted; Microsoft throttling pauses the import
+   for the `Retry-After` time and it continues.
+
+How it behaves:
+
+- **One import at a time.** A request made while one runs is dropped; Admin
+  refuses it.
+- **Live mail first.** In every run the live pull (new mail, every mailbox)
+  goes first. While a count or an import is active it is held to 70% of the
+  run's time, Graph requests and subrequests, and the count or import gets the
+  rest, plus whatever the live pull does not use (on a quiet tenant that is
+  nearly all of it). Without an active import the live pull has the whole run,
+  as before. On a very large tenant, where one run cannot reach every mailbox
+  anyway, the live pass takes about 40% longer to come round while an import
+  runs. The import has its own position, a plain bounded list per folder
+  (newest first, up to the moment the import started); it never touches the
+  live mirror's delta links.
+- **Nothing duplicated.** Each message's Message-ID is looked up in the
+  mailbox before anything is downloaded, exactly as for the live pull: mail
+  already in cmail (from the live mirror, the journal source, normal delivery
+  or an earlier import) is counted as "already here", never downloaded or
+  filed twice. Stopping and starting again is safe.
+- **Filed like the mirror.** Copies are filed as read, with the time Exchange
+  received them, Archive copies to Archive, Sent Items copies to Sent (with the
+  Bcc list), with no inbox rules and no notifications.
+- **Audited.** `org.graph_mirror_import_estimate`,
+  `org.graph_mirror_import_start` (what was confirmed),
+  `org.graph_mirror_import_stopped` (managers), and `graph_mirror.import_started`
+  and `graph_mirror.import_finished` (the Worker, with counts only).
+- **No migration.** The request, the estimate and the import's progress are
+  three JSON values in `org_settings` (`graph_mirror_import_request` written by
+  the web app, `graph_mirror_import_estimate` and `graph_mirror_import_job` by
+  the Worker), each with one writer. They hold counts, mailbox ids and a
+  resume position, never addresses or mail content.
+- **Resume point.** Per folder it is the second of the oldest message read
+  plus how many messages of that second were read (`$skip`), so a burst of mail
+  in one second is neither repeated nor skipped. An expired page token (410)
+  starts the folder again from that point.
+- **A mailbox or folder that keeps failing** (Microsoft throttling, an
+  unreachable service) is retried on each run and, after six runs in a row,
+  left out and counted, so one bad mailbox never holds up the rest. A folder
+  that does not exist (no Archive) is not an error. A mailbox Graph refuses
+  (403, outside the Exchange scope) is skipped and counted.
+- **Safety net.** Before each run the import reads the database size again and
+  **stops itself at 90% of the D1 limit** (status "stopped", reason shown,
+  audited as `graph_mirror.import_stopped_d1`), so live mail can always be
+  stored even if the per-message guess below was too low or other mail grew
+  the database meanwhile.
+- **Mailboxes linked while an import runs** with an id sorting before the one
+  being worked are not part of that import; run another import for them
+  (mail already in cmail is not filed twice).
 
 ## Journal source (not recommended with Cloudflare Email Routing)
 
@@ -949,6 +1066,19 @@ real tenant:
   Exchange retries.
 - The subdomain routing question in [standby-probe.md](standby-probe.md), if
   the journal address is on a subdomain of an Exchange-hosted domain.
+- **Import older mail, on a real tenant (not yet run).** That Graph accepts
+  `$count=true` with `$filter` on `receivedDateTime` and
+  `$expand=singleValueExtendedProperties($filter=id eq 'Integer 0x0E08')` in
+  one request on every mailbox type (the page falls back to an assumed size and
+  says so if no size comes back); that `PidTagMessageSize` is the size Outlook
+  shows (it includes attachments as stored in Exchange, so R2 can hold a little
+  less than the estimate); the 3 KB a message D1 figure (taken from the row
+  shape, not measured: after the first real import, compare the database size
+  before and after with the number of messages filed, and correct
+  `D1_BYTES_PER_MESSAGE` in `packages/shared/src/graph-import.ts` if it is
+  off); and the 250 messages a run (a ceiling the Worker enforces, set from
+  the request and subrequest budgets; real throughput depends on Graph's speed
+  and attachment sizes, so the time is an estimate, not a promise).
 
 ## How to test
 
@@ -963,11 +1093,24 @@ against a fake Microsoft Graph: Inbox, Archive and Sent copies per linked
 mailbox; replays and read-state changes counted without a download; a
 message filed once whichever source brings it first; no second Sent copy of
 cmail's own mail; Focused Inbox colleague proof; size, Message-ID and
-attachment limits; the first-pull window and cap; Import older mail; 429 per
+attachment limits; the first-pull window and cap; 429 per
 mailbox and while reading a message; 410 from the watermark; permission
 missing and a mailbox outside the scope; rejected credentials; the budget
 with resume and no message downloaded twice; and the switch off being inert.
 The web tests check the Admin actions and that the standby note renders.
+
+The Import older mail tests (`apps/email-worker/src/graph-mirror/graph-import.sql.node.test.ts`,
+`packages/shared/src/graph-import.test.ts` and the import tests in
+`apps/web/src/lib/server/graph-mirror-admin.test.ts`) run against a fake Graph
+that holds a small mailbox dataset: the dry run's counts and sizes per
+mailbox and period (including All, a sample larger than the folder, missing
+sizes, a refused and a missing folder), resume over runs within the request
+budget, the D1 limit block and the cost and time maths, confirm with the
+recount (within and beyond 20%), the import of every message once with
+duplicates counted on a second import, resume with a bounded list position,
+Stop (at once, during the count and during the import), one import at a time,
+live mail first, throttling, and the web guards on every action. Run them with
+`pnpm --filter @cmail/shared test` as well.
 
 The Worker tests drive the real inbound handler on a real SQLite database
 with every migration, with reports shaped like Exchange's

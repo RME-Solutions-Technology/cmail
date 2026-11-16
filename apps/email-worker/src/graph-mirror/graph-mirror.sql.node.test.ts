@@ -372,33 +372,6 @@ describe('Graph mirror: limits, errors and resume', () => {
     expect(t.messages()).toHaveLength(1);
   });
 
-  it('"Import older mail" reaches mailboxes not read yet as well', async () => {
-    const t = setup();
-    t.setSetting('graph_mirror_import_older', `10:${NOW}`);
-    // A budget so small that only the first mailbox is reached on this tick.
-    await t.tick({ budgets: { graph: 3 } });
-    const support = t.folders().filter((row) => row.mailbox_id === 'mbx-support');
-    expect(support).toHaveLength(3);
-    expect(support.every((row) => Number(row.since_ms) === NOW - 10 * 24 * HOUR && Number(row.round_cap) === 20_000)).toBe(true);
-  });
-
-  it('"Import older mail" starts every folder again from that many days back, once', async () => {
-    const t = setup();
-    await t.tick();
-    t.setSetting('graph_mirror_import_older', `30:${NOW}`);
-    t.advance(5 * 60_000);
-    t.graph.calls.length = 0;
-    await t.tick();
-    const first = t.graph.deltaCalls().find((call) => call.includes(BOB) && call.includes('/inbox/'));
-    expect(decodeURIComponent(String(first))).toContain('receivedDateTime ge 2026-10-17T05:05:00Z');
-    expect(t.folders().every((row) => Number(row.round_cap) === 0 && row.link_kind === 'delta')).toBe(true);
-    // Applied once: the next run follows the delta links.
-    t.advance(5 * 60_000);
-    t.graph.calls.length = 0;
-    await t.tick();
-    expect(t.graph.deltaCalls().some((call) => call.includes('$filter'))).toBe(false);
-  });
-
   it('honours 429 Retry-After per mailbox: the others go on, the throttled one waits, nothing is skipped', async () => {
     const t = setup();
     const g = t.graph;
