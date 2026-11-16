@@ -1,25 +1,43 @@
 // Is this really a journal report from our own Exchange Online tenant?
 // (docs/exchange-mirror.md, "How a report is trusted")
 //
+// What a live Exchange Online journal report looks like (seen on a real
+// tenant, 16 Nov 2026; Microsoft does not document it):
+// - The report's From is the ORIGINAL message's sender, which for internet
+//   mail is someone outside the tenant. So DMARC on the From domain says
+//   nothing about our tenant and is not used.
+// - The envelope MAIL FROM is the JournalingReportNdrTo address.
+// - Only the outer report's own headers are read here, never the attached
+//   original's: the original carries headers stamped for its sender.
+//
 // Layers, all required (fail closed):
 // 1. It arrived at the configured journal address, whose local part holds a
 //    random token (checked by the caller before anything is read).
 // 2. It carries the X-MS-Journal-Report header Exchange puts on every
 //    journal report.
-// 3. When M365_TENANT_ID is set, every X-MS-Exchange-CrossTenant-Id header
-//    on the report equals it. Microsoft does not document that the header is
-//    always present on a journal report, so with authentication on its
-//    absence is allowed (a different tenant's id is refused). With
-//    authentication off (M365_JOURNAL_REQUIRE_AUTH "false") the header is
-//    required: the tenant id is then the only tie to the tenant.
-// 4. Unless M365_JOURNAL_REQUIRE_AUTH is "false": Cloudflare Email Routing's
+// 3. Tenant: the outer report's X-MS-Exchange-CrossTenant-Id headers. EOP
+//    stamps this header with the id of the tenant a message is attributed
+//    to; a report can carry more than one instance (for example the
+//    original sender's tenant and ours), so the report is ours when OUR id
+//    is among them. With M365_TENANT_ID set, a report that carries this
+//    header only with other tenants' ids is refused. (X-MS-Exchange-
+//    Organization-* headers are removed by the header firewall when a
+//    message leaves an Exchange organization, so they are not relied on:
+//    https://learn.microsoft.com/en-us/exchange/header-firewall-exchange-2013-help)
+// 4. Unless M365_JOURNAL_REQUIRE_AUTH is "false", Cloudflare Email Routing's
 //    own Authentication-Results record (the first one, from
-//    INBOUND_AUTHSERV_ID) shows either DMARC pass for a From domain in
-//    M365_JOURNAL_SENDER_DOMAINS (whole-domain match; if the record names
-//    header.from it must be the same domain), or a DKIM pass signed by one
-//    of them. Cloudflare documents that record:
-//    https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results
-import { parseAuthenticationIdentities } from '../authentication-results';
+//    INBOUND_AUTHSERV_ID;
+//    https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results)
+//    shows either
+//    a. a DKIM pass whose signing domain (header.d) is in
+//       M365_JOURNAL_SENDER_DOMAINS (the tenant's own DKIM), whatever the
+//       From says; or
+//    b. an SPF pass for the envelope MAIL FROM whose domain is
+//       M365_JOURNAL_NDR_DOMAIN, AND this tenant's id on the report. SPF
+//       alone is not enough: Exchange Online's sending IPs are shared by
+//       every tenant, so the tenant id ties it to ours.
+//    With "false", only 1-3 apply and our tenant id must be on the report.
+import { parseAuthenticationIdentities, parseAuthenticationResults } from '../authentication-results';
 import type { ExchangeMirrorConfig } from '@cmail/shared/exchange-mirror';
 
 type Header = { key: string; value: string };
@@ -98,34 +116,48 @@ export function headerBlockWellFormed(raw: Uint8Array): boolean {
   return true;
 }
 
+/** Domain of an envelope address (or of a bare domain), lower case, or null. */
+function envelopeDomain(value: string | null | undefined): string | null {
+  const text = (value ?? '').trim().toLowerCase();
+  const at = text.lastIndexOf('@');
+  const domain = (at >= 0 ? text.slice(at + 1) : text).replace(/\.$/, '');
+  return DOMAIN.test(domain) ? domain : null;
+}
+
+/**
+ * @param headers The OUTER journal report's parsed headers only.
+ * @param envelopeFrom The SMTP envelope MAIL FROM Email Routing reported.
+ */
 export function verifyJournalReport(
   headers: readonly Header[] | undefined,
-  config: Pick<ExchangeMirrorConfig, 'tenantId' | 'requireAuth' | 'authservId' | 'senderDomains'>,
+  config: Pick<ExchangeMirrorConfig, 'tenantId' | 'requireAuth' | 'authservId' | 'senderDomains' | 'ndrDomain'>,
+  envelopeFrom: string | null = null,
 ): VerifyResult {
   if (!headerValues(headers, 'x-ms-journal-report').length) return { ok: false, reason: 'not_journal_report' };
 
   const tenants = headerValues(headers, 'x-ms-exchange-crosstenant-id').map((value) => value.trim().toLowerCase());
-  if (config.tenantId && tenants.some((value) => value !== config.tenantId)) return { ok: false, reason: 'wrong_tenant' };
+  const ourTenant = Boolean(config.tenantId) && tenants.includes(config.tenantId as string);
+  if (config.tenantId && tenants.length && !ourTenant) return { ok: false, reason: 'wrong_tenant' };
 
   if (!config.requireAuth) {
-    // The configuration refuses this mode without M365_TENANT_ID; check again.
-    if (!config.tenantId || !tenants.length) return { ok: false, reason: 'wrong_tenant' };
-    return { ok: true };
+    // The configuration refuses this mode without M365_TENANT_ID; our id is required.
+    return ourTenant ? { ok: true } : { ok: false, reason: 'wrong_tenant' };
   }
   // Only the first Authentication-Results header is the boundary's own.
   const first = headerValues(headers, 'authentication-results')[0];
   const identities = parseAuthenticationIdentities(first ?? null, config.authservId);
-  const facts = identities.dmarc !== null || identities.dkimPassDomains.length > 0;
-  if (!facts) return { ok: false, reason: 'auth_missing' };
+  const verdicts = parseAuthenticationResults(first ?? null, config.authservId);
+  if (!verdicts.spf && !verdicts.dkim && !verdicts.dmarc && !verdicts.arc) return { ok: false, reason: 'auth_missing' };
+  // a. The tenant's own DKIM, independent of the From header.
   const allowed = new Set(config.senderDomains);
-  const froms = headerValues(headers, 'from');
-  const domain = froms.length === 1 ? fromDomain(froms[0]) : null;
-  // DMARC is evaluated on the RFC 5322 From domain, so a pass ties the From
-  // domain to an aligned SPF or DKIM result. When the boundary also names
-  // the domain it evaluated, it must be the same one.
-  // An invalid header.from ('invalid') matches nothing, so it fails.
-  const dmarcDomainOk = identities.dmarcHeaderFrom === null || identities.dmarcHeaderFrom === domain;
-  if (identities.dmarc === 'pass' && domain && allowed.has(domain) && dmarcDomainOk) return { ok: true };
   if (identities.dkimPassDomains.some((item) => allowed.has(item))) return { ok: true };
+  // b. SPF for the configured NDR domain, plus our tenant id. The domain the
+  //    SPF verdict is about must also be the envelope's, when both are known.
+  if (config.ndrDomain && identities.spf === 'pass' && ourTenant) {
+    const recorded = identities.spfMailFromDomain;
+    const envelope = envelopeDomain(envelopeFrom);
+    const domain = recorded === 'invalid' ? null : recorded ?? envelope;
+    if (domain === config.ndrDomain && (envelope === null || envelope === domain)) return { ok: true };
+  }
   return { ok: false, reason: 'auth_failed' };
 }

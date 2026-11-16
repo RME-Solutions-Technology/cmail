@@ -337,6 +337,14 @@ export interface AuthenticationIdentities {
    * not a whole domain (never treated as absent); null when it wrote none.
    */
   dmarcHeaderFrom: string | 'invalid' | null;
+  /** SPF verdict of the first `spf=` result in the trusted record. */
+  spf: string | null;
+  /**
+   * Lower-case domain of that result's `smtp.mailfrom` (the envelope MAIL
+   * FROM the SPF verdict is about); 'invalid' when it is not a whole domain;
+   * null when the boundary wrote none.
+   */
+  spfMailFromDomain: string | 'invalid' | null;
 }
 
 const DKIM_DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -353,7 +361,7 @@ export function parseAuthenticationIdentities(
 ): AuthenticationIdentities {
   const facts = parseAuthenticationResults(headerValue, trustedAuthservId);
   const resinfos = trustedResinfos(headerValue, trustedAuthservId);
-  if (!resinfos) return { dmarc: facts.dmarc, dkimPassDomains: [], dmarcHeaderFrom: null };
+  if (!resinfos) return { dmarc: facts.dmarc, dkimPassDomains: [], dmarcHeaderFrom: null, spf: facts.spf, spfMailFromDomain: null };
   const domains = new Set<string>();
   for (const info of resinfos) {
     if (info.method !== 'dkim' || info.result !== 'pass') continue;
@@ -370,5 +378,14 @@ export function parseAuthenticationIdentities(
     const value = from.value.toLowerCase().replace(/\.$/, '');
     dmarcHeaderFrom = DKIM_DOMAIN.test(value) ? value : 'invalid';
   }
-  return { dmarc: facts.dmarc, dkimPassDomains: [...domains], dmarcHeaderFrom };
+  let spfMailFromDomain: AuthenticationIdentities['spfMailFromDomain'] = null;
+  const spf = resinfos.find((info) => info.method === 'spf');
+  const mailFrom = spf?.properties.find((property) => property.name === 'smtp.mailfrom');
+  if (mailFrom) {
+    // smtp.mailfrom is an address or, for an empty MAIL FROM, a domain (HELO).
+    const at = mailFrom.value.lastIndexOf('@');
+    const value = (at >= 0 ? mailFrom.value.slice(at + 1) : mailFrom.value).toLowerCase().replace(/\.$/, '');
+    spfMailFromDomain = DKIM_DOMAIN.test(value) ? value : 'invalid';
+  }
+  return { dmarc: facts.dmarc, dkimPassDomains: [...domains], dmarcHeaderFrom, spf: facts.spf, spfMailFromDomain };
 }

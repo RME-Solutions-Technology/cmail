@@ -152,27 +152,41 @@ a day, the daily count is always exact). It never reaches a mailbox.
    is treated like any unknown address (refused), nothing is parsed.
 3. **It is a journal report:** it carries the `X-MS-Journal-Report` header
    that Exchange adds to every journal report.
-4. **Our tenant:** when `M365_TENANT_ID` is set, every
-   `X-MS-Exchange-CrossTenant-Id` header on the report must equal it. (Not
-   documented as always present on a journal report, so with check 5 on a
-   missing header is allowed; another tenant's id is refused. With check 5
-   off, the header is required and `M365_TENANT_ID` must be set.)
+4. **Our tenant:** only the OUTER report's own headers are read, never the
+   attached original's. With `M365_TENANT_ID` set, the report is ours when
+   our id is among its `X-MS-Exchange-CrossTenant-Id` headers; a report can
+   carry several (seen live: the original sender's tenant for mail from
+   another Microsoft 365 organisation, and ours). A report whose tenant
+   headers are all other tenants' is refused (`wrong_tenant`). Microsoft
+   does not document which tenant headers Exchange Online stamps on an
+   outbound journal report; `X-MS-Exchange-Organization-*` headers are
+   removed by the header firewall when a message leaves an Exchange
+   organization ([header firewall](https://learn.microsoft.com/en-us/exchange/header-firewall-exchange-2013-help)),
+   so they are not used. With check 5 on, a report with no tenant header at
+   all is decided by check 5a; check 5b and check 5 off need our id.
 5. **Authenticated as the tenant** (unless `M365_JOURNAL_REQUIRE_AUTH =
    "false"`): Cloudflare Email Routing's own `Authentication-Results` record
    (the first one, whose identifier is `INBOUND_AUTHSERV_ID`, normally
    `mx.cloudflare.net`;
    [Cloudflare](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/#authentication-results))
-   shows either **DMARC pass** with the report's From domain in
-   `M365_JOURNAL_SENDER_DOMAINS`, or a **DKIM pass** signed by one of those
-   domains. Domains match only whole: the From must be one plain address
-   whose domain is a valid domain name from end to end (so
-   `x@example.com_.evil.example` is not `example.com`), and if the record
-   names the domain DMARC evaluated (`header.from`) it must be the same one
-   (a `header.from` that is not a valid domain fails). The record is read
-   with an RFC 8601 tokenizer: a quoted value is one value, so text inside
-   it (`smtp.mailfrom="x dmarc=pass"`, `reason="k header.d=tenant"`) can
-   never count as a verdict or a domain. Records added further out are never
-   read.
+   shows either:
+   - **a.** a **DKIM pass** whose signing domain (`header.d`) is in
+     `M365_JOURNAL_SENDER_DOMAINS` (the tenant's own DKIM, for example its
+     custom domain or `<tenant>.onmicrosoft.com`), whatever the From says; or
+   - **b.** an **SPF pass** for the envelope MAIL FROM whose domain is
+     `M365_JOURNAL_NDR_DOMAIN` (the domain of the "undeliverable journal
+     reports" address, which live reports use as their MAIL FROM; the SPF
+     record of that domain must include `spf.protection.outlook.com`), **and**
+     our tenant id on the report. SPF alone would not do: Exchange Online's
+     sending servers are shared by every tenant.
+
+   **DMARC on the From is not used.** A live journal report's From is the
+   ORIGINAL message's sender, who is often outside the tenant, so DMARC on it
+   says nothing about who sent the report. Domains match only whole
+   (`example.com_.evil.example` is not `example.com`). The record is read with
+   an RFC 8601 tokenizer: a quoted value is one value, so text inside it
+   (`smtp.mailfrom="x dmarc=pass"`, `reason="k header.d=tenant"`) can never
+   count as a verdict or a domain. Records added further out are never read.
 6. **A safe envelope:** a plain-text envelope (an HTML-only report is
    refused), exactly one attached original (`message/rfc822`), recipient
    lines only after the envelope's single Message-Id line (the Subject line
@@ -311,12 +325,13 @@ changes a live system needs the owner's yes.
    |---|---|
    | `M365_JOURNAL_ADDRESS` | `journal-<32+ random lower-case hex>@<journal domain>`. Store it as a secret: `wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml` |
    | `M365_TENANT_ID` | The directory (tenant) ID (shared with the sync). Turns on the tenant check. |
-   | `M365_JOURNAL_SENDER_DOMAINS` | Domains a journal report may authenticate as: the tenant's default domain (the domain of its `MicrosoftExchange…@` system address) and its `<tenant>.onmicrosoft.com` domain. Default: `MAIL_DOMAIN`. |
+   | `M365_JOURNAL_SENDER_DOMAINS` | Domains whose DKIM signature on a report proves the tenant (check 5a): the tenant's custom domain(s) with DKIM enabled and its `<tenant>.onmicrosoft.com` domain. Default: `MAIL_DOMAIN`. |
+   | `M365_JOURNAL_NDR_DOMAIN` | The domain of the "undeliverable journal reports" address (check 5b). Its SPF record must include `spf.protection.outlook.com`. Optional. |
    | `INBOUND_AUTHSERV_ID` | `mx.cloudflare.net` |
    | `MAIL_DOMAIN` | As for the web app. |
    | `MAX_INBOUND_BYTES` | Optional: raise toward 26214400 (25 MiB) to mirror large messages; see [Size limits](#size-limits). |
    | `M365_JOURNAL_MIRROR_SENT` | Optional, default `"false"`. Set `"true"` (needs `M365_TENANT_ID`) only after the first live test shows real originals carry `X-MS-Exchange-CrossTenant-AuthAs: Internal` and the tenant id. |
-   | `M365_JOURNAL_REQUIRE_AUTH` | Leave at `"true"`. Set `"false"` only if the first live test proves Exchange's reports carry no DKIM or DMARC pass. It needs `M365_TENANT_ID`, and every report must then carry that tenant id; only the token, the journal header and the tenant header protect the address. |
+   | `M365_JOURNAL_REQUIRE_AUTH` | Leave at `"true"` with check 5a or 5b set up. `"false"` is the fallback: it needs `M365_TENANT_ID`, and every report must then carry that tenant id; only the token, the journal header and the tenant header protect the address. |
 
 4. Deploy the email Worker and web app. In Admin > Exchange mirror the
    settings show as configured (the address masked). Leave the switch **off**.
@@ -403,9 +418,23 @@ Needs the Exchange Online "Journaling" permission
    `X-MS-Exchange-CrossTenant-AuthAs: Internal` and your tenant id before
    turning on `M365_JOURNAL_MIRROR_SENT`.
 4. If the counts show refused reports, the reason is in Admin and the audit
-   log. `auth_failed` or `auth_missing` on real reports: check
-   `M365_JOURNAL_SENDER_DOMAINS` against the report's From domain and DKIM
-   signer (see [What is not verified](#what-is-not-verified)).
+   log (see [Diagnosing refused reports](#diagnosing-refused-reports)).
+   `auth_failed` or `auth_missing`: compare the DKIM `d=` and the SPF
+   `smtp.mailfrom` domain in the diagnostic with `M365_JOURNAL_SENDER_DOMAINS`
+   and `M365_JOURNAL_NDR_DOMAIN`. `wrong_tenant`: compare the
+   `x-ms-exchange-crosstenant-id` values with `M365_TENANT_ID`.
+
+### Diagnosing refused reports
+
+Each refused report's audit row (`exchange_mirror.report_rejected`, at most
+50 a day) carries a safe diagnostic: from the OUTER report only, the names
+and values of its `X-MS-Exchange-CrossTenant-*`,
+`X-MS-Exchange-Organization-*`, `X-MS-Journal-Report` and
+`Authentication-Results` headers with every email address cut to its domain
+(`user@example.com` becomes `@example.com`), the `d=` and `s=` of each
+`DKIM-Signature`, and how many headers with those names the attached
+original has (a count only). Never a subject, an address, a body or any
+other header; at most 30 headers and 3,000 characters.
 5. Optional: Admin > Exchange mirror > **Turn alias import on** (needs the
    Microsoft 365 sync on and out of dry run).
 
@@ -478,13 +507,18 @@ and Cloudflare first, then the Worker).
 Microsoft does not document these, and they could only be settled with a
 real tenant:
 
-- **DKIM/DMARC of journal reports.** Whether Exchange Online DKIM-signs
-  journal reports, with which domain, and what their From address is. A
-  Microsoft Q&A thread reports journal reports without DKIM
+- **Seen on a live tenant (16 Nov 2026).** The report's From is the
+  original sender, its Message-ID ends `@journal.report.generator`, and its
+  envelope MAIL FROM is the "undeliverable journal reports" address. So
+  DMARC on the From cannot prove the tenant, and the first design refused
+  every report with authentication on. A report from another Microsoft 365
+  organisation's sender carried more than one tenant id.
+- **DKIM of journal reports.** Whether Exchange Online DKIM-signs journal
+  reports, and with which domain, is still not known; a Microsoft Q&A thread
+  reports them unsigned
   ([Q&A](https://learn.microsoft.com/en-us/answers/questions/1153499/how-to-enable-dkim-for-journaling)).
-  If a real report shows no DKIM or DMARC pass for a tenant domain, every
-  report is refused (`auth_failed`) until `M365_JOURNAL_SENDER_DOMAINS` is
-  corrected or, as a last resort, `M365_JOURNAL_REQUIRE_AUTH = "false"`.
+  The diagnostic shows it on the first refused report. Check 5b does not
+  depend on it.
 - **Cloudflare acceptance.** Cloudflare Email Routing refuses mail that
   passes neither SPF nor DKIM
   ([postmaster](https://developers.cloudflare.com/email-service/reference/postmaster/#mail-authentication-requirement)).
@@ -495,9 +529,10 @@ real tenant:
   Subject, Message-Id, then recipients, and the `Expanded:` line format are
   assumed from it. A different layout is refused (`no_original`,
   `unsafe_envelope`, `no_recipients`), never misfiled.
-- **Tenant headers.** Whether `X-MS-Exchange-CrossTenant-Id` and
-  `X-MS-Exchange-CrossTenant-AuthAs` are present on the report and on the
-  attached original. If they are missing on real originals, Sent copies are
+- **Tenant headers.** Which `X-MS-Exchange-CrossTenant-*` headers Exchange
+  Online stamps on the outer report is not documented by Microsoft; the
+  diagnostic shows them. Whether `X-MS-Exchange-CrossTenant-AuthAs` is
+  present on the attached original is also unknown. If they are missing on real originals, Sent copies are
   never filed (they are off by default and fail closed).
 - **Envelope Message-Id.** Assumed to equal the original's Message-ID header
   (Microsoft calls it "the internal Exchange Message-ID"). If it differs on

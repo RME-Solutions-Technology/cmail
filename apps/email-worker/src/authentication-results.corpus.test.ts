@@ -106,6 +106,8 @@ describe('well-formed records parse exactly as before', () => {
       dmarc: 'pass',
       dkimPassDomains: ['example.com', 'example.onmicrosoft.com'],
       dmarcHeaderFrom: 'example.com',
+      spf: 'pass',
+      spfMailFromDomain: 'example.com',
     });
   });
 });

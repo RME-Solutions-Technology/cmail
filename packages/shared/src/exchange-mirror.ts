@@ -38,6 +38,14 @@ export interface ExchangeMirrorEnv {
    */
   M365_JOURNAL_SENDER_DOMAINS?: string;
   /**
+   * Domain of the "undeliverable journal reports" address
+   * (Set-TransportConfig -JournalingReportNdrTo). Exchange Online sends each
+   * journal report with that address as the envelope MAIL FROM, so an SPF
+   * pass for it, together with this tenant's id on the report, also
+   * authenticates a report. Optional.
+   */
+  M365_JOURNAL_NDR_DOMAIN?: string;
+  /**
    * "false" skips the SPF/DKIM/DMARC check (weaker; see docs). Allowed only
    * with M365_TENANT_ID set, and every report must then carry that tenant id.
    * Default "true".
@@ -60,6 +68,8 @@ export interface ExchangeMirrorConfig {
   /** journal-abcd…@domain: safe to show in Admin and logs. */
   maskedAddress: string;
   senderDomains: string[];
+  /** Domain of JournalingReportNdrTo, or null. */
+  ndrDomain: string | null;
   requireAuth: boolean;
   mirrorSent: boolean;
   tenantId: string | null;
@@ -135,6 +145,8 @@ export function exchangeMirrorConfig(env: ExchangeMirrorEnv): ExchangeMirrorConf
     problems.push('INBOUND_AUTHSERV_ID is not set, so journal reports cannot be authenticated (set it to mx.cloudflare.net)');
   }
   const listed = clean(env.M365_JOURNAL_SENDER_DOMAINS).split(',').map((item) => item.trim()).filter(Boolean);
+  const ndrDomain = clean(env.M365_JOURNAL_NDR_DOMAIN);
+  if (ndrDomain && !DOMAIN.test(ndrDomain)) problems.push('M365_JOURNAL_NDR_DOMAIN must be a domain (the domain of JournalingReportNdrTo)');
   if (listed.some((item) => !DOMAIN.test(item))) problems.push('M365_JOURNAL_SENDER_DOMAINS must be comma-separated domains');
   if (problems.length) return { configured: false, problems };
 
@@ -144,6 +156,7 @@ export function exchangeMirrorConfig(env: ExchangeMirrorEnv): ExchangeMirrorConf
       journalAddress: address,
       maskedAddress: maskJournalAddress(address),
       senderDomains: [...new Set(listed.length ? listed : [mailDomain])],
+      ndrDomain: ndrDomain || null,
       requireAuth,
       mirrorSent,
       tenantId: tenantId || null,
@@ -221,8 +234,8 @@ export const EXCHANGE_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
   unparseable: 'The journal report could not be read as an email.',
   not_journal_report: 'The message has no X-MS-Journal-Report header, so it is not a journal report.',
   wrong_tenant: 'The tenant header does not match M365_TENANT_ID.',
-  auth_missing: 'No trusted SPF/DKIM/DMARC result was found (check INBOUND_AUTHSERV_ID).',
-  auth_failed: 'The report did not authenticate as one of M365_JOURNAL_SENDER_DOMAINS.',
+  auth_missing: 'No trusted SPF/DKIM result was found (check INBOUND_AUTHSERV_ID).',
+  auth_failed: 'The report had neither a DKIM pass by one of M365_JOURNAL_SENDER_DOMAINS nor an SPF pass for M365_JOURNAL_NDR_DOMAIN with this tenant id.',
   no_original: 'The report has no attached original message (message/rfc822).',
   tnef: 'The original is attached as TNEF (winmail.dat): turn TNEF off for the journal domain in Exchange.',
   ambiguous_original: 'The report has more than one attached message.',

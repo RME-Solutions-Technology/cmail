@@ -85,19 +85,23 @@ describe('journal envelope', () => {
 });
 
 describe('journal report trust', () => {
-  const config = { tenantId: TENANT, requireAuth: true, authservId: 'mx.example.test', senderDomains: ['example.test'] };
+  const config = { tenantId: TENANT, requireAuth: true, authservId: 'mx.example.test', senderDomains: ['example.test'], ndrDomain: 'ndr.example.test' as string | null };
   const headers = (extra: Array<[string, string]>) => [['x-ms-journal-report', ''] as [string, string], ...extra].map(([key, value]) => ({ key, value }));
 
   it('reads DKIM pass domains only from the trusted, topmost record', () => {
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=Example.Test header.s=s1; dkim=fail header.d=bad.example; dkim=pass header.i=@other.example; dmarc=pass', 'mx.example.test'))
-      .toEqual({ dmarc: 'pass', dkimPassDomains: ['example.test', 'other.example'], dmarcHeaderFrom: null });
-    expect(parseAuthenticationIdentities('mx.attacker.example; dkim=pass header.d=example.test', 'mx.example.test'))
-      .toEqual({ dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null });
-    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test', ''))
-      .toEqual({ dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null });
+      .toEqual({ dmarc: 'pass', dkimPassDomains: ['example.test', 'other.example'], dmarcHeaderFrom: null, spf: null, spfMailFromDomain: null });
+    const none = { dmarc: null, dkimPassDomains: [], dmarcHeaderFrom: null, spf: null, spfMailFromDomain: null };
+    expect(parseAuthenticationIdentities('mx.attacker.example; dkim=pass header.d=example.test', 'mx.example.test')).toEqual(none);
+    expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test', '')).toEqual(none);
     // Only whole domains count: a prefix with junk after it is dropped.
     expect(parseAuthenticationIdentities('mx.example.test; dkim=pass header.d=example.test_.evil.example; dmarc=pass header.from=Example.Test', 'mx.example.test'))
-      .toEqual({ dmarc: 'pass', dkimPassDomains: [], dmarcHeaderFrom: 'example.test' });
+      .toEqual({ dmarc: 'pass', dkimPassDomains: [], dmarcHeaderFrom: 'example.test', spf: null, spfMailFromDomain: null });
+    // SPF and the MAIL FROM domain it is about.
+    expect(parseAuthenticationIdentities('mx.example.test; spf=pass smtp.mailfrom=journal-ndr@NDR.example.test', 'mx.example.test'))
+      .toMatchObject({ spf: 'pass', spfMailFromDomain: 'ndr.example.test' });
+    expect(parseAuthenticationIdentities('mx.example.test; spf=pass smtp.mailfrom=x@ndr.example.test_', 'mx.example.test'))
+      .toMatchObject({ spf: 'pass', spfMailFromDomain: 'invalid' });
   });
 
   it('reads quoted property values whole, so they cannot inject a verdict or a domain', () => {
@@ -140,26 +144,48 @@ describe('journal report trust', () => {
     expect(fromDomain('Microsoft Outlook <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@example.test>')).toBe('example.test');
   });
 
-  it('needs the journal header, the right tenant and an authenticated tenant domain', () => {
-    const auth: [string, string] = ['authentication-results', 'mx.example.test; spf=pass; dkim=none; dmarc=pass'];
-    const from: [string, string] = ['from', 'Microsoft Outlook <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@example.test>'];
-    expect(verifyJournalReport(headers([auth, from]), config)).toEqual({ ok: true });
-    expect(verifyJournalReport([{ key: 'from', value: from[1] }], config)).toEqual({ ok: false, reason: 'not_journal_report' });
-    expect(verifyJournalReport(headers([auth, from, ['x-ms-exchange-crosstenant-id', TENANT], ['x-ms-exchange-crosstenant-id', '00000000-0000-0000-0000-000000000001']]), config))
-      .toEqual({ ok: false, reason: 'wrong_tenant' });
+  it('reflects live reports: DKIM by the tenant, or SPF for the NDR domain with our tenant id; never DMARC on the From', () => {
+    const OTHER = '00000000-0000-0000-0000-00000000beef';
+    // Live: the report's From is the ORIGINAL sender (here outside the tenant)
+    // and the envelope MAIL FROM is the JournalingReportNdrTo address.
+    const from: [string, string] = ['from', 'Pat Partner <pat@partner.example>'];
+    const ours: [string, string] = ['x-ms-exchange-crosstenant-id', TENANT];
+    const theirs: [string, string] = ['x-ms-exchange-crosstenant-id', OTHER];
+    const ar = (value: string): [string, string] => ['authentication-results', `mx.example.test; ${value}`];
+    const ndr = 'journal-ndr@ndr.example.test';
+
+    // a. The tenant's own DKIM passes, whatever the From says.
+    expect(verifyJournalReport(headers([ar('spf=none; dkim=pass header.d=example.test; dmarc=fail header.from=partner.example'), from]), config, ndr)).toEqual({ ok: true });
+    // b. SPF pass for the NDR domain plus our tenant id.
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none; dmarc=none`), from, theirs, ours]), config, ndr)).toEqual({ ok: true });
+    // b without our tenant id, or with SPF for another domain, or the envelope disagreeing: refused.
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar('spf=pass smtp.mailfrom=bounce@partner.example; dkim=none'), from, ours]), config, 'bounce@partner.example')).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, ours]), config, 'x@evil.example')).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar('spf=pass smtp.mailfrom=x@ndr.example.test_; dkim=none'), from, ours]), config, null)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=softfail smtp.mailfrom=${ndr}`), from, ours]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}`), from, ours]), { ...config, ndrDomain: null }, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    // DMARC on the From is not used at all, even for a tenant From domain.
+    expect(verifyJournalReport(headers([ar('spf=none; dkim=none; dmarc=pass header.from=example.test'), ['from', 'a@example.test'], ours]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    // DKIM by another domain, or a tenant-domain prefix, is not the tenant's.
+    expect(verifyJournalReport(headers([ar('dkim=pass header.d=partner.example'), from]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar('dkim=pass header.d=example.test_.evil.example'), from]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    // No trusted record at all.
+    expect(verifyJournalReport(headers([from, ours]), config, ndr)).toEqual({ ok: false, reason: 'auth_missing' });
     // A forged record below Cloudflare's own is never read.
-    expect(verifyJournalReport(headers([['authentication-results', 'mx.example.test; dmarc=fail'], ['authentication-results', 'mx.example.test; dmarc=pass'], from]), config))
-      .toEqual({ ok: false, reason: 'auth_failed' });
-    // Two From addresses: DMARC cannot vouch for either.
-    expect(verifyJournalReport(headers([auth, ['from', 'a@example.test, b@example.test']]), config)).toEqual({ ok: false, reason: 'auth_failed' });
-    // The exact inputs from review: a tenant-domain prefix is not the tenant domain.
-    expect(verifyJournalReport(headers([auth, ['from', 'x@example.test_.evil.example']]), config)).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([auth, ['from', 'x@tenant.com_.evil.net']]), { ...config, senderDomains: ['tenant.com'] })).toEqual({ ok: false, reason: 'auth_failed' });
-    // DMARC pass that the boundary says was evaluated for another domain.
-    expect(verifyJournalReport(headers([['authentication-results', 'mx.example.test; dkim=none; dmarc=pass header.from=evil.example'], from]), config))
-      .toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([['authentication-results', 'mx.example.test; dkim=none; dmarc=pass header.from=example.test'], from]), config))
-      .toEqual({ ok: true });
+    expect(verifyJournalReport(headers([ar('spf=fail; dkim=none'), ar('dkim=pass header.d=example.test'), from]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    // The journal header is mandatory.
+    expect(verifyJournalReport([{ key: 'from', value: from[1] }], config, ndr)).toEqual({ ok: false, reason: 'not_journal_report' });
+  });
+
+  it('accepts the report when OUR tenant id is among several, refuses when only others are there', () => {
+    const OTHER = '00000000-0000-0000-0000-00000000beef';
+    const dkim: [string, string] = ['authentication-results', 'mx.example.test; dkim=pass header.d=example.test'];
+    expect(verifyJournalReport(headers([dkim, ['x-ms-exchange-crosstenant-id', OTHER], ['x-ms-exchange-crosstenant-id', TENANT]]), config)).toEqual({ ok: true });
+    expect(verifyJournalReport(headers([dkim, ['X-MS-Exchange-CrossTenant-Id', ` ${TENANT.toUpperCase()} `]]), config)).toEqual({ ok: true });
+    expect(verifyJournalReport(headers([dkim, ['x-ms-exchange-crosstenant-id', OTHER]]), config)).toEqual({ ok: false, reason: 'wrong_tenant' });
+    // With authentication on, a report with no tenant header at all is decided by authentication.
+    expect(verifyJournalReport(headers([dkim]), config)).toEqual({ ok: true });
   });
 
   it('without authentication, needs this tenant id on the report', () => {
@@ -167,6 +193,11 @@ describe('journal report trust', () => {
     expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', TENANT]]), open)).toEqual({ ok: true });
     expect(verifyJournalReport(headers([]), open)).toEqual({ ok: false, reason: 'wrong_tenant' });
     expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', TENANT]]), { ...open, tenantId: null })).toEqual({ ok: false, reason: 'wrong_tenant' });
+    // The live refusal: a report from another Microsoft 365 organisation's
+    // sender carries their tenant id as well as ours. It is ours.
+    const other = '00000000-0000-0000-0000-00000000beef';
+    expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', other], ['x-ms-exchange-crosstenant-id', TENANT]]), open)).toEqual({ ok: true });
+    expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', other]]), open)).toEqual({ ok: false, reason: 'wrong_tenant' });
   });
 
   it('allows a Sent copy only with AuthAs Internal and this tenant on every instance (fail closed)', () => {
@@ -213,6 +244,7 @@ describe('Exchange mirror configuration', () => {
         // Sent copies are off until a live test proves the report shape.
         mirrorSent: false,
         tenantId: null,
+        ndrDomain: null,
         mailDomain: 'example.test',
         authservId: 'mx.example.test',
       },

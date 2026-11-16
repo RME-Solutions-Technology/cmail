@@ -168,10 +168,16 @@ STANDBY_PROBE_TIMEOUT_MINUTES = "10"
 # domain routed to this Worker>. Keep it secret (prefer a Worker secret):
 #   wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml
 # M365_JOURNAL_ADDRESS = ""
-# Domains a journal report may authenticate as (DMARC From or DKIM signer),
-# comma separated: the tenant's default and onmicrosoft.com domains. Default
-# MAIL_DOMAIN. M365_TENANT_ID above, when set, must match the report's tenant.
+# Domains whose DKIM signature on a report proves the tenant, comma separated:
+# the tenant's DKIM-enabled custom domain(s) and <tenant>.onmicrosoft.com.
+# Default MAIL_DOMAIN. (DMARC on the report's From is not used: a live
+# report's From is the original sender.) M365_TENANT_ID above, when set, must match the report's tenant.
 M365_JOURNAL_SENDER_DOMAINS = ""
+# Domain of the "undeliverable journal reports" address (JournalingReportNdrTo):
+# live reports use it as their MAIL FROM. An SPF pass for it plus this
+# tenant's id on the report also authenticates a report. Its SPF record must
+# include spf.protection.outlook.com. Optional.
+M365_JOURNAL_NDR_DOMAIN = ""
 # "false" skips the SPF/DKIM/DMARC check (weaker; see the docs). Needs
 # M365_TENANT_ID, and every report must then carry that tenant id. Default "true".
 M365_JOURNAL_REQUIRE_AUTH = "true"
