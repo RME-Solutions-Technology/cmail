@@ -1,6 +1,18 @@
 <script lang="ts">
   import { EXCHANGE_MIRROR_REASON_TEXT } from '@cmail/shared/exchange-mirror';
-  import { GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS, GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
+  import { onMount } from 'svelte';
+  import { invalidateAll } from '$app/navigation';
+  import {
+    D1_MAX_DATABASE_BYTES,
+    GRAPH_IMPORT_ERROR_TEXT,
+    GRAPH_IMPORT_MESSAGES_PER_RUN,
+    GRAPH_IMPORT_PERIODS,
+    formatBytes,
+    formatDuration,
+    formatUsd,
+    graphImportProgress,
+  } from '@cmail/shared/graph-import';
+  import { GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
 
   let { data, form } = $props();
   const overview = $derived(data.overview);
@@ -15,6 +27,24 @@
   const FOLDER_NAMES: Record<string, string> = { inbox: 'Inbox', sentitems: 'Sent Items', archive: 'Archive' };
   const graph = $derived(overview?.graph);
   const graphToday = $derived(graph?.status && graph.status.day === new Date(overview?.now ?? 0).toISOString().slice(0, 10) ? graph.status.today : null);
+  let sliderStop = $state(1);
+  const sliderPeriod = $derived(GRAPH_IMPORT_PERIODS[sliderStop] ?? GRAPH_IMPORT_PERIODS[1]);
+  const imp = $derived(graph?.import);
+  const estimate = $derived(imp?.estimate ?? null);
+  const figures = $derived(imp?.figures ?? null);
+  const job = $derived(imp?.job ?? null);
+  const jobRunning = $derived(job?.status === 'running');
+  const counting = $derived(estimate?.status === 'running' || Boolean(imp?.requestPending));
+  const periodLabel = (key: string | undefined) => GRAPH_IMPORT_PERIODS.find((period) => period.key === key)?.label ?? '';
+  const progress = $derived(job ? graphImportProgress(job) : null);
+  const canStart = $derived(Boolean(estimate && estimate.status === 'done' && figures && !figures.blocked && !estimate.jobId && !estimate.refused && (!estimate.then || estimate.changed)));
+  onMount(() => {
+    // While a count or an import runs, refresh the figures every 20 seconds.
+    const timer = setInterval(() => {
+      if (jobRunning || counting) void invalidateAll();
+    }, 20_000);
+    return () => clearInterval(timer);
+  });
   const ALIAS_RESULT: Record<string, string> = {
     ok: 'Imported',
     dry_run: 'Dry run (nothing written)',
@@ -115,16 +145,101 @@
           {/if}
         {/if}
         {#if graph.enabled}
-          <form method="POST" class="inline-form">
-            <input type="hidden" name="action" value="graph_import_older" />
-            <label for="import-days">Import older mail: the last</label>
-            <input id="import-days" name="days" type="number" min="1" max={GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS} value="7" required />
-            <span>days</span>
-            <button type="submit" class="btn">Import</button>
-          </form>
-          {#if graph.importOlderPending}
-            <p class="muted">Requested: the last {graph.importOlderPending.days} days, on the next run.</p>
-          {/if}
+          <div class="import-box" aria-labelledby="import-heading">
+            <h3 id="import-heading">Import older mail</h3>
+            <p class="muted">Bring older mail from Microsoft 365 into every mirrored mailbox (people and shared, all domains). It is a finite import, not a copy that keeps growing: first a count (a dry run that writes no mail), then your confirmation, then the import in the background.</p>
+
+            {#if job && job.status !== 'running' && job.finishedAt}
+              <div class="notice notice-success" role="status">
+                {job.status === 'done' ? 'Import finished' : 'Import stopped'} ({periodLabel(job.period)}, {when(job.finishedAt)}): {job.filed} filed, {job.duplicates} already here, {job.skipped} skipped{job.errors ? `, ${job.errors} folders or mailboxes could not be read` : ''}. {job.error ? (GRAPH_IMPORT_ERROR_TEXT[job.error] ?? job.error) : ''}
+              </div>
+            {/if}
+
+            {#if jobRunning && job && progress}
+              <h4>Importing {periodLabel(job.period)}</h4>
+              <progress max="100" value={progress.percent} aria-label="Import progress">{progress.percent}%</progress>
+              <dl class="facts">
+                <div><dt>Mailboxes done</dt><dd>{job.mailboxesDone} of {job.mailboxesTotal}</dd></div>
+                <div><dt>Messages filed</dt><dd>{job.filed} filed, {job.duplicates} already here, {job.skipped} skipped</dd></div>
+                <div><dt>Remaining</dt><dd>about {progress.remaining} of about {job.estMessages} ({progress.percent}% done)</dd></div>
+                <div><dt>Time left</dt><dd>{progress.remaining ? formatDuration(progress.etaHours) : 'finishing'}</dd></div>
+                <div><dt>Last progress</dt><dd>{when(job.lastProgressAt)}</dd></div>
+              </dl>
+              {#if job.error}<p class="muted">{GRAPH_IMPORT_ERROR_TEXT[job.error] ?? job.error}</p>{/if}
+              {#if job.errors}<p class="muted">{job.errors} folders or mailboxes could not be read and were left out.</p>{/if}
+              <p class="muted">Runs in the background, a few hundred messages every 5 minutes, after live mail. Live mail always goes first. This figure refreshes by itself.</p>
+              <form method="POST"><input type="hidden" name="action" value="graph_import_stop" /><button type="submit" class="btn">Stop the import</button></form>
+            {:else}
+              {#if counting}
+                <div class="notice notice-warning" role="status">
+                  {#if estimate?.status === 'running'}
+                    {estimate.then ? 'Counting again to check the numbers you confirmed' : `Counting ${periodLabel(estimate.period).toLowerCase()}`}: {estimate.mailboxesDone} of {estimate.mailboxesTotal} mailboxes so far, about {estimate.messages} messages.
+                  {:else}
+                    Waiting for the next scheduled run (within about 5 minutes) to {imp?.requestPending === 'start' ? 'check the numbers and start' : 'start counting'}.
+                  {/if}
+                </div>
+                <form method="POST"><input type="hidden" name="action" value="graph_import_stop" /><button type="submit" class="btn">Cancel</button></form>
+              {:else}
+                <form method="POST" class="import-slider">
+                  <input type="hidden" name="action" value="graph_import_estimate" />
+                  <label for="import-stop">How far back: <strong>{sliderPeriod.label}</strong></label>
+                  <input id="import-stop" name="stop" type="range" min="0" max={GRAPH_IMPORT_PERIODS.length - 1} step="1" bind:value={sliderStop} aria-valuetext={sliderPeriod.label} />
+                  <div class="slider-stops" aria-hidden="true">{#each GRAPH_IMPORT_PERIODS as period}<span>{period.label}</span>{/each}</div>
+                  <button type="submit" class="btn">Estimate first (dry run)</button>
+                </form>
+              {/if}
+
+              {#if estimate && estimate.status === 'done' && figures}
+                <h4>Estimate: {periodLabel(estimate.period)}</h4>
+                {#if estimate.changed && estimate.then}
+                  <div class="notice notice-warning" role="alert">The count changed by more than 20% since you confirmed it (it was about {estimate.then.messages} messages, it is now about {estimate.messages}). Nothing was started. Review the new numbers and confirm again.</div>
+                {/if}
+                {#if estimate.refused}
+                  <div class="notice notice-error" role="alert">Not started: {estimate.refused === 'd1_over' ? 'the database would pass its size limit' : 'the database size could not be read'}.</div>
+                {/if}
+                {#if estimate.jobId}<p class="muted">This estimate started an import.</p>{/if}
+                <dl class="facts">
+                  <div><dt>Messages</dt><dd>about {figures.messages} in {estimate.mailboxesTotal} mailboxes{estimate.errors ? ` (${estimate.errors} folders could not be counted)` : ''}</dd></div>
+                  <div><dt>Size</dt><dd>about {formatBytes(figures.bytes)}{estimate.assumedSize ? ' (some sizes were assumed)' : ''}</dd></div>
+                  <div><dt>Database (D1)</dt><dd>
+                    {#if figures.d1UsedBytes === null}
+                      size now not available; limit {formatBytes(D1_MAX_DATABASE_BYTES)}; this import adds about {formatBytes(figures.d1AddBytes)}
+                    {:else}
+                      {formatBytes(figures.d1UsedBytes)} used now, about {formatBytes(figures.d1AddBytes)} more, about {formatBytes(figures.d1AfterBytes ?? 0)} after = {figures.d1AfterPercent}% of the {formatBytes(figures.d1LimitBytes)} limit per database
+                    {/if}
+                  </dd></div>
+                  <div><dt>Storage (R2)</dt><dd>about {formatBytes(figures.r2AddBytes)} added; about {formatUsd(figures.r2UsdPerMonth)} a month before the free tier, about {formatUsd(figures.r2UsdPerMonthAfterFree)} a month if nothing else uses the 10 GB free tier (R2 Standard, $0.015 per GB-month)</dd></div>
+                  <div><dt>Time</dt><dd>{formatDuration(figures.hours)} ({figures.runs} runs of up to {GRAPH_IMPORT_MESSAGES_PER_RUN} messages, one every 5 minutes)</dd></div>
+                  <div><dt>Counted</dt><dd>{when(estimate.finishedAt)}</dd></div>
+                </dl>
+                {#if figures.d1Level === 'over'}
+                  <div class="notice notice-error" role="alert">This import would take the database past its size limit. It cannot start. Choose a shorter period.</div>
+                {:else if figures.d1Level === 'near'}
+                  <div class="notice notice-warning" role="alert">This import would bring the database near its size limit ({figures.d1AfterPercent}%). Consider a shorter period.</div>
+                {:else if figures.d1Level === 'unknown'}
+                  <div class="notice notice-warning" role="alert">The database size could not be read, so the limit could not be checked.{figures.blocked ? ' "All mail" cannot start; choose a shorter period.' : ''}</div>
+                {/if}
+                {#if imp?.mailboxes.length}
+                  <details><summary>Largest mailboxes</summary>
+                    <ul>{#each imp.mailboxes as box}<li>{box.address}: about {box.messages} messages, about {formatBytes(box.bytes)}</li>{/each}</ul>
+                  </details>
+                {/if}
+                {#if canStart && !counting}
+                  <div class="notice notice-warning" role="note">
+                    <strong>Before you start.</strong> A big import uses storage that costs money on Cloudflare, can take hours or days, and runs in the background. You can stop it at any time. Nothing already in cmail is changed or duplicated (mail is matched by its Message-ID). Imported mail is filed as read, with no rules and no notifications.
+                  </div>
+                  <form method="POST" class="import-confirm">
+                    <input type="hidden" name="action" value="graph_import_start" />
+                    <input type="hidden" name="estimateId" value={estimate.id} />
+                    <input type="hidden" name="messages" value={estimate.messages} />
+                    <input type="hidden" name="bytes" value={estimate.bytes} />
+                    <label><input type="checkbox" name="confirmed" value="yes" required /> I have read the warning and these numbers: about {figures.messages} messages, about {formatBytes(figures.bytes)}, {formatDuration(figures.hours)}.</label>
+                    <button type="submit" class="btn btn-primary">Start the import</button>
+                  </form>
+                {/if}
+              {/if}
+            {/if}
+          </div>
         {/if}
       </section>
     {/if}
@@ -261,8 +376,13 @@
   .facts dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .table-wrap { overflow-x: auto; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
-  .inline-form input[type='number'] { width: 5em; }
+  .import-box { display: grid; gap: 10px; padding-top: 8px; }
+  .import-box h3, .import-box h4 { margin: 0; font-size: 14px; font-weight: 600; }
+  .import-slider { display: grid; gap: 6px; max-width: 560px; }
+  .import-slider input[type='range'] { width: 100%; }
+  .slider-stops { display: flex; justify-content: space-between; gap: 2px; color: var(--text-muted); font-size: 11px; }
+  .import-confirm { display: grid; gap: 8px; max-width: 640px; font-size: 13px; }
+  progress { width: 100%; max-width: 560px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th, td { padding: 6px 8px; text-align: left; }
 </style>

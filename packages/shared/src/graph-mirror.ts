@@ -9,12 +9,6 @@
 
 /** org_settings keys. Absent = off. */
 export const GRAPH_MIRROR_SETTING_ENABLED = 'graph_mirror_enabled';
-/**
- * A manager's "Import older mail" request: `<days>:<epoch ms>`. The Worker
- * starts every folder again from that many days back (cap lifted to
- * GRAPH_MIRROR_IMPORT_OLDER_CAP) and records the request as done.
- */
-export const GRAPH_MIRROR_SETTING_IMPORT_OLDER = 'graph_mirror_import_older';
 
 /** Well-known Exchange folders the Graph source reads, and where each copy is filed. */
 export const GRAPH_MIRROR_FOLDERS = ['inbox', 'sentitems', 'archive'] as const;
@@ -24,9 +18,6 @@ export const GRAPH_MIRROR_DEFAULT_LOOKBACK_HOURS = 24;
 export const GRAPH_MIRROR_MAX_LOOKBACK_HOURS = 24 * 7;
 export const GRAPH_MIRROR_DEFAULT_INITIAL_CAP = 500;
 export const GRAPH_MIRROR_MAX_INITIAL_CAP = 5_000;
-/** Per folder, for a round a manager started with "Import older mail". */
-export const GRAPH_MIRROR_IMPORT_OLDER_CAP = 20_000;
-export const GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS = 90;
 
 /**
  * Shown beside the standby switch and in the docs (Rob's words, 16 Nov 2026).
@@ -38,27 +29,12 @@ export const STANDBY_SWITCH_SOONER_NOTE =
 
 export interface GraphMirrorSwitch {
   enabled: boolean;
-  /** A pending "Import older mail" request, or null. */
-  importOlder: { days: number; requestedAt: number } | null;
-}
-
-export function parseImportOlder(value: string | null | undefined): GraphMirrorSwitch['importOlder'] {
-  const match = /^(\d{1,3}):(\d{1,15})$/.exec(value ?? '');
-  if (!match) return null;
-  const days = Number(match[1]);
-  const requestedAt = Number(match[2]);
-  if (days < 1 || days > GRAPH_MIRROR_IMPORT_OLDER_MAX_DAYS || !Number.isSafeInteger(requestedAt) || requestedAt <= 0) return null;
-  return { days, requestedAt };
 }
 
 export async function loadGraphMirrorSwitch(db: D1Database): Promise<GraphMirrorSwitch> {
-  const { results } = await db.prepare('SELECT key, value FROM org_settings WHERE key IN (?, ?)')
-    .bind(GRAPH_MIRROR_SETTING_ENABLED, GRAPH_MIRROR_SETTING_IMPORT_OLDER).all<{ key: string; value: string }>();
-  const values = new Map((results ?? []).map((row) => [row.key, row.value]));
-  return {
-    enabled: values.get(GRAPH_MIRROR_SETTING_ENABLED) === 'true',
-    importOlder: parseImportOlder(values.get(GRAPH_MIRROR_SETTING_IMPORT_OLDER)),
-  };
+  const { results } = await db.prepare('SELECT key, value FROM org_settings WHERE key = ?')
+    .bind(GRAPH_MIRROR_SETTING_ENABLED).all<{ key: string; value: string }>();
+  return { enabled: (results ?? []).some((row) => row.key === GRAPH_MIRROR_SETTING_ENABLED && row.value === 'true') };
 }
 
 // ─── Configuration (email Worker vars) ───────────────────────────────────
@@ -227,6 +203,6 @@ export const GRAPH_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
   resync_required: 'A change token expired; that folder starts again from the newest mail already filed.',
   no_message_id: 'A message had no Message-ID, so it could not be filed exactly once.',
   too_large: 'The message is larger than the inbound size limit (MAX_INBOUND_BYTES).',
-  capped: 'Older mail was left out by the first-pull cap. Use "Import older mail" to bring it in.',
+  capped: 'Older mail was left out by the first-pull cap. Use "Import older mail" (finite, with an estimate first) to bring in more.',
   domains: 'The organisation\'s domains could not be read.',
 };

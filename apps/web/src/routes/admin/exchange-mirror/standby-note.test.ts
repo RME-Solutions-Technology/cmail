@@ -21,7 +21,7 @@ function mirrorOverview(enabled: boolean) {
       installed: true,
       config: { state: 'configured', folders: ['inbox', 'sentitems', 'archive'], lookbackHours: 24, initialCap: 500 },
       status: { ...emptyGraphMirrorStatus(), mailboxes: 3, lastRunAt: NOW },
-      importOlderPending: null,
+      import: { estimate: null, figures: null, mailboxes: [], job: null, requestPending: null },
     },
     enabled: false,
     colleagueSend: false,
