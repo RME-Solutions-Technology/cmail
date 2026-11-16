@@ -64,8 +64,8 @@ import {
   suppressionApiAvailable,
   unblockRecipient,
 } from '#lib/server/suppressions.js';
-import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery, sendingDomainRefusal } from '#lib/server/recipient-delivery.js';
-import { addressDomain, orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from '#lib/server/recipient-delivery.js';
+import { addressDomain, orgDomains, sendingDomainRefusal, type OrgDomains } from '@cmail/shared/org-domains';
 import {
   deriveReplyThreading,
   safeMessageId,

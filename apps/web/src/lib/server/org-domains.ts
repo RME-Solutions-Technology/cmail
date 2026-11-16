@@ -9,12 +9,12 @@ import { orgDomains, orgDomainsFrom, type OrgDomains } from '@cmail/shared/org-d
  * MAIL_DOMAIN alone (narrower, never wider) and logs. Actions that create
  * anything use orgDomains() and fail instead.
  */
-export async function orgDomainsForDisplay(env: { MAIL_DOMAIN?: unknown; DB: D1Database }): Promise<OrgDomains> {
+export async function orgDomainsForDisplay(env: { MAIL_DOMAIN?: unknown; M365_TENANT_ID?: unknown; DB: D1Database }): Promise<OrgDomains> {
   try {
     return await orgDomains(env, env.DB);
   } catch (caught) {
     console.error('Organisation domains could not be read; showing MAIL_DOMAIN only', caught instanceof Error ? caught.name : 'UnknownError');
-    return orgDomainsFrom(env.MAIL_DOMAIN, { domains: [] });
+    return orgDomainsFrom(env.MAIL_DOMAIN, { domains: [], refreshedAt: 0 });
   }
 }
 

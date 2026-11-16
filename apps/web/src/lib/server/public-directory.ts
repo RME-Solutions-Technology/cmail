@@ -1,4 +1,4 @@
-import { loadOrgDomainsCache, orgDomainsFrom } from '@cmail/shared/org-domains';
+import { loadOrgDomainsCache, orgDomainsFrom, usableOrgDomainsCache } from '@cmail/shared/org-domains';
 import { normalizeDomain } from './validation';
 
 export interface PublicDirectoryEntry {
@@ -29,13 +29,14 @@ export async function isPublicDirectoryEnabled(db: D1Database | undefined): Prom
 export async function loadPublicDirectory(
   db: D1Database | undefined,
   rawMailDomain: unknown,
+  tenantId?: unknown,
 ): Promise<PublicDirectoryResult> {
   const mailDomain = normalizeDomain(rawMailDomain);
   if (!db || !mailDomain || !await isPublicDirectoryEnabled(db)) return EMPTY_RESULT;
 
   try {
     // Work emails on any of the organisation's domains (docs/multi-domain.md).
-    const domains = orgDomainsFrom(mailDomain, await loadOrgDomainsCache(db)).domains;
+    const domains = orgDomainsFrom(mailDomain, usableOrgDomainsCache(await loadOrgDomainsCache(db), tenantId)).domains;
     // Deliberately select only the approved public projection. Login addresses,
     // user IDs, unit names, hierarchy, and internal position metadata never
     // cross this boundary. Active account and mailbox eligibility are checked

@@ -21,7 +21,7 @@ import {
   type FocusClass,
   type FocusDecision,
 } from '@cmail/shared/focused-inbox';
-import { loadOrgDomainsCache } from '@cmail/shared/org-domains';
+import { loadOrgDomainsCache, usableOrgDomainsCache } from '@cmail/shared/org-domains';
 import { messageOwnershipPredicate } from './message-access';
 
 export { focusedInboxOrgEnabled };
@@ -396,7 +396,7 @@ export type BackfillResult =
 export async function runFocusBackfill(
   db: D1Database,
   mailboxId: string,
-  options: { mailDomain?: string | null; now?: number; limit?: number } = {},
+  options: { mailDomain?: string | null; tenantId?: string | null; now?: number; limit?: number } = {},
 ): Promise<BackfillResult> {
   const now = options.now ?? Date.now();
   const limit = Math.max(1, Math.min(BACKFILL_LIMIT, Math.floor(options.limit ?? BACKFILL_LIMIT)));
@@ -477,7 +477,7 @@ export async function runFocusBackfill(
       const mailDomain = (options.mailDomain || '').trim().toLowerCase();
       // The organisation's other domains (docs/multi-domain.md); a failed read
       // fails this run like any other lookup here.
-      const orgDomains = (await loadOrgDomainsCache(db)).domains;
+      const orgDomains = usableOrgDomainsCache(await loadOrgDomainsCache(db), options.tenantId).domains;
 
       const groups = new Map<string, { decision: FocusDecision; ids: string[] }>();
       for (const row of rows) {
@@ -550,7 +550,7 @@ export function scheduleFocusBackfills(
   const { env, context } = platform;
   const run = async () => {
     for (const mailboxId of mailboxIds.slice(0, BACKFILLS_PER_REQUEST)) {
-      await runFocusBackfill(env.DB, mailboxId, { mailDomain: env.MAIL_DOMAIN });
+      await runFocusBackfill(env.DB, mailboxId, { mailDomain: env.MAIL_DOMAIN, tenantId: typeof env.M365_TENANT_ID === 'string' ? env.M365_TENANT_ID : null });
     }
   };
   context.waitUntil(run().catch(() => undefined));

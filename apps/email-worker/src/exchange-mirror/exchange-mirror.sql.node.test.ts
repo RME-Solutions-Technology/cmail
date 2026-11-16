@@ -184,7 +184,7 @@ describe('Exchange mirror: filing', () => {
       inner: innerMessage({ messageId: `<multi-${n}@example.test>` }),
     });
     const discover = (domains: string[]) => t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify({ domains, refreshedAt: 1, attemptedAt: 1, problem: '' }));
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify({ tenantId: TENANT, domains, refreshedAt: 1, attemptedAt: 1, problem: '' }));
     const inboundFor = (n: number) => t.messages()
       .filter((row) => row.direction === 'inbound' && row.message_id_header === `<multi-${n}@example.test>`)
       .map((row) => row.mailbox_id);

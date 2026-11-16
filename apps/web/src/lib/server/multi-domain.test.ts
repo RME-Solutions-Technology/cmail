@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createFixture, type Fixture } from './mcp/testing/harness';
 import { callTool, connect } from './mcp/testing/flow';
 import { loadPublicDirectory } from './public-directory';
+import { sendEmail } from './outbound';
 import { chooseOrgDomain, orgDomainsForDisplay } from './org-domains';
 import { actions as mailboxActions } from '../../routes/admin/mailboxes/+page.server';
 
@@ -11,14 +12,26 @@ import { actions as mailboxActions } from '../../routes/admin/mailboxes/+page.se
 // a second organisation domain only once the sync has "discovered" it.
 
 const OTHER = 'example.org';
+const TENANT = '00000000-0000-0000-0000-000000000000';
 
 function discover(fixture: Fixture, domains: string[]): void {
   fixture.db.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)`)
-    .run(JSON.stringify({ domains, refreshedAt: 1, attemptedAt: 1, problem: '' }));
+    .run(JSON.stringify({ tenantId: TENANT, domains, refreshedAt: 1, attemptedAt: 1, problem: '' }));
 }
 
-function mirrorOn(fixture: Fixture): void {
-  fixture.db.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('exchange_mirror_enabled', 'true')`).run();
+function mirrorAndColleagueSendOn(fixture: Fixture): void {
+  fixture.db.sqlite.exec(`INSERT INTO org_settings (key, value) VALUES ('exchange_mirror_enabled', 'true'), ('exchange_mirror_colleague_send', 'true')`);
+}
+
+function withProvider(): { fixture: Fixture; sent: Array<{ to: string[] }> } {
+  const sent: Array<{ to: string[] }> = [];
+  const service = {
+    async fetch(_url: string, init: RequestInit) {
+      sent.push(JSON.parse(String(init.body)));
+      return Response.json({ success: true, messageId: `cf-${sent.length}` });
+    },
+  };
+  return { fixture: createFixture({ OUTBOUND_PROVIDER: 'cloudflare', EMAIL_SERVICE: service }), sent };
 }
 
 const inboxCount = (fixture: Fixture, mailboxId: string) =>
@@ -54,22 +67,57 @@ describe('multi-domain: sending', () => {
     expect(inboxCount(fixture, 'mb-bob')).toBe(1);
   });
 
-  it('with the mirror on, never files a colleague copy locally on any organisation domain (Exchange must deliver it)', async () => {
+  it('with the mirror and colleague send on, sends colleagues on every organisation domain through the provider, none locally', async () => {
     for (const bobAddress of ['bob@example.test', `bob@${OTHER}`]) {
-      const fixture = createFixture();
+      const { fixture, sent } = withProvider();
       fixture.db.sqlite.prepare(`UPDATE mailboxes SET address = ? WHERE id = 'mb-bob'`).run(bobAddress);
       discover(fixture, [OTHER]);
-      mirrorOn(fixture);
+      mirrorAndColleagueSendOn(fixture);
       const { tokens } = await connect(fixture, { scopes: ['mail.send'] });
-      // The fixture has no outbound provider, so the provider send is refused
-      // before anything is stored: proof that no local copy is planned.
-      const sent = await callTool(fixture, tokens.access_token, 'send_message', { from: 'alice@example.test', to: [bobAddress], subject: 'Hi', body: 'x' });
-      expect(sent.isError).toBe(true);
+      const result = await callTool(fixture, tokens.access_token, 'send_message', { from: 'alice@example.test', to: [bobAddress], subject: 'Hi', body: 'x' });
+      expect(result.isError, result.text).toBe(false);
+      expect(sent.map((payload) => payload.to)).toEqual([[bobAddress]]);
       expect(inboxCount(fixture, 'mb-bob')).toBe(0);
     }
   });
-});
 
+  it('a mailbox left on a dropped domain cannot start sending again', async () => {
+    const { fixture, sent } = withProvider();
+    // example.net was an organisation domain once; the sync no longer lists it.
+    fixture.db.sqlite.prepare(`UPDATE mailboxes SET address = 'desk@example.net' WHERE id = 'mb-desk'`).run();
+    discover(fixture, [OTHER]);
+    const { tokens } = await connect(fixture, { scopes: ['mail.send'] });
+    const result = await callTool(fixture, tokens.access_token, 'send_message', { from: 'desk@example.net', to: ['someone@example.com'], subject: 'Hi', body: 'x' });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain('Sending from @example.net isn\'t set up yet');
+    expect(sent).toEqual([]);
+  });
+
+  it('before discovery, a mailbox on another domain sends exactly as before', async () => {
+    const { fixture, sent } = withProvider();
+    fixture.db.sqlite.prepare(`UPDATE mailboxes SET address = 'desk@example.net' WHERE id = 'mb-desk'`).run();
+    const { tokens } = await connect(fixture, { scopes: ['mail.send'] });
+    const result = await callTool(fixture, tokens.access_token, 'send_message', { from: 'desk@example.net', to: ['someone@example.com'], subject: 'Hi', body: 'x' });
+    expect(result.isError, result.text).toBe(false);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('never stops system mail (sign-in codes, invitations, notices), whatever its From', async () => {
+    const { fixture, sent } = withProvider();
+    discover(fixture, [OTHER]);
+    const base = { to: 'someone@example.com', subject: 'Code', html: '<p>x</p>', text: 'x' };
+    expect((await sendEmail({ ...base, from: `noreply@${OTHER}`, system: true }, fixture.env)).success).toBe(true);
+    const refused = await sendEmail({ ...base, from: `desk@${OTHER}` }, fixture.env);
+    expect(refused).toMatchObject({ success: false, error: expect.stringContaining('isn\'t set up yet') });
+    expect(sent).toHaveLength(1);
+  });
+  it('ignores a domain list read from another tenant', async () => {
+    const fixture = createFixture({ M365_TENANT_ID: '00000000-0000-0000-0000-00000000beef' });
+    fixture.db.sqlite.prepare(`UPDATE mailboxes SET address = ? WHERE id = 'mb-desk'`).run(`desk@${OTHER}`);
+    discover(fixture, [OTHER]);
+    expect((await orgDomainsForDisplay(fixture.env as never)).domains).toEqual(['example.test']);
+  });
+});
 describe('multi-domain: admin choices come only from discovered domains', () => {
   const manager = { id: 'user-alice', role: 'manager' as const, display_name: 'Alice Example', email: 'alice@example.test' };
   const create = (fixture: Fixture, fields: Record<string, string>) => {

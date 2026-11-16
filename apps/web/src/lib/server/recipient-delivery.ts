@@ -20,19 +20,6 @@ export async function exchangeHostedDomains(db: D1Database, domains: readonly st
   if (!domains.length) return new Set();
   return (await loadColleagueSendViaExchange(db)) ? new Set(domains) : new Set();
 }
-/**
- * Why cmail will not send from this address, or null when it may. Multi-domain
- * phase 1 (docs/multi-domain.md): mail on the organisation's other discovered
- * domains is read and filed, but sending from them waits until each domain's
- * own sending is set up. Any other From domain is left to the checks that
- * applied before (so a single-domain instance behaves exactly as it did).
- */
-export function sendingDomainRefusal(fromAddress: string, domains: { primary: string; domains: readonly string[] }): string | null {
-  const at = fromAddress.lastIndexOf('@');
-  const domain = at > 0 ? fromAddress.slice(at + 1).toLowerCase() : '';
-  if (!domain || domain === domains.primary || !domains.domains.includes(domain)) return null;
-  return `Sending from @${domain} isn't set up yet. You can read and file this mailbox's mail; send from an @${domains.primary} address for now.`;
-}
 /** Mailbox rows cmail may deliver to directly: those not on an Exchange-hosted domain. */
 export function locallyDeliverable<T extends { address: string }>(
   rows: ReadonlyArray<T>,

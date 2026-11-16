@@ -63,7 +63,7 @@ describe('Microsoft 365 alias import', () => {
     expect(t.aliases().map((row) => row.address)).not.toContain('alice@other.example');
     // The sync discovered other.example as a verified tenant domain.
     t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)`)
-      .run(JSON.stringify({ domains: ['other.example'], refreshedAt: T0, attemptedAt: T0, problem: '' }));
+      .run(JSON.stringify({ tenantId: TENANT_ID, domains: ['other.example'], refreshedAt: T0, attemptedAt: T0, problem: '' }));
     t.advance(2 * HOUR);
     t.listing([ALICE, BOB, SUPPORT]);
     await t.tick();

@@ -323,16 +323,16 @@ export async function runM365SyncTick(env: M365SyncWorkerEnv, deps: M365SyncDeps
     // read keeps the last good list, so a Graph problem never shrinks scope.
     // Its own client, so this daily read never uses the page budget below.
     const domainReader = {
-      verifiedDomains: () => new GraphClient({
+      domainList: () => new GraphClient({
         tenantId: config.tenantId,
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         fetcher: deps.fetcher,
         sleep: deps.sleep,
         now,
-      }).verifiedDomains(),
+      }).domainList(),
     };
-    const domainCache = await refreshOrgDomains(db, domainReader, now(), { force: requested });
+    const domainCache = await refreshOrgDomains(db, domainReader, now(), { tenantId: config.tenantId, force: requested });
     const domains: ReadonlySet<string> = new Set(orgDomainsFrom(config.mailDomain, domainCache).domains);
     const groupIds = [config.scopeGroupId, config.sharedGroupId].filter((id): id is string => Boolean(id));
     let d1Ops = 0;

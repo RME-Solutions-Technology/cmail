@@ -466,12 +466,12 @@ async function processReport(
   const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : []), ...(headerFrom ? [headerFrom] : [])])];
   const aliasState = await aliasImportState(env.DB, now).catch(() => 'stale' as const);
   const mailboxes = await resolveMailboxes(env.DB, lookups, aliasState === 'fresh');
-  // Once other domains have been discovered (docs/multi-domain.md), only the
-  // organisation's domains are filed: a mailbox left on a domain that is no
-  // longer one of them is counted, not filed. With MAIL_DOMAIN alone, or if
+  // Once the sync has read this tenant's domains successfully (docs/multi-domain.md),
+  // only the organisation's domains are filed: a mailbox on a domain that is
+  // not (or no longer) one of them is counted, not filed. Before that, or if
   // the list cannot be read, filing goes on by address exactly as before.
   const domains = await orgDomains(env, env.DB).then(
-    (result) => (result.domains.length > 1 ? new Set(result.domains) : null),
+    (result) => (result.discovered ? new Set(result.domains) : null),
     () => {
       console.error('Exchange mirror: organisation domains could not be read; filing by address only');
       return null;
@@ -598,7 +598,7 @@ async function processReport(
     // Only an Inbox copy is sorted; null stores nothing (switch off for the
     // mailbox, or the lookup failed) and the copy is filed as before.
     const focus = !sent && focusOn
-      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated || ownSend })
+      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, tenantId: env.M365_TENANT_ID, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated || ownSend })
       : null;
     const to = toParticipants.length ? toParticipants : [{ address: target.address, name: '' }];
     const insert = env.DB.prepare(

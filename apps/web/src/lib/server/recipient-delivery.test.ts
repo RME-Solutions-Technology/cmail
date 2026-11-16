@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery, sendingDomainRefusal } from './recipient-delivery';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from './recipient-delivery';
 
 describe('recipient delivery planning', () => {
   it('keeps purely internal delivery on the direct local path', () => {
@@ -231,24 +231,5 @@ describe('Exchange-hosted recipients (mirror and "Send colleague mail through Ex
       providerRecipients: ['alice@example.com'],
       localRecipients: [],
     });
-  });
-});
-
-describe('sending domain (multi-domain phase 1)', () => {
-  const domains = { primary: 'example.com', domains: ['example.com', 'example.org'] };
-  it('allows the primary domain, case-insensitively', () => {
-    expect(sendingDomainRefusal('pat@example.com', domains)).toBeNull();
-    expect(sendingDomainRefusal('Pat@Example.COM', domains)).toBeNull();
-  });
-
-  it('refuses another organisation domain with a clear message', () => {
-    expect(sendingDomainRefusal('desk@example.org', domains)).toBe(
-      "Sending from @example.org isn't set up yet. You can read and file this mailbox's mail; send from an @example.com address for now.",
-    );
-  });
-
-  it('leaves any domain that is not a discovered one to the old checks (single-domain unchanged)', () => {
-    expect(sendingDomainRefusal('legacy@example.net', domains)).toBeNull();
-    expect(sendingDomainRefusal('legacy@example.net', { primary: 'example.com', domains: ['example.com'] })).toBeNull();
   });
 });

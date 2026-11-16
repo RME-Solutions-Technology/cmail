@@ -170,7 +170,7 @@ async function deliverInvite(
 
   try {
     const result = await sendEmail(
-      { from: fromAddress, fromName: settings.systemFromName, to: user.email, subject, html, text },
+      { from: fromAddress, fromName: settings.systemFromName, to: user.email, subject, html, text, system: true },
       envRecord,
     );
     if (!result.success) {

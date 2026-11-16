@@ -53,7 +53,7 @@ export interface FakeGraph {
   purposeReads: string[];
   tokenReplies: Reply[];
   /** The tenant's domains (GET /domains). Default: DOMAIN and an initial domain, both verified. */
-  domains: Array<{ id: string; isVerified: boolean; isInitial?: boolean }>;
+  domains: Array<{ id: string; isVerified: boolean; isInitial?: boolean; supportedServices?: string[] }>;
 }
 
 export function deltaUrl(token: string) {
@@ -69,8 +69,8 @@ export function fakeGraph(): FakeGraph {
   const calls: string[] = [];
   const tokenReplies: Reply[] = [];
   const domains: FakeGraph['domains'] = [
-    { id: DOMAIN, isVerified: true },
-    { id: 'tenant.onmicrosoft.com', isVerified: true, isInitial: true },
+    { id: DOMAIN, isVerified: true, supportedServices: ['Email'] },
+    { id: 'tenant.onmicrosoft.com', isVerified: true, isInitial: true, supportedServices: ['Email'] },
   ];
 
   function chain(start: string, data: GraphUser[][], prefix: string, finalToken: string) {

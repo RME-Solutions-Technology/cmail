@@ -36,17 +36,23 @@ tenant. Sending from domains other than `MAIL_DOMAIN` is not built yet
 Domains are discovered and proven, never typed in by a manager:
 
 1. **`MAIL_DOMAIN`**, the primary domain, always first.
-2. **The Microsoft 365 tenant's verified domains**, when the
+2. **The Microsoft 365 tenant's verified mail domains**, when the
    [Microsoft 365 sync](m365-sync.md) is on and its app has `Domain.Read.All`.
    The sync reads them with Microsoft Graph
    [`GET /domains`](https://learn.microsoft.com/en-us/graph/api/domain-list)
-   and keeps those with `isVerified`. A domain is verified in a tenant only
-   after its owner proves it with a DNS record, so this list is proof of
-   ownership.
+   and keeps those that are verified (`isVerified`), not the tenant's initial
+   domain (`isInitial`), and set up for mail (`supportedServices` includes
+   `Email`). A domain is verified in a tenant only after its owner proves it
+   with a DNS record, so this list is proof of ownership.
 
 Details:
 
-- The tenant's initial `*.onmicrosoft.com` domain is never included.
+- The tenant's initial domain and any `*.onmicrosoft.com` domain are never
+  included.
+- **The list belongs to one tenant.** It is stored with the tenant id it was
+  read from. A list from another tenant is never used: the sync replaces it
+  at once, and the web app and the mirror ignore it wherever `M365_TENANT_ID`
+  is set (set it on the web app too, as for Microsoft first sign-in).
 - The sync reads the list at most once a day, and again on **Sync now**. It
   reads in dry run too, so a dry run report already covers every domain.
   The list is live from its first read, even in dry run: it only ever adds
@@ -61,9 +67,13 @@ Details:
   good list is kept, the problem shows in Admin, and the read is tried again
   within an hour. Throttling, network and sign-in failures also back the
   whole sync off, as any Graph failure does.
-- **Only a successful read that no longer lists a domain removes it.** Every
-  change to the list is written to the audit log
-  (`m365_sync.domains_changed`, with the domains added and removed).
+- **A dropped domain goes only after two reads a day apart.** A successful
+  read that no longer lists a domain marks it missing but keeps it; it is
+  removed only when a read at least a day later still leaves it out (if it
+  comes back meanwhile, the mark is cleared). Only then are the people on it
+  out of the sync's scope (paused, under the usual mass-pause brake), so one
+  odd answer never pauses anyone. Every change to the list is written to the
+  audit log (`m365_sync.domains_changed`, with the domains added and removed).
 - **Turning the sync off freezes the list**, as it freezes the sync's links.
 - With no Microsoft 365 sync, the list is `MAIL_DOMAIN` alone, and cmail
   behaves exactly as before.
@@ -81,21 +91,28 @@ stays under the switch it already had.
 |---|---|---|
 | [Microsoft 365 sync](m365-sync.md) | People and shared mailboxes whose primary address is on any organisation domain get accounts and mailboxes. Shared mailbox detection and the group checks cover them too. | Microsoft 365 sync |
 | Alias import ([Exchange mirror](exchange-mirror.md#aliases)) | `smtp:` addresses on every organisation domain become aliases. | Alias import |
-| Exchange mirror filing | Journal copies are filed for mailboxes on every organisation domain. Once other domains have been discovered, a mailbox on a domain that is not one of them is counted as unmatched (problem `unmatched_domain`), never filed. With `MAIL_DOMAIN` alone, filing is by address exactly as before. | Exchange mirror |
-| Sending to colleagues | With the mirror on, colleagues on every organisation domain are sent through the provider, so Exchange and Outlook get the message ([details](exchange-mirror.md#mail-sent-from-cmail-to-colleagues)). With the mirror off, delivery is local as before. | Exchange mirror |
-| Admin > Mailboxes, Admin > People | A **domain picker** appears when there is more than one domain. A typed full address must be on one of them. | none |
+| Exchange mirror filing | Journal copies are filed for mailboxes on every organisation domain. Once the sync has read the tenant's domains successfully, a mailbox on a domain that is not one of them is counted as unmatched (problem `unmatched_domain`), never filed. Before that, filing is by address exactly as before. | Exchange mirror |
+| Sending to colleagues | With **Send colleague mail through Exchange** on, colleagues on every organisation domain are sent through the provider, so Exchange and Outlook get the message ([details](exchange-mirror.md#mail-sent-from-cmail-to-colleagues)). Otherwise delivery is local as before. | Exchange mirror + Send colleague mail through Exchange |
+| Admin > Mailboxes, Admin > People | A **domain picker** appears when there is more than one domain. A typed full address must be on one of them. The pickers say that only `MAIL_DOMAIN` can send for now. | none |
 | Delegates and the org chart | People whose personal mailbox is on any organisation domain can be delegates; work emails may use any of them. | none |
 | Public directory ([manager handbook](manager-handbook.md)) | Public work emails on any organisation domain are listed. | Public directory |
 | [Focused Inbox](focused-inbox.md) | A proven sender (DMARC pass at the trusted boundary, an Exchange-authenticated internal submission, or internal cmail mail) on any organisation domain counts as a colleague. | Focused Inbox |
 
 ## What does not change
 
-- **Sending from other domains.** A mailbox on another discovered domain can
-  be read, filed and delegated, but a send from it is refused with "Sending
-  from @domain isn't set up yet". (A mailbox on a domain that was never
-  discovered is left to the checks that applied before.) Sending needs that domain onboarded to
-  Cloudflare Email Sending (a DNS change) and a verified test first; that is
-  a later step. The Message-ID already follows the From domain.
+- **Sending from other domains (phase 1).** Once the tenant's domains have
+  been read, cmail sends only from `MAIL_DOMAIN`. A mailbox on another domain
+  (a person's own mailbox or a shared one, including one left on a domain that
+  was dropped) can be read, filed and delegated, but every send from it is
+  refused with "Sending from @domain isn't set up yet": compose, AI app
+  sends, meeting invitations, replies and cancellations. A new meeting is
+  refused before it is saved. System mail cmail sends from its configured
+  system address (sign-in codes, invitations, notices) is never stopped.
+  People whose own mailbox is on another domain therefore can't send from it
+  yet. Before the first successful read nothing changes. Sending needs each
+  domain onboarded to Cloudflare Email Sending (a DNS change) and a verified
+  test first; that is a later step. The Message-ID already follows the From
+  domain.
 - **Mail arriving by Cloudflare Email Routing** (cmail as the primary mail
   host) is for the domains whose MX points at cmail, as before.
 - **Standby test address, probe and switch** work on `MAIL_DOMAIN` only.
@@ -113,8 +130,10 @@ stays under the switch it already had.
   tenant. A manager cannot add one, and request values are checked against
   the list on the server (a tampered domain picker is refused).
 - **No cross-domain spoofing.** A user can send only from a mailbox they
-  hold with Send as or Full access, and never from another discovered domain
-  for now.
+  hold with Send as or Full access, and, once domains are discovered, only
+  from `MAIL_DOMAIN`. The check is in the one function every provider send
+  goes through, so no mailbox send path can skip it (only system mail from
+  the configured system address is marked exempt).
 - **"Colleague" needs proof.** Focused Inbox treats a sender as internal only
   with a proven From, whatever the domain.
 - **Fail closed.** If the list cannot be read, sends fail with the draft
@@ -144,8 +163,8 @@ There is no separate switch. With the Microsoft 365 sync already working:
 
 - **Stop discovering:** remove `Domain.Read.All` from the sync app. The list
   is then frozen at its last value (Admin shows "can't be read").
-- **Drop a domain:** remove it from the tenant; the next successful read
-  removes it from the list (audited).
+- **Drop a domain:** remove it from the tenant; it leaves the list after two
+  successful reads at least a day apart (audited).
 - **Back to `MAIL_DOMAIN` only:** with the permission removed, delete the
   `m365_verified_domains` row from `org_settings` in D1 (a production data
   change: owner's yes first). Accounts and mailboxes already created stay;

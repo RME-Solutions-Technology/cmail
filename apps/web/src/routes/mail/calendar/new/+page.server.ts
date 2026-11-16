@@ -13,7 +13,7 @@ import { audit, generateId } from '#lib/server/db.js';
 import { publicRuntimeConfig } from '#lib/server/config.js';
 import { formatEventRange } from '#lib/dates.js';
 import { zonedDateTimeToUtcIso } from '#lib/zoned-time.js';
-import { sanitizeSenderDisplayName, sendEmail } from '#lib/server/outbound.js';
+import { outboundFromRefusal, sanitizeSenderDisplayName, sendEmail } from '#lib/server/outbound.js';
 import { normalizeEmail, parseRecipientList } from '#lib/server/validation.js';
 import { consumeCalendarOutboundLimits } from '#lib/server/calendar-outbound.js';
 
@@ -93,6 +93,9 @@ export const actions: Actions = {
        WHERE m.address = ? AND ma.user_id = ? AND ma.permissions IN ('send-as', 'full') AND m.status = 'active'`,
     ).bind(fromAddress, locals.user.id).first<{ id: string; address: string; display_name: string }>();
     if (!mailbox) return fail(403, { error: 'You don\'t have permission to organise from this address' });
+    // Refused before the meeting is saved (sendEmail refuses it too).
+    const fromRefused = await outboundFromRefusal(mailbox.address, envRecord);
+    if (fromRefused) return fail(403, { error: fromRefused });
 
     const outboundLimits = await consumeCalendarOutboundLimits(
       env.DB,

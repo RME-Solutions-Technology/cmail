@@ -7,7 +7,19 @@ import {
   getEligibleMailboxAssignee,
 } from '#lib/server/mailbox-assignees.js';
 import { orgDomainsForDisplay } from '#lib/server/org-domains.js';
-import { orgDomains } from '@cmail/shared/org-domains';
+import { orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
+
+const DOMAINS_UNAVAILABLE = 'Mail domains are temporarily unavailable. Try again shortly.';
+
+/** The organisation's domains for an action, or null (logged) when they cannot be read. */
+async function orgDomainsForAction(env: { MAIL_DOMAIN?: unknown; M365_TENANT_ID?: unknown; DB: D1Database }): Promise<OrgDomains | null> {
+  try {
+    return await orgDomains(env, env.DB);
+  } catch (caught) {
+    console.error('Organisation domains could not be read for an org chart action', caught instanceof Error ? caught.name : 'UnknownError');
+    return null;
+  }
+}
 import { isAddressAtDomain, normalizeDomain, normalizeEmail } from '#lib/server/validation.js';
 
 const ID_RX = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -682,7 +694,9 @@ export const actions: Actions = {
     const data = await request.formData();
     const input = parsePositionInput(data);
     if (!input) return fail(400, { error: 'Enter valid position details' });
-    const referenceError = await validatePositionReferences(env.DB, (await orgDomains(env, env.DB)).domains, input);
+    const domains = await orgDomainsForAction(env);
+    if (!domains) return fail(503, { error: DOMAINS_UNAVAILABLE });
+    const referenceError = await validatePositionReferences(env.DB, domains.domains, input);
     if (referenceError) return fail(400, { error: referenceError });
 
     const id = generateId();
@@ -729,7 +743,9 @@ export const actions: Actions = {
       'SELECT id, user_id, work_email FROM organization_positions WHERE id = ?',
     ).bind(id).first<{ id: string; user_id: string | null; work_email: string }>();
     if (!existing) return fail(404, { error: 'Position not found' });
-    const referenceError = await validatePositionReferences(env.DB, (await orgDomains(env, env.DB)).domains, input, existing);
+    const domains = await orgDomainsForAction(env);
+    if (!domains) return fail(503, { error: DOMAINS_UNAVAILABLE });
+    const referenceError = await validatePositionReferences(env.DB, domains.domains, input, existing);
     if (referenceError) return fail(400, { error: referenceError });
 
     try {
@@ -812,7 +828,8 @@ export const actions: Actions = {
 
     // New shared mailboxes here use MAIL_DOMAIN; delegates may be on any
     // organisation domain (docs/multi-domain.md).
-    const domains = await orgDomains(env, env.DB);
+    const domains = await orgDomainsForAction(env);
+    if (!domains) return fail(503, { error: DOMAINS_UNAVAILABLE });
     const domain = domains.primary;
     if (!domain) return fail(503, { error: 'MAIL_DOMAIN is not configured' });
     const domainsParam = assigneeDomainsParam(domains.domains) || '[]';

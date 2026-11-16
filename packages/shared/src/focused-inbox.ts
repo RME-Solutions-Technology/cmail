@@ -31,22 +31,38 @@ export const ORG_SETTING_FOCUSED_INBOX = 'focused_inbox_enabled';
  */
 export const FOCUS_ORG_DOMAINS_SETTING = 'm365_verified_domains';
 
-/** The domains from that setting's JSON, lower case; [] for anything malformed. */
-export function focusOrgDomains(raw: string | null | undefined): string[] {
+const FOCUS_DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
+const FOCUS_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * The organisation's discovered domains from that setting's JSON, by the same
+ * rules as parseOrgDomainsCache + usableOrgDomainsCache in org-domains.ts
+ * (a test checks they agree): valid lower-case domains, never
+ * *.onmicrosoft.com, sorted, unique, at most 200; [] when malformed, when the
+ * list names no tenant, or when `tenantId` (M365_TENANT_ID) names another.
+ */
+export function focusOrgDomains(raw: string | null | undefined, tenantId?: string | null): string[] {
   if (!raw) return [];
+  let parsed: { domains?: unknown; tenantId?: unknown } | null;
   try {
-    const parsed = JSON.parse(raw) as { domains?: unknown } | null;
-    if (!parsed || !Array.isArray(parsed.domains)) return [];
-    return parsed.domains
-      .filter((value): value is string => typeof value === 'string' && value.length <= 253)
-      .map((value) => value.toLowerCase())
-      .slice(0, 200);
+    parsed = JSON.parse(raw) as { domains?: unknown; tenantId?: unknown } | null;
   } catch {
     // A corrupt value only means no extra domains (MAIL_DOMAIN alone).
     return [];
   }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.domains)) return [];
+  const listTenant = typeof parsed.tenantId === 'string' ? parsed.tenantId.trim().toLowerCase() : '';
+  const expected = (tenantId || '').trim().toLowerCase();
+  if (!FOCUS_GUID.test(listTenant) || (FOCUS_GUID.test(expected) && listTenant !== expected)) return [];
+  const out = new Set<string>();
+  for (const value of parsed.domains) {
+    if (typeof value !== 'string') continue;
+    const domain = value.trim().toLowerCase();
+    if (!FOCUS_DOMAIN.test(domain) || domain === 'onmicrosoft.com' || domain.endsWith('.onmicrosoft.com')) continue;
+    out.add(domain);
+  }
+  return [...out].sort().slice(0, 200);
 }
-
 export const FOCUS_CLASSES = ['focused', 'other'] as const;
 export type FocusClass = (typeof FOCUS_CLASSES)[number];
 
@@ -407,6 +423,8 @@ export interface DeliveryFocusInput {
   sender: string;
   /** MAIL_DOMAIN of the deployment. */
   mailDomain?: string | null;
+  /** M365_TENANT_ID of the deployment: a discovered domain list from another tenant is ignored. */
+  tenantId?: string | null;
   /** Parsed header list, or null when the path has none. */
   headers: readonly HeaderLike[] | null | undefined;
   /** See FocusFacts.senderAuthenticated. Unproven senders are never correspondents or internal. */
@@ -446,7 +464,7 @@ export async function decideFocusAtDelivery(db: D1Database, input: DeliveryFocus
     return classifyFocus({
       sender,
       mailDomain,
-      orgDomains: focusOrgDomains(row.org_domains),
+      orgDomains: focusOrgDomains(row.org_domains, input.tenantId),
       signals,
       senderAuthenticated,
       addressOverride: isFocusClass(row.address_class) ? row.address_class : null,

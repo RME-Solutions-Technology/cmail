@@ -176,7 +176,7 @@ async function sendUserNotice(
     });
     return;
   }
-  const result = await sendEmail({ from: settings.systemEmail, fromName: settings.systemFromName, to: user.email, ...message }, envRecord);
+  const result = await sendEmail({ from: settings.systemEmail, fromName: settings.systemFromName, to: user.email, ...message, system: true }, envRecord);
   if (!result.success) {
     await audit(env.DB, { event_type: 'email.failed', actor_id: user.id, target: user.id, detail: `Passkey notice not delivered: ${message.subject.slice(0, 120)}` });
   }

@@ -154,6 +154,9 @@
           {data.mailDomain
             ? 'Required. Use letters, numbers, dots, underscores, or hyphens.'
             : 'Set MAIL_DOMAIN before creating personal mailboxes.'}
+          {#if data.mailDomain && data.mailDomains.length > 1}
+            People whose mailbox is on another domain can receive and file mail, but can't send from it yet: only @{data.mailDomain} can send for now.
+          {/if}
         </small>
       </div>
       <div class="field compact-field">

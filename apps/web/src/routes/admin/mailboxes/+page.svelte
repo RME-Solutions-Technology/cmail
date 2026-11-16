@@ -190,7 +190,7 @@
                 </div>
                 <small id="new-mailbox-hint">
                   {#if data.mailDomains.length > 1}
-                    Choose one of your organisation's domains. Letters, numbers, dots, underscores, and hyphens allowed.
+                    Choose one of your organisation's domains. Letters, numbers, dots, underscores, and hyphens allowed. Mail can be sent only from @{data.mailDomain} for now; a mailbox on another domain can receive and file mail but not send.
                   {:else}
                     Ends in @{data.mailDomain}. Letters, numbers, dots, underscores, and hyphens allowed.
                   {/if}

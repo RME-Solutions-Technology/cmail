@@ -25,7 +25,7 @@ function requestEvent(options: {
           return { results: options.rows || [] };
         },
         async first() {
-          return options.orgDomains ? { value: JSON.stringify({ domains: options.orgDomains }) } : null;
+          return options.orgDomains ? { value: JSON.stringify({ tenantId: '00000000-0000-0000-0000-000000000000', domains: options.orgDomains, refreshedAt: 1 }) } : null;
         },
       };
       return statement;

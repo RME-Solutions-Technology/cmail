@@ -137,7 +137,10 @@ describe('classifyFocus: each signal', () => {
     assert.equal(focusScansNeeded({ sender: 'pat@example.net', mailDomain: 'example.test', orgDomains, signals: NONE, senderAuthenticated: true }).frequent, false);
   });
   it('reads the organisation domains setting defensively', () => {
-    assert.deepEqual(focusOrgDomains(JSON.stringify({ domains: ['Example.NET', 7] })), ['example.net']);
+    const tenantId = '00000000-0000-0000-0000-000000000000';
+    assert.deepEqual(focusOrgDomains(JSON.stringify({ tenantId, domains: ['Example.NET', 7] })), ['example.net']);
+    assert.deepEqual(focusOrgDomains(JSON.stringify({ domains: ['example.net'] })), []);
+    assert.deepEqual(focusOrgDomains(JSON.stringify({ tenantId, domains: ['example.net'] }), '00000000-0000-0000-0000-00000000beef'), []);
     assert.deepEqual(focusOrgDomains('not json'), []);
     assert.deepEqual(focusOrgDomains(null), []);
     assert.deepEqual(focusOrgDomains('{"domains":"x"}'), []);
