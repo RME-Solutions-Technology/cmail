@@ -153,18 +153,23 @@ describe('journal report trust', () => {
     const theirs: [string, string] = ['x-ms-exchange-crosstenant-id', OTHER];
     const ar = (value: string): [string, string] => ['authentication-results', `mx.example.test; ${value}`];
     const ndr = 'journal-ndr@ndr.example.test';
+    const internal: [string, string] = ['x-ms-exchange-crosstenant-authas', 'Internal'];
 
     // a. The tenant's own DKIM passes, whatever the From says.
     expect(verifyJournalReport(headers([ar('spf=none; dkim=pass header.d=example.test; dmarc=fail header.from=partner.example'), from]), config, ndr)).toEqual({ ok: true });
-    // b. SPF pass for the NDR domain plus our tenant id.
-    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none; dmarc=none`), from, theirs, ours]), config, ndr)).toEqual({ ok: true });
-    // b without our tenant id, or with SPF for another domain, or the envelope disagreeing: refused.
-    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([ar('spf=pass smtp.mailfrom=bounce@partner.example; dkim=none'), from, ours]), config, 'bounce@partner.example')).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, ours]), config, 'x@evil.example')).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([ar('spf=pass smtp.mailfrom=x@ndr.example.test_; dkim=none'), from, ours]), config, null)).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([ar(`spf=softfail smtp.mailfrom=${ndr}`), from, ours]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
-    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}`), from, ours]), { ...config, ndrDomain: null }, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    // b. SPF pass for the NDR domain plus AuthAs Internal (tenant ids, when present, include ours).
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none; dmarc=none`), from, internal, theirs, ours]), config, ndr)).toEqual({ ok: true });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, internal]), config, ndr)).toEqual({ ok: true });
+    // b without AuthAs Internal (missing, or one instance not Internal), with a foreign tenant id only,
+    // with SPF for another domain, or the envelope disagreeing: refused.
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, ours]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, internal, ['x-ms-exchange-crosstenant-authas', 'Anonymous']]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, internal, theirs]), config, ndr)).toEqual({ ok: false, reason: 'wrong_tenant' });
+    expect(verifyJournalReport(headers([ar('spf=pass smtp.mailfrom=bounce@partner.example; dkim=none'), from, internal]), config, 'bounce@partner.example')).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}; dkim=none`), from, internal]), config, 'x@evil.example')).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar('spf=pass smtp.mailfrom=x@ndr.example.test_; dkim=none'), from, internal]), config, null)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=softfail smtp.mailfrom=${ndr}`), from, internal]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
+    expect(verifyJournalReport(headers([ar(`spf=pass smtp.mailfrom=${ndr}`), from, internal]), { ...config, ndrDomain: null }, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
     // DMARC on the From is not used at all, even for a tenant From domain.
     expect(verifyJournalReport(headers([ar('spf=none; dkim=none; dmarc=pass header.from=example.test'), ['from', 'a@example.test'], ours]), config, ndr)).toEqual({ ok: false, reason: 'auth_failed' });
     // DKIM by another domain, or a tenant-domain prefix, is not the tenant's.
@@ -188,10 +193,11 @@ describe('journal report trust', () => {
     expect(verifyJournalReport(headers([dkim]), config)).toEqual({ ok: true });
   });
 
-  it('without authentication, needs this tenant id on the report', () => {
+  it('without authentication, the tenant id header is optional but, when present, must include ours', () => {
     const open = { ...config, requireAuth: false };
     expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', TENANT]]), open)).toEqual({ ok: true });
-    expect(verifyJournalReport(headers([]), open)).toEqual({ ok: false, reason: 'wrong_tenant' });
+    // Live: some reports carry no tenant id at all. Not a reason to refuse.
+    expect(verifyJournalReport(headers([]), open)).toEqual({ ok: true });
     expect(verifyJournalReport(headers([['x-ms-exchange-crosstenant-id', TENANT]]), { ...open, tenantId: null })).toEqual({ ok: false, reason: 'wrong_tenant' });
     // The live refusal: a report from another Microsoft 365 organisation's
     // sender carries their tenant id as well as ours. It is ours.

@@ -304,11 +304,11 @@ describe('Exchange mirror: refused reports', () => {
     expect(t.messages().filter((row) => row.direction === 'inbound')).toHaveLength(1);
   });
 
-  it('with M365_JOURNAL_REQUIRE_AUTH "false", still needs the journal header and this tenant id on the report', async () => {
+  it('with M365_JOURNAL_REQUIRE_AUTH "false", still needs the journal header, and a tenant id when present must be ours', async () => {
     const t = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false', INBOUND_AUTHSERV_ID: '' } });
     expect((await t.deliver(journalReport({ authenticationResults: null }))).message.setReject).not.toHaveBeenCalled();
     expect((await t.deliver(journalReport({ authenticationResults: null, tenantHeader: OTHER_TENANT }))).message.setReject).toHaveBeenCalled();
-    expect((await t.deliver(journalReport({ authenticationResults: null, tenantHeader: null }))).message.setReject).toHaveBeenCalled();
+    expect((await t.deliver(journalReport({ authenticationResults: null, tenantHeader: null }))).message.setReject).not.toHaveBeenCalled();
     expect((await t.deliver(journalReport({ authenticationResults: null, journalHeader: false }))).message.setReject).toHaveBeenCalled();
     // Not allowed at all without M365_TENANT_ID.
     const untied = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: 'false', INBOUND_AUTHSERV_ID: '', M365_TENANT_ID: '' } });
@@ -325,7 +325,7 @@ describe('Exchange mirror: live-shaped reports', () => {
     inner: innerMessage({ from: 'Pat Partner <pat@partner.example>', messageId: '<ext-1@partner.example>', internal: false, headers: { 'X-MS-Exchange-CrossTenant-Id': OTHER_TENANT } }),
     envelope: ['Sender: pat@partner.example', 'Subject: Quarterly plan', 'Message-Id: <ext-1@partner.example>', 'Recipient: bob@example.test'],
     authenticationResults: `${AUTHSERV}; spf=pass smtp.mailfrom=${NDR}; dkim=none; dmarc=fail header.from=partner.example`,
-    extraHeaders: { 'X-MS-Exchange-CrossTenant-Id': TENANT },
+    extraHeaders: { 'X-MS-Exchange-CrossTenant-Id': TENANT, 'X-MS-Exchange-CrossTenant-AuthAs': 'Internal' },
     tenantHeader: OTHER_TENANT,
   });
 
@@ -369,6 +369,51 @@ describe('Exchange mirror: live-shaped reports', () => {
     for (const forbidden of ['Quarterly plan', 'journal-ndr@', 'pat@', 'bh=', 'b=def', 'Pat Partner', 'Date:', 'Message-ID']) {
       expect(detail, forbidden).not.toContain(forbidden);
     }
+  });
+});
+
+describe('Exchange mirror: the live header set (16 Nov 2026 diagnostic)', () => {
+  // Exactly what a live outer report carried: Cloudflare's record with
+  // dmarc=fail for the external From, spf=pass for the NDR domain (recorded
+  // as a bare domain) and arc=none; X-MS-Journal-Report; CrossTenant-AuthSource,
+  // -AuthAs Internal, -OriginalArrivalTime, -Network-Message-Id and
+  // -FromEntityHeader Hosted. No CrossTenant-Id and no DKIM-Signature.
+  const live = (tenant: 'absent' | 'ours' | 'foreign') => journalReport({
+    inner: innerMessage({ from: 'Pat Partner <pat@partner.example>', messageId: '<live-1@partner.example>', internal: false }),
+    envelope: ['Sender: pat@partner.example', 'Subject: Quarterly plan', 'Message-Id: <live-1@partner.example>', 'Recipient: bob@example.test'],
+    authenticationResults: `${AUTHSERV}; dmarc=fail header.from=partner.example; spf=pass smtp.mailfrom=${NDR_DOMAIN}; arc=none`,
+    tenantHeader: tenant === 'absent' ? null : tenant === 'ours' ? TENANT : OTHER_TENANT,
+    extraHeaders: {
+      'X-MS-Exchange-CrossTenant-AuthSource': 'SERVER01.example.prod.outlook.test',
+      'X-MS-Exchange-CrossTenant-AuthAs': 'Internal',
+      'X-MS-Exchange-CrossTenant-OriginalArrivalTime': '16 Nov 2026 01:02:03.0000 (UTC)',
+      'X-MS-Exchange-CrossTenant-Network-Message-Id': '00000000-0000-0000-0000-0000000000ab',
+      'X-MS-Exchange-CrossTenant-FromEntityHeader': 'Hosted',
+    },
+  });
+
+  for (const requireAuth of ['true', 'false']) {
+    it(`REQUIRE_AUTH=${requireAuth}: filed with no tenant id, filed with ours, refused with only a foreign one`, async () => {
+      for (const [tenant, filed] of [['absent', true], ['ours', true], ['foreign', false]] as const) {
+        const t = setup({ env: { M365_JOURNAL_REQUIRE_AUTH: requireAuth } });
+        const { message } = await t.deliver(live(tenant), { from: `journal-ndr@${NDR_DOMAIN}` });
+        if (filed) {
+          expect(message.setReject, tenant).not.toHaveBeenCalled();
+          expect(t.messages(), tenant).toHaveLength(1);
+        } else {
+          expect(message.setReject, tenant).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+          expect(t.days()[0]).toMatchObject({ last_problem: 'wrong_tenant' });
+        }
+      }
+    });
+  }
+
+  it('REQUIRE_AUTH=true: the same report without AuthAs Internal is refused', async () => {
+    const t = setup();
+    const report = live('absent').replace('X-MS-Exchange-CrossTenant-AuthAs: Internal', 'X-MS-Exchange-CrossTenant-AuthAs: Anonymous');
+    const { message } = await t.deliver(report, { from: `journal-ndr@${NDR_DOMAIN}` });
+    expect(message.setReject).toHaveBeenCalledWith(JOURNAL_REJECT_RESPONSE);
+    expect(t.days()[0]).toMatchObject({ last_problem: 'auth_failed' });
   });
 });
 

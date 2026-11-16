@@ -20,10 +20,11 @@
 //    token leaks, rotate it (docs/exchange-mirror.md, "Rotating the journal
 //    token").
 // 2. It carries the X-MS-Journal-Report header. Any sender can add it.
-// 3. Tenant: the outer report's X-MS-Exchange-CrossTenant-Id headers. A
-//    report can carry more than one (seen live: the original sender's tenant
-//    and ours), so the report passes when OUR id is among them, and a report
-//    with only other tenants' ids is refused. This header is
+// 3. Tenant: the outer report's X-MS-Exchange-CrossTenant-Id headers, which
+//    are OPTIONAL (seen live: some reports carry none). When present they
+//    must include OUR id (seen live: the original sender's tenant and ours
+//    together); only other tenants' ids is refused. Absent is not a reason
+//    to refuse. This header is
 //    ATTACKER-SETTABLE: anyone sending to the journal address can write our
 //    tenant id into it. It filters honest mistakes (another tenant's journal
 //    rule pointed here); it is not proof. X-MS-Exchange-Organization-*
@@ -42,13 +43,15 @@
 //       the token. Or
 //    b. an SPF pass recorded for the envelope MAIL FROM (smtp.mailfrom in
 //       that record; the SMTP envelope must agree) whose domain is
-//       M365_JOURNAL_NDR_DOMAIN, plus our tenant id on the report. This
-//       holds only if Exchange Online refuses to let other tenants send with
-//       a MAIL FROM on our NDR domain, which Microsoft does not document
+//       M365_JOURNAL_NDR_DOMAIN, plus X-MS-Exchange-CrossTenant-AuthAs
+//       "Internal" on the outer report (every instance, at least one; seen
+//       live on journal reports) and the tenant check in 3. This holds only
+//       if Exchange Online refuses to let other tenants send with a MAIL
+//       FROM on our NDR domain, which Microsoft does not document
 //       (unverified); its sending IPs are shared by every tenant, and the
-//       tenant id header (3) is attacker-settable.
-//    With "false", only 1-3 apply and our tenant id must be on the report:
-//    then the token is the only real protection.
+//       AuthAs and tenant id headers are attacker-settable.
+//    With "false", only 1-3 apply: then the token is the only real
+//    protection.
 import { parseAuthenticationIdentities, parseAuthenticationResults } from '../authentication-results';
 import type { ExchangeMirrorConfig } from '@cmail/shared/exchange-mirror';
 
@@ -147,14 +150,14 @@ export function verifyJournalReport(
 ): VerifyResult {
   if (!headerValues(headers, 'x-ms-journal-report').length) return { ok: false, reason: 'not_journal_report' };
 
+  // The tenant id header is optional on the outer report (live: sometimes
+  // absent). When present, it must include our id; only other ids: refused.
   const tenants = headerValues(headers, 'x-ms-exchange-crosstenant-id').map((value) => value.trim().toLowerCase());
-  const ourTenant = Boolean(config.tenantId) && tenants.includes(config.tenantId as string);
-  if (config.tenantId && tenants.length && !ourTenant) return { ok: false, reason: 'wrong_tenant' };
+  if (tenants.length && (!config.tenantId || !tenants.includes(config.tenantId))) return { ok: false, reason: 'wrong_tenant' };
 
-  if (!config.requireAuth) {
-    // The configuration refuses this mode without M365_TENANT_ID; our id is required.
-    return ourTenant ? { ok: true } : { ok: false, reason: 'wrong_tenant' };
-  }
+  // With authentication off, only the token, the journal header and the
+  // tenant check above apply (the token is the boundary).
+  if (!config.requireAuth) return { ok: true };
   // Only the first Authentication-Results header is the boundary's own.
   const first = headerValues(headers, 'authentication-results')[0];
   const identities = parseAuthenticationIdentities(first ?? null, config.authservId);
@@ -163,9 +166,13 @@ export function verifyJournalReport(
   // a. The tenant's own DKIM, independent of the From header.
   const allowed = new Set(config.senderDomains);
   if (identities.dkimPassDomains.some((item) => allowed.has(item))) return { ok: true };
-  // b. SPF for the configured NDR domain, plus our tenant id. The domain the
-  //    SPF verdict is about must also be the envelope's, when both are known.
-  if (config.ndrDomain && identities.spf === 'pass' && ourTenant) {
+  // b. SPF for the configured NDR domain, plus X-MS-Exchange-CrossTenant-AuthAs
+  //    "Internal" on the outer report (every instance, at least one); the
+  //    tenant id, when present, was checked above. The domain the SPF
+  //    verdict is about must also be the envelope's, when both are known.
+  const authAs = headerValues(headers, 'x-ms-exchange-crosstenant-authas').map((value) => value.trim().toLowerCase());
+  const internal = authAs.length > 0 && authAs.every((value) => value === 'internal');
+  if (config.ndrDomain && identities.spf === 'pass' && internal) {
     // The domain must be the one Cloudflare's record says SPF was checked
     // for: no fallback to the envelope (the verdict is about the record's).
     const recorded = identities.spfMailFromDomain;
