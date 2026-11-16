@@ -111,9 +111,9 @@ $dryRun = [bool]$WhatIfPreference
 $readCmdlets = 'Get-Mailbox', 'Get-MailboxPermission', 'Get-RecipientPermission', 'Get-Recipient', 'Get-User', 'Get-Group'
 $writeCmdlets = 'Add-MailboxPermission', 'Remove-MailboxPermission', 'Add-RecipientPermission', 'Remove-RecipientPermission', 'Set-Mailbox'
 
-function Connect-ExoAdmin {
+function Connect-ExoAdmin([string]$Upn) {
   $connect = @{ ShowBanner = $false }
-  if ($UserPrincipalName) { $connect.UserPrincipalName = $UserPrincipalName }
+  if ($Upn) { $connect.UserPrincipalName = $Upn }
   Connect-ExchangeOnline @connect -ErrorAction Stop
 }
 
@@ -136,7 +136,7 @@ if ($dryRun) {
 if ($Rollback) {
   Write-Step 'Rolling back the shared mailbox access setup'
   $appId = if ($dryRun) { '<app id>' } else { Find-EntraApp $AppName }
-  if (-not $dryRun) { Connect-ExoAdmin }
+  if (-not $dryRun) { Connect-ExoAdmin $UserPrincipalName }
   try {
     if ($PSCmdlet.ShouldProcess("role group '$RoleGroupName'", 'remove')) {
       if (Get-ExoOrNull { Get-RoleGroup -Identity $RoleGroupName -ErrorAction Stop }) { Remove-RoleGroup -Identity $RoleGroupName -Confirm:$false -ErrorAction Stop }
@@ -218,7 +218,7 @@ if ($PSCmdlet.ShouldProcess("Entra app $appId", "reuse a valid certificate on th
 # ---- 3. Exchange role, role group, service principal ----------------------
 Write-Step '3. Exchange: read-only role, role group, service principal'
 if ($PSCmdlet.ShouldProcess('Exchange Online', "custom role '$RoleName' ($($readCmdlets -join ', ')), role group '$RoleGroupName', service principal for $appId")) {
-  Connect-ExoAdmin
+  Connect-ExoAdmin $UserPrincipalName
   try {
     if ((Get-OrganizationConfig -ErrorAction Stop).IsDehydrated) { Enable-OrganizationCustomization -ErrorAction Stop }
     if (-not (Get-ExoOrNull { Get-ManagementRole -Identity $RoleName -ErrorAction Stop })) {
