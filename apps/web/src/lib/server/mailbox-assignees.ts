@@ -20,11 +20,12 @@ const ELIGIBLE_ASSIGNEE_SELECT = `SELECT u.id AS user_id,
  WHERE u.status IN ('active', 'pending')
    AND personal.type = 'personal'
    AND personal.status = 'active'
-   AND lower(substr(personal.address, instr(personal.address, '@') + 1)) = ?`;
+   AND lower(substr(personal.address, instr(personal.address, '@') + 1)) IN (SELECT value FROM json_each(?))`;
 
 /**
  * SQL used at mutation time to repeat the canonical assignee eligibility
- * check. The two placeholders are MAIL_DOMAIN and the immutable user id.
+ * check. The two placeholders are assigneeDomainsParam() (the organisation's
+ * domains as a JSON array) and the immutable user id.
  */
 export const ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL = `EXISTS (
   ${ELIGIBLE_ASSIGNEE_SELECT}
@@ -32,6 +33,18 @@ export const ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL = `EXISTS (
  GROUP BY u.id
 HAVING COUNT(*) = 1
 )`;
+
+/**
+ * The bind value for the domain placeholder: the organisation's domains
+ * (docs/multi-domain.md), or MAIL_DOMAIN alone, normalised, as a JSON array.
+ * null when none is valid (the caller then finds nobody).
+ */
+export function assigneeDomainsParam(domains: string | readonly string[]): string | null {
+  const list = (typeof domains === 'string' ? [domains] : domains)
+    .map((domain) => normalizeDomain(domain))
+    .filter((domain): domain is string => Boolean(domain));
+  return list.length ? JSON.stringify([...new Set(list)]) : null;
+}
 
 function mapAssignee(row: MailboxAssigneeRow | null): MailboxAssignee | null {
   return row
@@ -45,10 +58,10 @@ function mapAssignee(row: MailboxAssigneeRow | null): MailboxAssignee | null {
 
 export async function getEligibleMailboxAssignee(
   db: D1Database,
-  mailDomain: string,
+  domains: string | readonly string[],
   userId: string,
 ): Promise<MailboxAssignee | null> {
-  const domain = normalizeDomain(mailDomain);
+  const domain = assigneeDomainsParam(domains);
   if (!domain || !userId) return null;
 
   const row = await db.prepare(
@@ -63,11 +76,11 @@ export async function getEligibleMailboxAssignee(
 
 export async function searchEligibleMailboxAssignees(
   db: D1Database,
-  mailDomain: string,
+  domains: string | readonly string[],
   query: string,
   limit = 8,
 ): Promise<MailboxAssignee[]> {
-  const domain = normalizeDomain(mailDomain);
+  const domain = assigneeDomainsParam(domains);
   const normalizedQuery = query.trim().slice(0, 100).toLowerCase();
   if (!domain || !normalizedQuery) return [];
 

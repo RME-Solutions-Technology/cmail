@@ -301,6 +301,17 @@
           <div><dt>Last full reconciliation</dt><dd>{when(status.lastReconcileAt)}{status.lastReconcileMode === 'dry_run' ? ' (dry run)' : ''}</dd></div>
           <div><dt>Delta link</dt><dd>{deltaAge(status.deltaLinkAt)}</dd></div>
           <div><dt>Linked</dt><dd>{overview.linkedPeople} {overview.linkedPeople === 1 ? 'person' : 'people'}, {overview.linkedShared} shared {overview.linkedShared === 1 ? 'mailbox' : 'mailboxes'}</dd></div>
+          <div>
+            <dt>Mail domains</dt>
+            <dd>
+              {overview.orgDomains.domains.length ? overview.orgDomains.domains.join(', ') : 'MAIL_DOMAIN only'}{overview.orgDomains.refreshedAt ? ` (verified domains read ${when(new Date(overview.orgDomains.refreshedAt).toISOString())})` : ''}
+              {#if overview.orgDomains.problem === 'permission_missing'}
+                <br />Verified domains can't be read: grant the sync app <code>Domain.Read.All</code> (application) with admin consent. Until then only the domains already listed are used.
+              {:else if overview.orgDomains.problem}
+                <br />The last read of verified domains failed ({overview.orgDomains.problem}); the list above is kept and the read is retried within an hour.
+              {/if}
+            </dd>
+          </div>
           <div><dt>Shared mailbox detection</dt><dd>{status.sharedDetection === true ? 'On (Exchange mailbox type)' : status.sharedDetection === false ? 'Off' : 'not run yet'}</dd></div>
           {#if status.round}<div><dt>In progress</dt><dd>{status.round.kind === 'reconcile' ? 'Full reconciliation' : 'Delta'}{status.round.mode === 'dry_run' ? ' (dry run)' : ''}, started {when(status.round.startedAt)}</dd></div>{/if}
         </dl>

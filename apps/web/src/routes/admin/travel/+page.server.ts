@@ -244,7 +244,7 @@ export const actions: Actions = {
       });
       try {
         const result = await sendEmail(
-          { from: settings.systemEmail, fromName: settings.systemFromName, to: pending.email, subject, html, text },
+          { from: settings.systemEmail, fromName: settings.systemFromName, to: pending.email, subject, html, text, system: true },
           envForOutbound,
         );
         if (!result.success) {

@@ -68,6 +68,7 @@ export async function notifyManagers(
   try {
     const result = await sendEmail(
       {
+        system: true,
         from: settings.systemEmail,
         fromName: settings.systemFromName,
         to: recipients,

@@ -329,4 +329,6 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;  // e.g. "example.cloudflareaccess.com"
   ACCESS_AUD?: string;          // the Access application's AUD tag
   ACCESS_AUTO_PROVISION?: string; // "true" creates accounts for MAIL_DOMAIN emails
+  /** Entra tenant id (optional; Microsoft first sign-in and the multi-domain list check it). */
+  M365_TENANT_ID?: string;
 }

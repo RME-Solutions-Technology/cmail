@@ -126,6 +126,18 @@ export const INITIAL_DELTA_URL = `${GRAPH_ROOT}users/delta?$select=${DELTA_SELEC
 /** Users with their proxyAddresses, 999 per page (the Graph maximum for users). */
 export const ALIAS_USERS_URL = `${GRAPH_ROOT}users?$select=id,proxyAddresses&$top=999`;
 
+/** The tenant's domains with the fields the multi-domain discovery reads. */
+export const DOMAINS_URL = `${GRAPH_ROOT}domains?$select=id,isVerified,isInitial,supportedServices`;
+
+/** One domain of the tenant (Graph domain resource). */
+export interface TenantDomain {
+  name: string;
+  isVerified: boolean;
+  isInitial: boolean;
+  /** supportedServices includes "Email". */
+  email: boolean;
+}
+
 export interface ProxyAddressUser {
   id: string;
   /** Raw entries such as "SMTP:alice@example.com" (primary) and "smtp:al@example.com". */
@@ -356,6 +368,37 @@ export class GraphClient {
     return { users, nextLink: nextLink as string | null };
   }
 
+  /**
+   * Every domain of the tenant with the facts the multi-domain discovery
+   * reads (docs/multi-domain.md): GET /domains with application permission
+   * Domain.Read.All (https://learn.microsoft.com/en-us/graph/api/domain-list).
+   * Whole listing or an error: a short page never drops a domain. The caller
+   * keeps verified, non-initial domains that support Email.
+   */
+  async domainList(maxPages = 5): Promise<TenantDomain[]> {
+    const domains: TenantDomain[] = [];
+    let url: string | null = DOMAINS_URL;
+    for (let pages = 0; url; pages += 1) {
+      if (pages >= maxPages) throw new GraphError('bad_response', 200);
+      const body = await this.graphJson(url, { method: 'GET' }) as Record<string, unknown> | null;
+      if (!body || !Array.isArray(body.value)) throw new GraphError('bad_response', 200);
+      for (const item of body.value as unknown[]) {
+        if (!item || typeof item !== 'object') continue;
+        const record = item as { id?: unknown; isVerified?: unknown; isInitial?: unknown; supportedServices?: unknown };
+        if (typeof record.id !== 'string' || record.id.length > 253) continue;
+        domains.push({
+          name: record.id.toLowerCase(),
+          isVerified: record.isVerified === true,
+          isInitial: record.isInitial === true,
+          email: Array.isArray(record.supportedServices) && record.supportedServices.some((service) => service === 'Email'),
+        });
+      }
+      const next = body['@odata.nextLink'];
+      if (next !== undefined && next !== null && !isGraphUrl(next)) throw new GraphError('bad_response', 200);
+      url = (next ?? null) as string | null;
+    }
+    return domains;
+  }
   /**
    * For each object id, the subset of `groupIds` it belongs to (transitively),
    * using JSON batching: one HTTP request per 20 objects. Any throttled or

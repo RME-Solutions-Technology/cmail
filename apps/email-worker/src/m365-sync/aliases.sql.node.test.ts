@@ -54,6 +54,22 @@ describe('Microsoft 365 alias import', () => {
     expect(smtpAliases([`SMTP: bob@${DOMAIN}`, `smtp: bob@sales.${DOMAIN}`, `smtp: Bobby@${DOMAIN}`], DOMAIN)).toEqual([`bob@${DOMAIN}`, `bobby@${DOMAIN}`]);
   });
 
+  it('keeps smtp entries on every organisation domain once the sync has discovered them (docs/multi-domain.md)', async () => {
+    expect(smtpAliases(ALICE.proxyAddresses, new Set([DOMAIN, 'other.example']))).toEqual([`alice@${DOMAIN}`, `ally@${DOMAIN}`, 'alice@other.example']);
+    const t = setup();
+    // Unchanged without a discovered domain: other.example is ignored.
+    t.listing([ALICE, BOB, SUPPORT]);
+    await t.tick();
+    expect(t.aliases().map((row) => row.address)).not.toContain('alice@other.example');
+    // The sync discovered other.example as a verified tenant domain.
+    t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)`)
+      .run(JSON.stringify({ tenantId: TENANT_ID, domains: ['other.example'], refreshedAt: T0, attemptedAt: T0, problem: '' }));
+    t.advance(2 * HOUR);
+    t.listing([ALICE, BOB, SUPPORT]);
+    await t.tick();
+    expect(t.aliases()).toContainEqual({ address: 'alice@other.example', mailbox_id: 'mbx-alice' });
+  });
+
   it('does nothing, and calls nothing, while its switch or the sync is off, or the sync is in dry run without writes', async () => {
     for (const options of [{ aliasSwitch: false }, { sync: false }]) {
       const t = setup(options);

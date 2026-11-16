@@ -8,6 +8,7 @@ import {
   classifyFocus,
   focusDomainCandidates,
   focusHeaderSignals,
+  focusOrgDomains,
   focusScansNeeded,
   isAutomatedSender,
   isFocusClass,
@@ -126,6 +127,23 @@ describe('classifyFocus: each signal', () => {
     assert.deepEqual(classify({ sender: 'noreply@example.test' }), { focusClass: 'focused', reason: 'internal' });
     assert.deepEqual(classify({ sender: 'noreply@sub.example.test' }), { focusClass: 'other', reason: 'automated_sender' });
     assert.deepEqual(classify({ sender: 'pat@example.test', mailDomain: '' }), { focusClass: 'focused', reason: 'default' });
+  });
+  it('internal sender on another organisation domain (docs/multi-domain.md), only when proven', () => {
+    const orgDomains = ['example.net'];
+    assert.deepEqual(classify({ sender: 'noreply@example.net', orgDomains }), { focusClass: 'focused', reason: 'internal' });
+    assert.deepEqual(classify({ sender: 'noreply@example.net' }), { focusClass: 'other', reason: 'automated_sender' });
+    assert.deepEqual(classify({ sender: 'noreply@example.net', orgDomains, senderAuthenticated: false }), { focusClass: 'other', reason: 'automated_sender' });
+    assert.deepEqual(classify({ sender: 'noreply@sub.example.net', orgDomains }), { focusClass: 'other', reason: 'automated_sender' });
+    assert.equal(focusScansNeeded({ sender: 'pat@example.net', mailDomain: 'example.test', orgDomains, signals: NONE, senderAuthenticated: true }).frequent, false);
+  });
+  it('reads the organisation domains setting defensively', () => {
+    const tenantId = '00000000-0000-0000-0000-000000000000';
+    assert.deepEqual(focusOrgDomains(JSON.stringify({ tenantId, domains: ['Example.NET', 7] })), ['example.net']);
+    assert.deepEqual(focusOrgDomains(JSON.stringify({ domains: ['example.net'] })), []);
+    assert.deepEqual(focusOrgDomains(JSON.stringify({ tenantId, domains: ['example.net'] }), '00000000-0000-0000-0000-00000000beef'), []);
+    assert.deepEqual(focusOrgDomains('not json'), []);
+    assert.deepEqual(focusOrgDomains(null), []);
+    assert.deepEqual(focusOrgDomains('{"domains":"x"}'), []);
   });
   it('automated sender', () => {
     assert.deepEqual(classify({ sender: 'no-reply@partner.example.org' }), { focusClass: 'other', reason: 'automated_sender' });

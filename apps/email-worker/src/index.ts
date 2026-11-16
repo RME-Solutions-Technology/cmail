@@ -1317,6 +1317,7 @@ export default {
     const focus = (ruleOutcome?.folder ?? placement.folder) === 'inbox'
       ? await decideFocusAtDelivery(env.DB, {
         mailboxId: mailbox.id,
+        tenantId: env.M365_TENANT_ID,
         sender: headerFrom,
         mailDomain: env.MAIL_DOMAIN,
         headers: parsed.headers,

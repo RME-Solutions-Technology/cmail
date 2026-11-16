@@ -22,6 +22,7 @@ import {
   type ExchangeMirrorEnv,
 } from '@cmail/shared/exchange-mirror';
 import { decideInboundPlacement } from '@cmail/shared/inbound-risk';
+import { orgDomains } from '@cmail/shared/org-domains';
 import { decideFocusAtDelivery, focusUpdateStatement, focusedInboxOrgEnabled } from '@cmail/shared/focused-inbox';
 import { parseMessageImportance } from '@cmail/shared/message-importance';
 import {
@@ -465,6 +466,19 @@ async function processReport(
   const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : []), ...(headerFrom ? [headerFrom] : [])])];
   const aliasState = await aliasImportState(env.DB, now).catch(() => 'stale' as const);
   const mailboxes = await resolveMailboxes(env.DB, lookups, aliasState === 'fresh');
+  // Once the sync has read this tenant's domains successfully (docs/multi-domain.md),
+  // only the organisation's domains are filed: a mailbox on a domain that is
+  // not (or no longer) one of them is counted, not filed. Before that, or if
+  // the list cannot be read, filing goes on by address exactly as before.
+  const domains = await orgDomains(env, env.DB).then(
+    (result) => (result.discovered ? new Set(result.domains) : null),
+    () => {
+      console.error('Exchange mirror: organisation domains could not be read; filing by address only');
+      return null;
+    },
+  );
+  const onOrgDomain = (address: string) => !domains || domains.has(domainOf(address));
+  let offDomain = 0;
   const targets: Target[] = [];
   const seenInbound = new Set<string>();
   for (const recipient of envelope.recipients) {
@@ -473,12 +487,17 @@ async function processReport(
       counts.unmatched += 1;
       continue;
     }
+    if (!onOrgDomain(recipient.address)) {
+      counts.unmatched += 1;
+      offDomain += 1;
+      continue;
+    }
     if (seenInbound.has(mailboxId)) continue;
     seenInbound.add(mailboxId);
     targets.push({ mailboxId, address: recipient.address, role: 'inbound' });
   }
   const innerSender = tools.inboundFromParticipant(inner.sender as ParsedMailbox | undefined, '', firstHeader(inner.headers as Header[], 'sender')).address || null;
-  const senderMailbox = envelope.sender ? mailboxes.get(envelope.sender) : undefined;
+  const senderMailbox = envelope.sender && onOrgDomain(envelope.sender) ? mailboxes.get(envelope.sender) : undefined;
   if (senderMailbox && sentCopyAllowed({
     config,
     envelope,
@@ -579,7 +598,7 @@ async function processReport(
     // Only an Inbox copy is sorted; null stores nothing (switch off for the
     // mailbox, or the lookup failed) and the copy is filed as before.
     const focus = !sent && focusOn
-      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated || ownSend })
+      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, tenantId: env.M365_TENANT_ID, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated || ownSend })
       : null;
     const to = toParticipants.length ? toParticipants : [{ address: target.address, name: '' }];
     const insert = env.DB.prepare(
@@ -662,7 +681,7 @@ async function processReport(
     });
   }
   // Unmatched recipients while the alias import is on but stale: say why.
-  const notice = aliasState === 'stale' && counts.unmatched > 0 ? 'aliases_stale' : '';
+  const notice = offDomain > 0 ? 'unmatched_domain' : aliasState === 'stale' && counts.unmatched > 0 ? 'aliases_stale' : '';
   return { kind: 'processed', counts, skipReason, notice, incomplete, messageIdHeader, headerFrom, subject, size };
 }
 

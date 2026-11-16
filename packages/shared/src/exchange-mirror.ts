@@ -257,6 +257,7 @@ export const EXCHANGE_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
   unsafe_subject: 'The original subject contains a line break, so the report envelope cannot be trusted.',
   message_id_mismatch: 'The envelope Message-Id does not match the Message-ID of the attached original, or the original has none.',
   aliases_stale: 'Imported aliases were not used: the alias import is off or has not succeeded in the last 3 days.',
+  unmatched_domain: 'A recipient\'s mailbox is on a domain that is not one of the organisation\'s domains (MAIL_DOMAIN or a verified Microsoft 365 domain), so it was counted, not filed.',
   unsafe_envelope: 'The report envelope has lines in an order Exchange does not write (possible injected text).',
   no_recipients: 'The report envelope lists no recipients.',
   too_many_recipients: 'The report envelope lists more recipients than cmail files at once.',

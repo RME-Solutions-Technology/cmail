@@ -409,3 +409,92 @@ describe('calendar cancel action', () => {
     expect(update!.values[0]).toBe(3); // sequence bumped from 2 to 3
   });
 });
+
+describe('multi-domain phase 1: calendar sends refuse a From off MAIL_DOMAIN once domains are discovered', () => {
+  // docs/multi-domain.md. desk@example.org is on a discovered organisation
+  // domain; a provider is configured, so only the From check can stop the send.
+  const CACHE = ['SELECT value FROM org_settings WHERE key = ?', {
+    value: JSON.stringify({ tenantId: '00000000-0000-0000-0000-000000000000', domains: ['example.org'], refreshedAt: 1, attemptedAt: 1, problem: '' }),
+  }] as [string, unknown];
+  const EVENT = {
+    id: 'event-1', mailbox_id: 'mailbox-1', uid: 'uid-1@cmail', sequence: 0, summary: 'Weekly sync',
+    description: '', location: '', starts_at: '2026-08-25T14:00:00.000Z', ends_at: '2026-08-25T14:30:00.000Z',
+    all_day: 0, status: 'confirmed', organizer_address: 'desk@example.org', organizer_self: 1,
+    message_id: 'message-1', rrule: null, created_at: '2026-08-01 00:00:00', updated_at: '2026-08-01 00:00:00',
+  };
+  function withProvider(db: D1Database) {
+    const send = vi.fn(async () => Response.json({ success: true, messageId: 'cf-1' }));
+    const base = platform(db);
+    Object.assign(base.env, { OUTBOUND_PROVIDER: 'cloudflare', EMAIL_SERVICE: { fetch: send } });
+    return { platform: base, send };
+  }
+
+  it('new meeting: refused before anything is saved', async () => {
+    const { db, calls } = mockDb([CACHE, ['SELECT m.id, m.address, m.display_name FROM mailboxes', { id: 'mailbox-1', address: 'desk@example.org', display_name: 'Desk' }]]);
+    const { platform: p, send } = withProvider(db);
+    const formData = new FormData();
+    for (const [key, value] of Object.entries({ from: 'desk@example.org', title: 'Weekly sync', date: '2026-08-25', start_time: '14:00', end_time: '14:30', attendees: 'jamie@example.com' })) formData.set(key, value);
+    const result: any = await (newMeetingActions.create as any)({
+      request: new Request('https://mail.example.com/mail/calendar/new?/create', { method: 'POST', body: formData }),
+      locals: locals(),
+      platform: p,
+    });
+    expect(result).toMatchObject({ status: 403 });
+    expect(result.data.error).toContain('Sending from @example.org isn\'t set up yet');
+    expect(calls.some(({ sql }) => sql.includes('INSERT INTO calendar_events'))).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('RSVP from a message: the response is saved but no reply leaves', async () => {
+    const { db } = mockDb([
+      CACHE,
+      ['FROM messages m', { id: 'message-1', mailbox_id: 'mailbox-1', message_id_header: null, in_reply_to: null, references_header: null, mailbox_address: 'desk@example.org', mailbox_display_name: 'Desk' }],
+      ['SELECT * FROM calendar_events WHERE message_id = ?', { ...EVENT, organizer_address: 'organiser@example.com', organizer_self: 0 }],
+    ]);
+    const { platform: p, send } = withProvider(db);
+    const formData = new FormData();
+    formData.set('partstat', 'accepted');
+    const result: any = await (messageActions.rsvp as any)({
+      request: new Request('https://mail.example.com/mail/message-1?/rsvp', { method: 'POST', body: formData }),
+      locals: locals(),
+      platform: p,
+      params: { id: 'message-1' },
+    });
+    expect(result.status).toBe(502);
+    expect(result.data.error).toContain('isn\'t set up yet');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('cancel: the meeting is cancelled but no notice leaves', async () => {
+    const { db } = mockDb(
+      [CACHE, ['FROM calendar_events ce', { ...EVENT, mailbox_address: 'desk@example.org', mailbox_display_name: 'Desk' }]],
+      1,
+      [['SELECT * FROM calendar_attendees WHERE event_id = ?', [
+        { id: 'a1', event_id: 'event-1', address: 'jamie@example.com', display_name: '', partstat: 'accepted', updated_at: '2026-08-01 00:00:00' },
+      ]]],
+    );
+    const { platform: p, send } = withProvider(db);
+    const formData = new FormData();
+    formData.set('event_id', 'event-1');
+    const result: any = await (calendarActions.cancel as any)({
+      request: new Request('https://mail.example.com/mail/calendar?/cancel', { method: 'POST', body: formData }),
+      locals: locals(),
+      platform: p,
+    });
+    expect(result.status).toBe(502);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('before discovery, the same calendar send from another domain is unchanged (goes to the provider)', async () => {
+    const { db } = mockDb([['SELECT m.id, m.address, m.display_name FROM mailboxes', { id: 'mailbox-1', address: 'desk@example.org', display_name: 'Desk' }]]);
+    const { platform: p, send } = withProvider(db);
+    const formData = new FormData();
+    for (const [key, value] of Object.entries({ from: 'desk@example.org', title: 'Weekly sync', date: '2026-08-25', start_time: '14:00', end_time: '14:30', attendees: 'jamie@example.com' })) formData.set(key, value);
+    await expect((newMeetingActions.create as any)({
+      request: new Request('https://mail.example.com/mail/calendar/new?/create', { method: 'POST', body: formData }),
+      locals: locals(),
+      platform: p,
+    })).rejects.toMatchObject({ status: 303 });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});

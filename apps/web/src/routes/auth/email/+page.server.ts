@@ -232,7 +232,7 @@ export const actions: Actions = {
     const { subject, html, text } = generateOtpEmail({ code: issued.code, orgName: settings.orgName || settings.appName });
     try {
       const result = await sendEmail(
-        { from: settings.systemEmail, fromName: settings.systemFromName, to: address, subject, html, text },
+        { from: settings.systemEmail, fromName: settings.systemFromName, to: address, subject, html, text, system: true },
         envRecord,
       );
       await audit(env.DB, {
