@@ -19,7 +19,11 @@ import {
   M365_WELCOME_SINCE_ALL,
   PASSKEY_SIGNIN_SETTING,
   WELCOME_ELIGIBLE_SQL,
+  WELCOME_SIGNIN_NAME_NO_UPN_SQL,
+  WELCOME_SIGNIN_NAME_SQL,
+  WELCOME_STANDBY_SETTINGS,
   WELCOME_WAITING_SQL,
+  hasUpnColumn,
   cleanAppUrl,
   cleanWelcomeNote,
   isWelcomeEmailAddress,
@@ -28,6 +32,7 @@ import {
   parseWelcomeProfile,
   renderWelcomeEmail,
   sqliteTime,
+  standbyIsOn,
   welcomeProfileProblems,
   type M365WelcomeState,
   type M365WelcomeSwitch,
@@ -39,11 +44,17 @@ import { syncSignInTenant } from './m365-sync-signin';
 import { publicRuntimeConfig } from './config';
 import { audit } from './db';
 import { loadOrgSettings } from './org-settings';
-import { detectProvider } from './outbound';
+import { detectProvider, sendEmail } from './outbound';
+import { consumeRateLimit } from './rate-limit';
 import { isAddressAtDomain, normalizeDomain, normalizeEmail } from './validation';
 
 const CONFIG_URL = 'https://cmail-email-worker.internal/internal/m365-welcome/config';
 const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** Recipients shown before sending. Well above any one organisation's staff count; total is always exact. */
+export const WELCOME_RECIPIENT_LIST_LIMIT = 1000;
+/** "Send a test to me": per manager, per hour. */
+export const WELCOME_TEST_LIMIT = 5;
+const WELCOME_TEST_WINDOW_SECONDS = 60 * 60;
 
 /** Plain-language text for each readiness code, shown as "Cannot send: ...". */
 export const WELCOME_PROBLEM_TEXT: Record<string, string> = {
@@ -142,6 +153,8 @@ export interface WelcomePerson {
   userId: string;
   email: string;
   displayName: string;
+  /** What the person types at Microsoft sign-in (their UPN; the account address until the sync has recorded it). */
+  signInName: string;
   /** 'not_sent' = eligible, never queued (waiting from before the switch, or the switch is off). */
   status: 'not_sent' | 'queued' | 'sending' | 'sent' | 'failed' | 'skipped';
   attempts: number;
@@ -165,6 +178,14 @@ export interface WelcomeOverview {
   waitingNow: number;
   counts: { sent: number; queued: number; failed: number; skipped: number; notSent: number };
   people: WelcomePerson[];
+  /**
+   * Everyone who would be (or is waiting to be) emailed: eligible, licensed,
+   * enabled people who have not been sent a welcome email yet. total is the
+   * full count; people is capped at WELCOME_RECIPIENT_LIST_LIMIT.
+   */
+  recipients: { total: number; /** Sent automatically: with the switch on, only links at or after the cut-off; with it off, everyone. */ auto: number; people: Array<{ userId: string; displayName: string; email: string; signInName: string }> };
+  /** A standby switch is on, so the email says why the account exists. */
+  standby: boolean;
   state: M365WelcomeState;
   preview: { subject: string; text: string; from: string } | null;
   /** What sending needs, always shown: the From address and the domain that must be onboarded to Email Sending. */
@@ -201,12 +222,13 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
   const live = options.live === true;
   const db = env.DB;
   const { results } = await db.prepare(
-    'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?, ?, ?)',
-  ).bind(M365_WELCOME_SETTING_ENABLED, M365_WELCOME_SETTING_SINCE, M365_WELCOME_SETTING_NOTE, M365_SYNC_SETTING_ENABLED, M365_SYNC_SETTING_DRY_RUN, PASSKEY_SIGNIN_SETTING)
+    'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind(M365_WELCOME_SETTING_ENABLED, M365_WELCOME_SETTING_SINCE, M365_WELCOME_SETTING_NOTE, M365_SYNC_SETTING_ENABLED, M365_SYNC_SETTING_DRY_RUN, PASSKEY_SIGNIN_SETTING, ...WELCOME_STANDBY_SETTINGS)
     .all<{ key: string; value: string }>();
   const settings = new Map((results ?? []).map((row) => [row.key, row.value]));
   const toggle = parseM365WelcomeSwitch(results ?? []);
   const passkeys = settings.get(PASSKEY_SIGNIN_SETTING) === 'true';
+  const standby = standbyIsOn(settings);
   const built = await buildWelcomeProfile(env);
   const base = {
     toggle,
@@ -235,7 +257,7 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
 
   const preview = parseWelcomeProfile(JSON.stringify(built.profile));
   const sample = preview
-    ? renderWelcomeEmail({ profile: preview, passkeys, note: toggle.note, displayName: 'Alex Example', address: `alex@${normalizeDomain(publicRuntimeConfig(env).mailDomain) || 'example.com'}` })
+    ? renderWelcomeEmail({ profile: preview, passkeys, note: toggle.note, standby, displayName: 'Alex Example', address: `alex@${normalizeDomain(publicRuntimeConfig(env).mailDomain) || 'example.com'}` })
     : null;
   const previewView = sample && preview ? { subject: sample.subject, text: sample.text, from: `${preview.fromName || preview.orgName} <${preview.fromEmail}>` } : null;
 
@@ -243,12 +265,14 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
   const sender = { fromEmail: built.profile.fromEmail, mailDomain: mailDomainNow };
   const senderRefused = /^E_SENDER_[A-Z_]+$/.test(state.lastProblem) ? state.lastProblem : '';
   if (!installed) {
-    return { ...base, sender, senderRefused, profileStale: false, workerChecked: live, installed, problems, canSend: false, waitingNow: 0, counts: { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 }, people: [], state, preview: previewView };
+    return { ...base, sender, senderRefused, profileStale: false, workerChecked: live, installed, problems, canSend: false, waitingNow: 0, counts: { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 }, people: [], recipients: { total: 0, auto: 0, people: [] }, standby, state, preview: previewView };
   }
 
   let waitingNow = 0;
   const counts = { sent: 0, queued: 0, failed: 0, skipped: 0, notSent: 0 };
   let people: WelcomePerson[] = [];
+  const signInName = await hasUpnColumn(db).catch(() => false) ? WELCOME_SIGNIN_NAME_SQL : WELCOME_SIGNIN_NAME_NO_UPN_SQL;
+  let recipients: WelcomeOverview['recipients'] = { total: 0, auto: 0, people: [] };
   try {
     const waiting = await db.prepare(`SELECT COUNT(*) AS n ${WELCOME_WAITING_SQL}`).first<{ n: number }>();
     waitingNow = Number(waiting?.n ?? 0);
@@ -263,18 +287,19 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
     }
     // Records first (newest change first), then eligible people never queued.
     const recorded = await db.prepare(
-      `SELECT w.user_id, u.email, u.display_name, w.status, w.attempts, w.last_attempt_at, w.sent_at, w.last_error,
+      `SELECT w.user_id, u.email, u.display_name, (SELECT ${signInName} FROM m365_sync_links l WHERE l.user_id = u.id) AS sign_in_name, w.status, w.attempts, w.last_attempt_at, w.sent_at, w.last_error,
               EXISTS (SELECT 1 ${WELCOME_ELIGIBLE_SQL} AND u.id = w.user_id) AS eligible
        FROM m365_welcome_emails w JOIN users u ON u.id = w.user_id
        ORDER BY w.updated_at DESC, w.user_id LIMIT ?`,
     ).bind(M365_WELCOME_LIST_LIMIT).all<{
-      user_id: string; email: string; display_name: string; status: WelcomePerson['status']; attempts: number;
+      user_id: string; email: string; display_name: string; sign_in_name: string | null; status: WelcomePerson['status']; attempts: number;
       last_attempt_at: number | null; sent_at: number | null; last_error: string; eligible: number;
     }>();
     people = (recorded.results ?? []).map((row) => ({
       userId: row.user_id,
       email: row.email,
       displayName: row.display_name ?? '',
+      signInName: row.sign_in_name || row.email,
       status: row.status,
       attempts: Number(row.attempts),
       lastAttemptAt: row.last_attempt_at === null ? null : Number(row.last_attempt_at),
@@ -285,22 +310,40 @@ export async function loadWelcomeOverview(env: WelcomeEnv, managerId: string | n
     const room = M365_WELCOME_LIST_LIMIT - people.length;
     if (room > 0) {
       const never = await db.prepare(
-        `SELECT u.id AS user_id, u.email, u.display_name ${WELCOME_WAITING_SQL} ORDER BY l.created_at, u.id LIMIT ?`,
-      ).bind(room).all<{ user_id: string; email: string; display_name: string }>();
+        `SELECT u.id AS user_id, u.email, u.display_name, ${signInName} AS sign_in_name ${WELCOME_WAITING_SQL} ORDER BY l.created_at, u.id LIMIT ?`,
+      ).bind(room).all<{ user_id: string; email: string; display_name: string; sign_in_name: string }>();
       for (const row of never.results ?? []) {
-        people.push({ userId: row.user_id, email: row.email, displayName: row.display_name ?? '', status: 'not_sent', attempts: 0, lastAttemptAt: null, sentAt: null, lastError: '', canResend: true });
+        people.push({ userId: row.user_id, email: row.email, displayName: row.display_name ?? '', signInName: row.sign_in_name || row.email, status: 'not_sent', attempts: 0, lastAttemptAt: null, sentAt: null, lastError: '', canResend: true });
       }
     }
+    // The recipients list: everyone eligible who has not been sent one yet.
+    // Eligible = a person the sync linked (enabled, with a mailbox licence),
+    // never a shared mailbox, so shared mailboxes cannot appear here.
+    const notSent = `${WELCOME_ELIGIBLE_SQL} AND NOT EXISTS (SELECT 1 FROM m365_welcome_emails w WHERE w.user_id = u.id AND w.status = 'sent')`;
+    const total = await db.prepare(`SELECT COUNT(*) AS n ${notSent}`).first<{ n: number }>();
+    // With the switch on, only people linked at or after the cut-off are emailed automatically; the rest need Send.
+    const auto = toggle.enabled
+      ? await db.prepare(`SELECT COUNT(*) AS n ${notSent} AND l.created_at >= ?`).bind(toggle.since).first<{ n: number }>()
+      : total;
+    const listed = await db.prepare(
+      `SELECT u.id AS user_id, u.email, u.display_name, ${signInName} AS sign_in_name ${notSent} ORDER BY lower(u.display_name), u.email LIMIT ?`,
+    ).bind(WELCOME_RECIPIENT_LIST_LIMIT).all<{ user_id: string; email: string; display_name: string; sign_in_name: string }>();
+    recipients = {
+      total: Number(total?.n ?? 0),
+      auto: Number(auto?.n ?? 0),
+      people: (listed.results ?? []).map((row) => ({ userId: row.user_id, displayName: row.display_name ?? '', email: row.email, signInName: row.sign_in_name || row.email })),
+    };
   } catch {
-    // Migration 0022 missing: the sync page already says so.
+    // Migration 0022 (the sync) missing: the sync page already says so. Migration
+    // 0032 missing is handled above (the sign-in name falls back to the address).
   }
-  return { ...base, sender, senderRefused, profileStale, workerChecked: live, installed, problems, canSend: problems.length === 0, waitingNow, counts, people, state, preview: previewView };
+  return { ...base, sender, senderRefused, profileStale, workerChecked: live, installed, problems, canSend: problems.length === 0, waitingNow, counts, people, recipients, standby, state, preview: previewView };
 }
 
-export type WelcomeAdminAction = 'welcome_enable' | 'welcome_disable' | 'welcome_note' | 'welcome_resend' | 'welcome_refresh';
+export type WelcomeAdminAction = 'welcome_enable' | 'welcome_disable' | 'welcome_note' | 'welcome_resend' | 'welcome_refresh' | 'welcome_test';
 
 export function parseWelcomeAdminAction(value: unknown): WelcomeAdminAction | null {
-  return typeof value === 'string' && ['welcome_enable', 'welcome_disable', 'welcome_note', 'welcome_resend', 'welcome_refresh'].includes(value)
+  return typeof value === 'string' && ['welcome_enable', 'welcome_disable', 'welcome_note', 'welcome_resend', 'welcome_refresh', 'welcome_test'].includes(value)
     ? value as WelcomeAdminAction
     : null;
 }
@@ -316,15 +359,73 @@ export interface WelcomeActionInput {
 
 export type WelcomeAdminResult = { ok: true; message: string } | { ok: false; status: number; error: string };
 
+/**
+ * "Send a test to me": the current email, to the signed-in manager's own
+ * address only, subject prefixed "[Test] ". Sent by the web app through its own
+ * outbound mail (the path manager invitations use), so it works for a manager
+ * the sync did not create. It records nothing in m365_welcome_emails, turns
+ * nothing on, is audited and is limited to WELCOME_TEST_LIMIT an hour.
+ */
+async function sendWelcomeTest(
+  env: WelcomeEnv,
+  manager: { id: string; email?: string; display_name?: string | null },
+): Promise<WelcomeAdminResult> {
+  const db = env.DB;
+  const to = normalizeEmail(manager.email ?? '') || '';
+  if (!to || !isWelcomeEmailAddress(to)) return { ok: false, status: 409, error: 'Your account has no valid email address to send the test to.' };
+  if (detectProvider(env) === 'none') return { ok: false, status: 409, error: 'Cannot send a test: outbound mail not configured.' };
+  const built = await buildWelcomeProfile(env);
+  const blocking = built.problems.filter((code) => code !== 'sign_in_not_ready');
+  if (blocking.length) return { ok: false, status: 409, error: `Cannot send a test: ${blocking.map(welcomeProblemText).join(' ')}` };
+  const profile = parseWelcomeProfile(JSON.stringify(built.profile));
+  if (!profile) return { ok: false, status: 409, error: 'Cannot send a test: the organisation details are incomplete (Admin > Settings).' };
+
+  const limit = await consumeRateLimit(db, 'welcome_test', manager.id, WELCOME_TEST_LIMIT, WELCOME_TEST_WINDOW_SECONDS);
+  if (!limit.allowed) {
+    const minutes = Math.max(1, Math.ceil(limit.retryAfter / 60));
+    return { ok: false, status: 429, error: `You can send about ${WELCOME_TEST_LIMIT} tests an hour. Try again in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.` };
+  }
+
+  const { results } = await db.prepare(
+    `SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?)`,
+  ).bind(M365_WELCOME_SETTING_NOTE, PASSKEY_SIGNIN_SETTING, ...WELCOME_STANDBY_SETTINGS).all<{ key: string; value: string }>();
+  const settings = new Map((results ?? []).map((row) => [row.key, row.value]));
+  const link = await db.prepare(
+    `SELECT ${await hasUpnColumn(db) ? WELCOME_SIGNIN_NAME_SQL : WELCOME_SIGNIN_NAME_NO_UPN_SQL} AS sign_in_name FROM m365_sync_links l JOIN users u ON u.id = l.user_id WHERE u.id = ?`,
+  ).bind(manager.id).first<{ sign_in_name: string }>().catch(() => null);
+  const email = renderWelcomeEmail({
+    profile,
+    passkeys: settings.get(PASSKEY_SIGNIN_SETTING) === 'true',
+    standby: standbyIsOn(settings),
+    note: cleanWelcomeNote(settings.get(M365_WELCOME_SETTING_NOTE) ?? ''),
+    displayName: manager.display_name ?? '',
+    address: to,
+    signInName: link?.sign_in_name || to,
+    test: true,
+  });
+  const delivered = await sendEmail({ from: profile.fromEmail, fromName: profile.fromName || profile.orgName, to, subject: email.subject, text: email.text, html: email.html }, env)
+    .then((result) => result.success === true, () => false);
+  await audit(db, {
+    event_type: delivered ? 'm365_welcome.test_sent' : 'm365_welcome.test_failed',
+    actor_id: manager.id,
+    actor_role: 'manager',
+    target: manager.id,
+    detail: delivered ? 'Welcome email test sent to the manager\'s own address' : 'Welcome email test could not be sent to the manager\'s own address',
+  });
+  if (!delivered) return { ok: false, status: 502, error: 'The test email could not be sent. Check Admin > Settings and the outbound mail provider.' };
+  return { ok: true, message: 'Test sent to your own address. Nothing was recorded or turned on.' };
+}
+
 /** Applies one manager action. The caller has already checked the manager role. */
 export async function applyWelcomeAdminAction(
   env: WelcomeEnv,
-  manager: { id: string },
+  manager: { id: string; email?: string; display_name?: string | null },
   action: WelcomeAdminAction,
   input: WelcomeActionInput,
   now = new Date(),
 ): Promise<WelcomeAdminResult> {
   const db = env.DB;
+  if (action === 'welcome_test') return sendWelcomeTest(env, manager);
   const overview = await loadWelcomeOverview(env, manager.id, { live: true });
   if (!overview.installed) return { ok: false, status: 409, error: 'Apply database migration 0029 first.' };
 

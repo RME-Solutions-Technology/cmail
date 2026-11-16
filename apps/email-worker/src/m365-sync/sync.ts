@@ -174,7 +174,7 @@ function toPending(
     // A person whose 'no Exchange Online mailbox' answer came from a delta
     // round may be a mailbox still being provisioned (a new room, say): apply
     // does not create a new account from it.
-    else byId.set(id, { id, kind: 'person', address: cls.address, displayName: cls.displayName, reason: purposes?.get(id) === 'none_unconfirmed' ? 'mailbox_not_provisioned' : '' });
+    else byId.set(id, { id, kind: 'person', address: cls.address, displayName: cls.displayName, upn: cls.upn, reason: purposes?.get(id) === 'none_unconfirmed' ? 'mailbox_not_provisioned' : '' });
   }
   return [...byId.values()];
 }

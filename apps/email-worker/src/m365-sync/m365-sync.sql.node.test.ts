@@ -377,3 +377,48 @@ describe('Microsoft 365 sync: groups and shared mailboxes', () => {
     expect(t.mailboxes()).toHaveLength(1);
   });
 });
+
+describe('Microsoft 365 sync: sign-in name (UPN) for the welcome email', () => {
+  const upnOf = (t: { links: () => Array<Record<string, unknown>> }, n: number) => t.links().find((link) => link.object_id === oid(n))?.upn;
+
+  it('records the UPN with the person, including when it differs from the primary address', async () => {
+    const t = await liveWith([[
+      person(1, 'alex'),
+      person(2, 'blair', { userPrincipalName: 'Blair.Smith@Corp.Example.Test' }),
+      person(3, 'casey', { userPrincipalName: null }),
+    ]]);
+    expect(upnOf(t, 1)).toBe('alex@example.test');
+    expect(upnOf(t, 2)).toBe('blair.smith@corp.example.test');
+    // Nothing usable from Graph: left empty, the email falls back to the account address.
+    expect(upnOf(t, 3)).toBe('');
+    // The account address is the primary SMTP address, never the UPN.
+    expect(t.users().map((user) => user.email)).toEqual(['alex@example.test', 'blair@example.test', 'casey@example.test']);
+  });
+
+  it('follows a UPN change without touching the account, and never lists unlicensed people', async () => {
+    const t = await liveWith([[person(1, 'alex'), person(4, 'dana', { assignedPlans: [] })]]);
+    t.advance(60 * 60 * 1000);
+    t.fake.setDelta('tok-1', [[person(1, 'alex', { userPrincipalName: 'alex@new.example.test' })]], 'tok-2');
+    await t.tick();
+    expect(upnOf(t, 1)).toBe('alex@new.example.test');
+    expect(t.users().map((user) => user.email)).toEqual(['alex@example.test']);
+    // The unlicensed person was never linked, so no welcome email can name them.
+    expect(t.links().map((link) => link.object_id)).toEqual([oid(1)]);
+  });
+});
+
+describe('Microsoft 365 sync: before migration 0032 is applied', () => {
+  it('still creates, adopts and updates people, without recording a UPN', async () => {
+    const t = setup();
+    t.sqlite.exec('ALTER TABLE m365_sync_links DROP COLUMN upn');
+    t.sqlite.prepare(`INSERT INTO users (id, email, role, status) VALUES ('u-old', 'blair@example.test', 'standard', 'pending')`).run();
+    t.fake.setReconcile([[person(1, 'alex'), person(2, 'blair')]], 'tok-1');
+    expect(await t.tick()).toMatchObject({ status: 'worked', finished: true });
+    expect(t.users().map((user) => user.email)).toEqual(['alex@example.test', 'blair@example.test']);
+    expect(t.links().map((link) => link.object_id)).toEqual([oid(1), oid(2)]);
+    t.advance(60 * 60 * 1000);
+    t.fake.setDelta('tok-1', [[person(1, 'alex', { userPrincipalName: 'alex@new.example.test', displayName: 'Alex Renamed' })]], 'tok-2');
+    expect(await t.tick()).toMatchObject({ status: 'worked' });
+    expect(t.users().find((user) => user.email === 'alex@example.test')?.display_name).toBe('Alex Renamed');
+  });
+});

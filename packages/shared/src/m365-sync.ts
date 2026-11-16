@@ -217,6 +217,8 @@ export interface M365PendingEntry {
   kind: 'person' | 'shared' | 'out' | 'skip';
   address: string;
   displayName: string;
+  /** Sign-in name (userPrincipalName) of a person; '' or absent when unknown. */
+  upn?: string;
   reason: string;
 }
 
