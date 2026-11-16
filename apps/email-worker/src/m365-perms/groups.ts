@@ -43,4 +43,47 @@ export class PermsGraphClient extends GraphClient {
     }
     return [...members];
   }
+
+  /**
+   * Users whose `mail` equals `address`, at most two (two already means "not
+   * exactly one"), with their proxyAddresses so the caller can require the
+   * address as the primary SMTP entry (`SMTP:`, capital): `mail` alone is
+   * not guaranteed to be the primary address or unique. `mail` supports `eq`
+   * without an advanced query; application permission User.Read.All, which
+   * the Microsoft 365 sync already uses for users/delta.
+   * https://learn.microsoft.com/en-us/graph/api/user-list
+   */
+  async usersByMail(address: string): Promise<GraphMailUser[]> {
+    if (!address || address.length > 254 || /[\s\u0000-\u001f\u007f]/.test(address)) throw new GraphError('bad_response', 0);
+    // OData string literal: a single quote is written twice.
+    const filter = encodeURIComponent(`mail eq '${address.replace(/'/g, "''")}'`);
+    const body = await this.graphJson(`${GRAPH_ROOT}users?$filter=${filter}&$select=id,mail,userType,accountEnabled,proxyAddresses&$top=2`, { method: 'GET' }) as Record<string, unknown> | null;
+    if (!body || !Array.isArray(body.value)) throw new GraphError('bad_response', 200);
+    const users: GraphMailUser[] = [];
+    for (const item of body.value as unknown[]) {
+      const user = item as Record<string, unknown> | null;
+      if (!user || typeof user.id !== 'string' || !GUID.test(user.id)) throw new GraphError('bad_response', 200);
+      users.push({
+        id: user.id.toLowerCase(),
+        mail: typeof user.mail === 'string' ? user.mail : null,
+        userType: typeof user.userType === 'string' ? user.userType : null,
+        accountEnabled: user.accountEnabled === true,
+        proxyAddresses: Array.isArray(user.proxyAddresses)
+          ? (user.proxyAddresses as unknown[]).filter((value): value is string => typeof value === 'string' && value.length <= 320).slice(0, 500)
+          : [],
+      });
+    }
+    // A nextLink means more than the two asked for: not exactly one either.
+    if (body['@odata.nextLink'] !== undefined && body['@odata.nextLink'] !== null && users.length < 2) throw new GraphError('bad_response', 200);
+    return users;
+  }
+}
+
+export interface GraphMailUser {
+  id: string;
+  mail: string | null;
+  userType: string | null;
+  accountEnabled: boolean;
+  /** As Graph returns them, case kept: `SMTP:` (capital) marks the primary address. */
+  proxyAddresses: string[];
 }

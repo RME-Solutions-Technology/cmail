@@ -36,3 +36,30 @@ describe('group expansion', () => {
     await expect(graph.transitiveUserMembers('../users')).rejects.toMatchObject({ code: 'bad_response' });
   });
 });
+
+describe('users by primary address', () => {
+  it("escapes a quote in the OData literal and keeps Graph's case except for the id", async () => {
+    const { graph, requests } = client([
+      { value: [{ id: USER(1).toUpperCase(), mail: "O'Brien@Example.Test", userType: 'Member', accountEnabled: true, proxyAddresses: ["SMTP:O'Brien@Example.Test", 'smtp:ob@example.test'] }] },
+    ]);
+    expect(await graph.usersByMail("o'brien@example.test")).toEqual([
+      { id: USER(1), mail: "O'Brien@Example.Test", userType: 'Member', accountEnabled: true, proxyAddresses: ["SMTP:O'Brien@Example.Test", 'smtp:ob@example.test'] },
+    ]);
+    const url = new URL(requests[0].url);
+    expect(url.pathname).toBe('/v1.0/users');
+    expect(url.searchParams.get('$filter')).toBe("mail eq 'o''brien@example.test'");
+    expect(url.searchParams.get('$select')).toBe('id,mail,userType,accountEnabled,proxyAddresses');
+    expect(url.searchParams.get('$top')).toBe('2');
+  });
+
+  it('treats a next link with fewer than two users, or a bad id, as a bad answer, and refuses a blank address', async () => {
+    const next = 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc';
+    const one = client([{ value: [{ id: USER(1), mail: 'a@example.test' }], '@odata.nextLink': next }]);
+    await expect(one.graph.usersByMail('a@example.test')).rejects.toMatchObject({ code: 'bad_response' });
+    const two = client([{ value: [{ id: USER(1), mail: 'a@example.test' }, { id: USER(2), mail: 'a@example.test' }], '@odata.nextLink': next }]);
+    expect(await two.graph.usersByMail('a@example.test')).toHaveLength(2);
+    const bad = client([{ value: [{ id: 'not-a-guid', mail: 'a@example.test' }] }]);
+    await expect(bad.graph.usersByMail('a@example.test')).rejects.toMatchObject({ code: 'bad_response' });
+    await expect(client([]).graph.usersByMail('a b@example.test')).rejects.toMatchObject({ code: 'bad_response' });
+  });
+});
