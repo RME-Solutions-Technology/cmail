@@ -1,3 +1,35 @@
+import { loadExchangeMirrorSwitch } from '@cmail/shared/exchange-mirror';
+
+/**
+ * Domains whose mail lives in Exchange Online rather than in cmail.
+ *
+ * With the Exchange mirror on (docs/exchange-mirror.md), Exchange hosts the
+ * mail domain and cmail keeps a copy from journal reports. A message cmail
+ * delivered straight into a cmail mailbox on that domain would never reach
+ * Exchange, so its recipient would not see it in Outlook. Those recipients are
+ * therefore sent through the outbound provider like any external address:
+ * Exchange delivers them, and the journal report files the cmail copy once
+ * (the mirror's copy id is derived from the Message-ID).
+ *
+ * With the mirror off this is empty and local delivery is unchanged.
+ */
+export async function exchangeHostedDomains(db: D1Database, mailDomain: string): Promise<ReadonlySet<string>> {
+  if (!mailDomain) return new Set();
+  return (await loadExchangeMirrorSwitch(db)) ? new Set([mailDomain]) : new Set();
+}
+
+/** Mailbox rows cmail may deliver to directly: those not on an Exchange-hosted domain. */
+export function locallyDeliverable<T extends { address: string }>(
+  rows: ReadonlyArray<T>,
+  hostedDomains: ReadonlySet<string>,
+): T[] {
+  if (!hostedDomains.size) return [...rows];
+  return rows.filter((row) => {
+    const address = row.address.toLowerCase();
+    return !hostedDomains.has(address.slice(address.lastIndexOf('@') + 1));
+  });
+}
+
 export interface RecipientDeliveryPlan {
   /** Addresses whose delivery requires the configured outbound provider. */
   externalRecipients: string[];

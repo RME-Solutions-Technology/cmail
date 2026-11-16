@@ -64,7 +64,7 @@ import {
   suppressionApiAvailable,
   unblockRecipient,
 } from '#lib/server/suppressions.js';
-import { planRecipientDelivery } from '#lib/server/recipient-delivery.js';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from '#lib/server/recipient-delivery.js';
 import {
   deriveReplyThreading,
   safeMessageId,
@@ -665,7 +665,18 @@ export const actions: Actions = {
     const internalRows = await env.DB.prepare(
       `SELECT address, id FROM mailboxes WHERE status = 'active' AND address IN (${allRecipients.map(() => '?').join(',')})`,
     ).bind(...allRecipients).all<{ address: string; id: string }>();
-    const internalMap = new Map((internalRows.results || []).map((row) => [row.address.toLowerCase(), row.id]));
+    // With the Exchange mirror on, recipients on the Exchange-hosted domain go
+    // through the provider so Exchange (and Outlook) gets the message too.
+    let hostedDomains: ReadonlySet<string>;
+    try {
+      hostedDomains = await exchangeHostedDomains(env.DB, normalizeDomain(env.MAIL_DOMAIN) || '');
+    } catch (caught) {
+      console.error('Exchange mirror switch could not be read for a send', caught instanceof Error ? caught.message : 'unknown');
+      return fail(503, { error: 'Delivery settings are temporarily unavailable. Your draft is safe; try again shortly.' });
+    }
+    const internalMap = new Map(
+      locallyDeliverable(internalRows.results || [], hostedDomains).map((row) => [row.address.toLowerCase(), row.id]),
+    );
     const {
       providerTo,
       providerCc,

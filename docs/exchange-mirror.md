@@ -134,6 +134,33 @@ notification (people are still reading in Outlook). The only SMTP answer
 cmail ever gives is Cloudflare's own refusal of a report that fails the
 checks below.
 
+### Mail sent from cmail to colleagues
+
+While the mirror is on, Exchange holds the mail domain, so cmail does not
+file a message straight into a colleague's cmail mailbox on that domain: it
+sends it through the outbound provider like any external address. Exchange
+delivers it to the colleague's Outlook, the journal report comes back, and
+the mirror files the cmail copy once (the copy's id comes from the
+Message-ID, so a repeated report or a second delivery path files nothing
+new). The sender's own Sent copy is stored by cmail as usual; the mirror
+adds no second one, because a message from the provider reaches Exchange as
+internet mail and so never carries the internal-submission proof a mirrored
+Sent copy needs.
+
+Because the colleague's cmail copy now comes from the mirror, it is treated
+like any mirrored copy: filed as read, with no cmail inbox rules and no
+new-mail notification (Outlook is where they read it).
+
+Mailboxes on other domains, and every send while the mirror is off, are
+delivered locally as before. This needs the outbound provider to be set up
+([Sending](sending.md)); without it a send to a colleague is refused with the
+provider's setup message rather than delivered where Outlook would not see
+it. A colleague in **Bcc** is now an envelope-only recipient, so the
+provider must be able to split the envelope (the Cloudflare REST route); on a
+provider that cannot, the send is refused before anything leaves. If the mirror switch cannot be read, the send fails and the draft is
+kept. After a [standby switch-over](standby-switch.md) (MX at Cloudflare),
+turn the mirror off so colleagues are delivered locally again.
+
 ## How a report is trusted
 
 A message is treated as a journal report only when **all** of these hold.
