@@ -70,10 +70,13 @@ usual reason a step stalls halfway.
   and for steps 9 to 12), and Wrangler signed in (`pnpm exec wrangler whoami`).
   If you work with several accounts, set `CLOUDFLARE_ACCOUNT_ID` in the
   session before every Wrangler command.
-- **Microsoft 365:** a Global Administrator, or an Application Administrator
-  plus a Privileged Role Administrator for admin consent (steps 5 and 11), and
-  an Exchange administrator for steps 10 and 11. Note the **tenant ID** (Entra
-  admin center > Overview) and the **initial domain** (`<name>.onmicrosoft.com`).
+- **Microsoft 365 roles, active:** Application Administrator (or Cloud
+  Application Administrator) to create apps (step 3); Global Administrator,
+  or Privileged Role Administrator plus Application Administrator, to grant
+  application permissions (steps 5 and 11); Exchange Administrator (or Global
+  Administrator) for steps 10 and 11. The scripts check these first and stop
+  before creating anything. Note the **tenant ID** (Entra admin center >
+  Overview) and the **initial domain** (`<name>.onmicrosoft.com`).
 - **Tools:** Node and pnpm with `pnpm install` done in this repository;
   PowerShell 7.2+ (`pwsh`); Azure CLI signed in to the tenant with
   `az login --tenant <tenant id> --allow-no-subscriptions`; the
@@ -87,9 +90,20 @@ usual reason a step stalls halfway.
   a private folder outside git for the instance's `wrangler.toml` files and
   the journal address.
 
-**Pitfall.** Do every Cloudflare step in the instance's own account. Never
-copy a resource ID, Worker name or bucket between accounts
-([deployment.md](deployment.md#2-provision-cloudflare-resources)).
+**Pitfalls.**
+- **PIM.** If the admin roles are eligible in Privileged Identity Management,
+  activate them (Entra > Privileged Identity Management > My roles) before
+  each session, wait a minute, then run `az login` again: `az` keeps the
+  roles it had when it signed in, so a role activated afterwards is not
+  seen. Reconnect Exchange Online after activating too. Activations expire
+  (often after a few hours), so a long onboarding may need them again.
+- Do every Cloudflare step in the instance's own account. Never copy a
+  resource ID, Worker name or bucket between accounts
+  ([deployment.md](deployment.md#2-provision-cloudflare-resources)).
+- Pass `--env=""` to every Wrangler `secret put`, `secret delete` and
+  `d1 execute` on an instance whose `wrangler.toml` has an `[env.preview]`
+  section, so the command targets the production (top-level) environment
+  without ambiguity. The scripts always do.
 
 ## 1. Instance
 
@@ -105,8 +119,8 @@ required inbound Worker secret, then:
 
 ```sh
 # Is the database empty? Both must be 0 for a new instance.
-pnpm exec wrangler d1 execute <db name> --remote --config apps/web/wrangler.toml --command "SELECT count(*) AS c FROM users"
-pnpm exec wrangler d1 execute <db name> --remote --config apps/web/wrangler.toml --command "SELECT count(*) AS c FROM messages"
+pnpm exec wrangler d1 execute <db name> --remote --config apps/web/wrangler.toml --env="" --command "SELECT count(*) AS c FROM users"
+pnpm exec wrangler d1 execute <db name> --remote --config apps/web/wrangler.toml --env="" --command "SELECT count(*) AS c FROM messages"
 pnpm db:migrate              # applies every migration in packages/shared/migrations
 pnpm deploy:email-worker     # the Worker first: Pages binds to it
 pnpm deploy:web
@@ -180,7 +194,7 @@ The secret is never shown.
 registration: single tenant; redirect URI platform **Web**,
 `https://mail.example.com/auth/callback/microsoft`. API permissions: Microsoft
 Graph delegated `openid`, `email`, `profile` only. Certificates & secrets >
-New client secret; then `pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name cmail-web`
+New client secret; then `pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name cmail-web --env=""`
 and the same for `MICROSOFT_CLIENT_SECRET`, pasting at the prompt.
 
 Then, either way: `MICROSOFT_TENANT_ID = "<tenant id>"` in
@@ -191,7 +205,7 @@ effect on the next deployment).
 useful until step 4: nobody has an account yet.
 
 **Undo.** `az ad app delete --id <app id>`;
-`pnpm exec wrangler pages secret delete MICROSOFT_CLIENT_SECRET --project-name cmail-web`
+`pnpm exec wrangler pages secret delete MICROSOFT_CLIENT_SECRET --project-name cmail-web --env=""`
 (and `MICROSOFT_CLIENT_ID`); redeploy.
 
 **Pitfalls.**
@@ -231,7 +245,7 @@ The token is 32 random bytes, copied to the clipboard and not shown
 **Check.**
 
 ```sh
-pnpm exec wrangler d1 execute <db name> --remote --config apps/web/wrangler.toml --command "SELECT role, status, count(*) AS n FROM users GROUP BY role, status"
+pnpm exec wrangler d1 execute <db name> --remote --config apps/web/wrangler.toml --env="" --command "SELECT role, status, count(*) AS n FROM users GROUP BY role, status"
 ```
 
 shows exactly one active manager. After `-Remove` and the redeploy,
@@ -262,11 +276,13 @@ pwsh -File scripts/onboarding/new-sync-app.ps1 -TenantId <tenant id> -MailDomain
 
 It creates a separate app with Graph **application** permissions
 `User.Read.All` (plus `MailboxSettings.Read` with `-DetectSharedMailboxes`,
-`GroupMember.Read.All` with `-GroupScoped`), grants admin consent with
+`GroupMember.Read.All` with `-GroupScoped`), tries admin consent with
 `az ad app permission admin-consent`
 ([reference](https://learn.microsoft.com/en-us/cli/azure/ad/app/permission#az-ad-app-permission-admin-consent)),
-checks the grants on the service principal's `appRoleAssignments`, and pipes
-a new client secret into the Worker secret `M365_CLIENT_SECRET`.
+reads the grants back from the service principal's `appRoleAssignments`,
+grants any that are still missing directly
+([grant an appRoleAssignment](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-post-approleassignedto)),
+and pipes a new client secret into the Worker secret `M365_CLIENT_SECRET`.
 
 **Manual equivalent.** [Microsoft 365 sync: Entra app setup](m365-sync.md#entra-app-setup-least-privilege).
 
@@ -282,11 +298,16 @@ live round runs on the next 15-minute tick and always reconciles after a dry
 run. Admin then shows result `ok`; Admin > People lists the synced people.
 
 **Undo.** Turn the sync off (accounts stay as they are). To remove it:
-`wrangler secret delete M365_CLIENT_SECRET --config apps/email-worker/wrangler.toml`,
+`wrangler secret delete M365_CLIENT_SECRET --config apps/email-worker/wrangler.toml --env=""`,
 remove the vars, `az ad app delete --id <app id>`.
 
 **Pitfalls.**
-- Consent can take a minute to appear; the script waits and checks.
+- `az ad app permission admin-consent` can return success without applying
+  an application permission: on the first live tenant it did not apply
+  `Exchange.ManageAsApp`, and a direct appRoleAssignment did. Always check
+  Entra > Enterprise applications > the app > Permissions (or the service
+  principal's `appRoleAssignments`). The scripts check and fall back to the
+  direct grant.
 - "Type unknown" for every mailbox means `MailboxSettings.Read` is missing or
   not consented.
 - A large first change is held by the mass-pause brake; read it, then approve
@@ -392,11 +413,14 @@ journal rule, so a standby has recent mail. Read
 [Exchange mirror](exchange-mirror.md) first, including how a report is
 trusted and the privacy section.
 
-**Script (three runs, each after the step before is checked).**
+**Script (three runs, each after the step before is checked).** It needs
+an active Exchange Administrator (or Global Administrator) role; after
+connecting it checks the journaling cmdlets are available and stops before
+any change if not. Every Exchange call stops on error.
 
 ```powershell
 $m = @{ StandbySubdomain = 'standby.example.com'; JournalAddressFile = '<private folder>/journal-address.txt' }
-# a. New journal address -> file + Worker secret M365_JOURNAL_ADDRESS
+# a. New journal address -> Worker secret M365_JOURNAL_ADDRESS, then the file (only once the secret is stored)
 pwsh -File scripts/onboarding/exchange-mirror.ps1 @m -NewJournalAddress -WranglerConfig apps/email-worker/wrangler.toml
 # b. Exchange: NDR address (previous value saved), TNEF-off remote domain, journal rule DISABLED
 pwsh -File scripts/onboarding/exchange-mirror.ps1 @m -NdrAddress journal-ndr@standby.example.com -WhatIf
@@ -443,6 +467,10 @@ Admin > Exchange mirror > Turn off; optionally delete the routing rule and
   `X-MS-Exchange-CrossTenant-Id`. What authenticates it is SPF for the NDR
   domain, which passes only once `include:spf.protection.outlook.com` is in
   that domain's SPF.
+- Cloudflare's `Authentication-Results` carries a bare `spf=pass` before the
+  `spf=pass smtp.mailfrom=<NDR domain>` result. cmail before PR 123 read the
+  first one, so every report failed `auth_failed`; run a cmail version that
+  includes that fix (it uses the SPF result that names `smtp.mailfrom`).
 - Without that SPF include, and with `M365_JOURNAL_REQUIRE_AUTH = "true"`,
   every report is refused, Exchange sends one NDR per report to the NDR
   address, and refused reports risk Exchange disabling the rule after two
@@ -473,14 +501,19 @@ pwsh -File scripts/onboarding/perms-setup.ps1 -TenantId <tenant id> -Organizatio
 # then without -WhatIf, on Windows, as an admin who can consent and manage Exchange roles
 ```
 
-It creates a third app with the Office 365 Exchange Online application
-permission `Exchange.ManageAsApp` and admin consent; a self-signed
-certificate with a CSP key (the public part on the app); a custom role from
+After the role pre-flight it creates a third app with the Office 365
+Exchange Online application permission `Exchange.ManageAsApp` (admin consent,
+checked, with the direct grant as fallback); a self-signed certificate with a
+CSP key, the public part on the app (a rerun reuses a valid certificate that
+is already on the app instead of adding another); a custom role from
 "Mail Recipients" trimmed to six read cmdlets (`Get-Mailbox`,
 `Get-MailboxPermission`, `Get-RecipientPermission`, `Get-Recipient`,
 `Get-User`, `Get-Group`) in its own role group; the app's Exchange service
-principal in that group. Then, **as the app**, the go/no-go: a write must
-fail and a shared mailbox's grants must be readable. Only on GO does it pipe
+principal in that group. Then, **as the app**, the go/no-go: no write
+cmdlet (`Add-`/`Remove-MailboxPermission`, `Add-`/`Remove-RecipientPermission`,
+`Set-Mailbox`) may be available to the app's session (nothing is attempted),
+and a shared mailbox's grants must be readable; any unexpected error is a
+no-go. Only on GO does it pipe
 the PFX (base64) and its random password into the Worker secrets
 `M365_EXO_CERT_PFX_B64` and `M365_EXO_CERT_PASSWORD`, and delete the PFX file
 ([app-only auth for Exchange Online PowerShell](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2)).
@@ -505,6 +538,10 @@ container. Grants already written stay (see the feature doc's rollback).
 **Pitfalls.**
 - No-go if the app can write: the script stores nothing; run `-Rollback`
   and check the role.
+- The certificate's private key stays in your Windows certificate store
+  (CurrentUser\My) so a rerun or renewal can reuse it. Pass
+  `-RemoveLocalCertificate` to delete it once the Worker secret is stored;
+  the secret is then the only copy, and a rerun makes a new certificate.
 - The go/no-go needs at least one shared mailbox in the tenant.
 - Exchange role changes take a minute or more to apply; the script waits 60
   seconds before checking.

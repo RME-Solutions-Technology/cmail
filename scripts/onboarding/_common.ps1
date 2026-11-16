@@ -116,18 +116,83 @@ function New-ResourceAccessFile {
   $file
 }
 
-function Wait-AppRoleAssignments {
-  param([string]$ServicePrincipalId, [string[]]$ExpectedRoleIds, [int]$WaitSeconds)
+# Active Entra directory roles of the signed-in az user. PIM roles count only
+# once activated, and az must sign in again after activation (its token carries
+# the roles it had at sign-in).
+function Get-ActiveDirectoryRoles {
+  @(Invoke-Az rest --method GET --url 'https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=displayName' --query 'value[].displayName' -o tsv |
+    Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() })
+}
+
+# Pre-flight, before anything is created. Need:
+#   AppRegistration - create apps and grant delegated consent: Global Administrator,
+#                     Application Administrator or Cloud Application Administrator;
+#   AppRoleConsent  - consent to application permissions (app roles): Global
+#                     Administrator, or Privileged Role Administrator plus
+#                     (Cloud) Application Administrator;
+#   Exchange        - Exchange Administrator or Global Administrator.
+function Assert-AdminRoles {
+  param([ValidateSet('AppRegistration', 'AppRoleConsent', 'Exchange')][string[]]$Need)
+  $roles = @(Get-ActiveDirectoryRoles)
+  $ga = $roles -contains 'Global Administrator'
+  $appAdmin = ($roles -contains 'Application Administrator') -or ($roles -contains 'Cloud Application Administrator')
+  $problems = @()
+  if ($Need -contains 'AppRegistration' -and -not ($ga -or $appAdmin)) { $problems += 'Application Administrator (or Global Administrator)' }
+  if ($Need -contains 'AppRoleConsent' -and -not ($ga -or (($roles -contains 'Privileged Role Administrator') -and $appAdmin))) {
+    $problems += 'Global Administrator, or Privileged Role Administrator plus Application Administrator'
+  }
+  if ($Need -contains 'Exchange' -and -not ($ga -or ($roles -contains 'Exchange Administrator'))) { $problems += 'Exchange Administrator (or Global Administrator)' }
+  if ($problems.Count) {
+    $active = if ($roles.Count) { $roles -join ', ' } else { 'none' }
+    throw "Missing active role: $($problems -join '; '). Activate it in PIM (Entra > Privileged Identity Management > My roles), wait a minute, run 'az login' again, then rerun. Active now: $active."
+  }
+}
+
+# Makes sure the service principal holds each application permission (app role)
+# of the resource. `az ad app permission admin-consent` is tried first; it has
+# been seen NOT to apply an app role on a live tenant, so anything still missing
+# is then granted directly with an appRoleAssignment (POST appRoleAssignedTo),
+# and the result is read back.
+function Grant-AppRoles {
+  param([string]$AppId, [string]$ServicePrincipalId, [string]$ResourceAppId, [string[]]$RoleIds, [int]$WaitSeconds = 30)
+  try { Invoke-Az ad app permission admin-consent --id $AppId | Out-Null }
+  catch { Write-Warning "admin-consent did not complete ($_); granting directly." }
+  $url = "https://graph.microsoft.com/v1.0/servicePrincipals/$ServicePrincipalId/appRoleAssignments"
+  $readGranted = { @(Invoke-Az rest --method GET --url $url --query 'value[].appRoleId' -o tsv | Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() }) }
   $deadline = (Get-Date).AddSeconds([Math]::Max($WaitSeconds, 0))
-  do {
-    $granted = @(Invoke-Az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$ServicePrincipalId/appRoleAssignments" --query 'value[].appRoleId' -o tsv |
-      Where-Object { $_ } | ForEach-Object { ([string]$_).Trim() })
-    $missing = @($ExpectedRoleIds | Where-Object { $granted -notcontains $_ })
-    if ($missing.Count -eq 0) { return }
-    if ((Get-Date) -ge $deadline) { break }
+  while ($true) {
+    $granted = & $readGranted
+    $missing = @($RoleIds | Where-Object { $granted -notcontains $_ })
+    if ($missing.Count -eq 0 -or (Get-Date) -ge $deadline) { break }
     Start-Sleep -Seconds 10
-  } while ($true)
-  throw "Admin consent is not visible yet for $($missing.Count) permission(s). Check Entra > App registrations > API permissions shows 'Granted', then run again."
+  }
+  if ($missing.Count) {
+    $resourceSpId = Get-FirstLine (Invoke-Az ad sp show --id $ResourceAppId --query id -o tsv)
+    Assert-Guid $resourceSpId 'Resource service principal id'
+    foreach ($roleId in $missing) {
+      $bodyFile = Join-Path ([IO.Path]::GetTempPath()) ("cmail-ara-{0}.json" -f [guid]::NewGuid().ToString('N'))
+      ConvertTo-Json -InputObject @{ principalId = $ServicePrincipalId; resourceId = $resourceSpId; appRoleId = $roleId } |
+        Set-Content -LiteralPath $bodyFile -Encoding utf8NoBOM
+      try {
+        Invoke-Az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$resourceSpId/appRoleAssignedTo" --body "@$bodyFile" --headers 'Content-Type=application/json' | Out-Null
+      } finally { Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue }
+    }
+    $granted = & $readGranted
+    $still = @($RoleIds | Where-Object { $granted -notcontains $_ })
+    if ($still.Count) { throw "$($still.Count) application permission(s) are still not granted. Check Entra > Enterprise applications > the app > Permissions." }
+    Write-Note "Granted $($missing.Count) application permission(s) directly (admin-consent had not applied them)."
+  }
+}
+
+# Runs an Exchange Get-* query (which must use -ErrorAction Stop); returns
+# $null only when the object does not exist. Any other error (sign-in,
+# permission, throttling) stops the script.
+function Get-ExoOrNull([scriptblock]$Query) {
+  try { & $Query }
+  catch {
+    if ("$_" -match "couldn't be found|could not be found|wasn't found|was not found|ManagementObjectNotFound") { return $null }
+    throw
+  }
 }
 
 function New-RandomToken([int]$Bytes = 32) {
@@ -152,6 +217,8 @@ function Set-WranglerSecret {
   if (-not $Value) { throw "Refusing to store an empty value in $Name." }
   $wranglerArgs = if ($PagesProject) { @('exec', 'wrangler', 'pages', 'secret', 'put', $Name, '--project-name', $PagesProject) }
                   else { @('exec', 'wrangler', 'secret', 'put', $Name, '--config', $WranglerConfig) }
+  # --env= targets the top-level (production) environment, never [env.preview].
+  $wranglerArgs += '--env='
   Push-Location $RepoRoot
   try {
     $out = $Value | & pnpm @wranglerArgs 2>&1
@@ -163,15 +230,18 @@ function Set-WranglerSecret {
   Write-Note "Stored $Name (value not shown)."
 }
 
+# Deletes a secret; one that is already gone counts as done.
 function Remove-WranglerSecret {
   param([Parameter(Mandatory)][string]$Name, [string]$WranglerConfig = '', [string]$PagesProject = '', [string]$RepoRoot = (Get-RepoRoot))
   $wranglerArgs = if ($PagesProject) { @('exec', 'wrangler', 'pages', 'secret', 'delete', $Name, '--project-name', $PagesProject) }
                   else { @('exec', 'wrangler', 'secret', 'delete', $Name, '--config', $WranglerConfig) }
+  $wranglerArgs += '--env='
   Push-Location $RepoRoot
   try {
     # stdin is not a terminal, so Wrangler takes its default answer (yes) to "Are you sure?".
     $out = 'y' | & pnpm @wranglerArgs 2>&1
     if ($LASTEXITCODE -ne 0) {
+      if (($out | Out-String) -match '(?i)not found|does not exist|no such|10056') { Write-Note "$Name was already absent."; return }
       $out | Select-Object -Last 8 | ForEach-Object { Write-Warning "$_" }
       throw "wrangler could not delete $Name (exit code $LASTEXITCODE)."
     }

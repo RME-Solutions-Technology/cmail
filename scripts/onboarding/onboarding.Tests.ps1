@@ -43,8 +43,15 @@ $global:MockCalls = [System.Collections.Generic.List[object]]::new()
 $global:MockAzTenant = $global:Mock_tenant
 $global:MockAppExists = $false
 $global:MockGranted = @()
+$global:MockRoles = @('Global Administrator')
+$global:MockConsentApplies = $true
+$global:MockSecretMissing = $false
 
-function Reset-Mocks { $global:MockCalls.Clear(); $global:MockAppExists = $false; $global:MockGranted = @() }
+function Reset-Mocks {
+  $global:MockCalls.Clear(); $global:MockAppExists = $false; $global:MockGranted = @()
+  $global:MockRoles = @('Global Administrator'); $global:MockConsentApplies = $true; $global:MockSecretMissing = $false
+}
+function Get-MockRoleId([string]$Value) { "00000000-0000-0000-0000-00000000$([Math]::Abs($Value.GetHashCode()) % 9000 + 1000)" }
 function Get-CallsOf([string]$Tool) { @($global:MockCalls | Where-Object Tool -EQ $Tool) }
 
 function az {
@@ -52,19 +59,28 @@ function az {
   $global:MockCalls.Add([pscustomobject]@{ Tool = 'az'; Args = $line; Stdin = '' })
   $global:LASTEXITCODE = 0
   switch -Regex ($line) {
+    '^rest --method GET --url https://graph.microsoft.com/v1.0/me/transitiveMemberOf' { return $global:MockRoles }
+    '^rest --method POST --url \S+/appRoleAssignedTo --body @(\S+)' {
+      $body = Get-Content -LiteralPath $Matches[1] -Raw | ConvertFrom-Json
+      $global:MockGranted = @($global:MockGranted) + $body.appRoleId
+      return
+    }
+    '^ad sp show --id \S+ --query id' { return '00000000-0000-0000-0000-000000000004' }
+    '^ad app credential list' { return }
     '^account show' { return $global:MockAzTenant }
     '^ad app list' { if ($global:MockAppExists) { return $global:Mock_newApp } else { return } }
     '^ad sp show --id \S+ --query (appRoles|oauth2PermissionScopes)' {
-      $v = [regex]::Match($line, "value=='([^']+)'").Groups[1].Value
-      $n = [Math]::Abs($v.GetHashCode()) % 9000 + 1000
-      return "00000000-0000-0000-0000-00000000$n"
+      return Get-MockRoleId ([regex]::Match($line, "value=='([^']+)'").Groups[1].Value)
     }
     '^ad app create' { $global:MockAppExists = $true; return $global:Mock_newApp }
     '^ad sp list' { return }
     '^ad sp create' { return $global:Mock_spId }
     '^ad app permission admin-consent' {
-      $global:MockGranted = @($global:MockCalls | Where-Object { $_.Tool -eq 'az' -and $_.Args -match '^ad sp show --id \S+ --query appRoles' } |
-        ForEach-Object { $v = [regex]::Match($_.Args, "value=='([^']+)'").Groups[1].Value; "00000000-0000-0000-0000-00000000$([Math]::Abs($v.GetHashCode()) % 9000 + 1000)" })
+      # Live, admin-consent once did not apply an app role: MockConsentApplies = $false copies that.
+      if ($global:MockConsentApplies) {
+        $global:MockGranted = @($global:MockCalls | Where-Object { $_.Tool -eq 'az' -and $_.Args -match '^ad sp show --id \S+ --query appRoles' } |
+          ForEach-Object { Get-MockRoleId ([regex]::Match($_.Args, "value=='([^']+)'").Groups[1].Value) })
+      }
       return
     }
     '^rest --method GET' { return $global:MockGranted }
@@ -75,7 +91,9 @@ function az {
 
 function pnpm {
   $stdin = @($input) -join "`n"
-  $global:MockCalls.Add([pscustomobject]@{ Tool = 'pnpm'; Args = ($args -join ' '); Stdin = $stdin })
+  $line = $args -join ' '
+  $global:MockCalls.Add([pscustomobject]@{ Tool = 'pnpm'; Args = $line; Stdin = $stdin })
+  if ($global:MockSecretMissing -and $line -match 'secret delete') { $global:LASTEXITCODE = 1; return 'X [ERROR] Secret not found' }
   $global:LASTEXITCODE = 0
   'Success! Uploaded secret'
 }
@@ -179,6 +197,15 @@ Assert-True $threw 'sign-in app: did not stop on a different az tenant'
 Assert-True (@(Get-CallsOf 'pnpm').Count -eq 0) 'sign-in app: stored something after the tenant check failed'
 $global:MockAzTenant = $global:Mock_tenant
 
+Assert-True (@(Get-CallsOf 'pnpm' | Where-Object Args -NotMatch ' --env=$').Count -eq 0) 'sign-in app: a wrangler call without --env='
+
+Reset-Mocks
+$global:MockRoles = @('Exchange Administrator')
+$threw = $false
+try { $null = Invoke-Script 'new-signin-app.ps1' @{ TenantId = $global:Mock_tenant; AppUrl = 'https://mail.example.com'; PagesProject = 'cmail-web'; RepoRoot = $work } } catch { $threw = "$_" -match 'PIM' }
+Assert-True $threw 'sign-in app: did not stop without an app admin role'
+Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^ad app create').Count -eq 0) 'sign-in app: created an app before the role check'
+
 # ---- Bootstrap ----------------------------------------------------------------
 Reset-Mocks
 $out = Invoke-Script 'set-bootstrap-secrets.ps1' @{ PagesProject = 'cmail-web'; AdminEmail = 'admin@example.com'; RepoRoot = $work }
@@ -190,15 +217,29 @@ Assert-True ($tok.Count -eq 1 -and $out -notmatch [regex]::Escape($tok[0].Stdin)
 Assert-True (@(Get-CallsOf 'pnpm' | Where-Object { $_.Args -match 'BOOTSTRAP_ADMIN_EMAIL' -and $_.Stdin -eq 'admin@example.com' }).Count -eq 1) 'bootstrap: admin email not stored'
 Reset-Mocks
 $null = Invoke-Script 'set-bootstrap-secrets.ps1' @{ PagesProject = 'cmail-web'; Remove = $true; RepoRoot = $work }
-Assert-True (@(Get-CallsOf 'pnpm' | Where-Object Args -Match 'pages secret delete BOOTSTRAP_ADMIN_(TOKEN|EMAIL) --project-name cmail-web').Count -eq 2) 'bootstrap -Remove: both secrets not deleted'
+Assert-True (@(Get-CallsOf 'pnpm' | Where-Object Args -Match 'pages secret delete BOOTSTRAP_ADMIN_(TOKEN|EMAIL) --project-name cmail-web --env=$').Count -eq 2) 'bootstrap -Remove: both secrets not deleted (with --env=)'
+Reset-Mocks
+$global:MockSecretMissing = $true
+$threw = $false
+try { $null = Invoke-Script 'set-bootstrap-secrets.ps1' @{ PagesProject = 'cmail-web'; Remove = $true; RepoRoot = $work } } catch { $threw = $true }
+Assert-True (-not $threw) 'bootstrap -Remove: failed when the secrets were already gone'
 
 # ---- Sync app -------------------------------------------------------------------
+Reset-Mocks
+Reset-Mocks
+$global:MockRoles = @('Application Administrator')
+$threw = $false
+try { $null = Invoke-Script 'new-sync-app.ps1' @{ TenantId = $global:Mock_tenant; MailDomain = 'example.com'; WranglerConfig = $wranglerToml; ConsentWaitSeconds = 0; RepoRoot = $work } } catch { $threw = "$_" -match 'Privileged Role Administrator' }
+Assert-True $threw 'sync app: did not stop without a role that can consent to application permissions'
+Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^ad app create').Count -eq 0) 'sync app: created an app before the role check'
 Reset-Mocks
 $out = Invoke-Script 'new-sync-app.ps1' @{ TenantId = $global:Mock_tenant; MailDomain = 'example.com'; WranglerConfig = $wranglerToml; DetectSharedMailboxes = $true; ConsentWaitSeconds = 0; RepoRoot = $work }
 $lookups = @(Get-CallsOf 'az' | Where-Object Args -Match '^ad sp show --id 00000003-0000-0000-c000-000000000000 --query appRoles')
 Assert-True ($lookups.Count -eq 2 -and ($lookups.Args -join ' ') -match 'User\.Read\.All' -and ($lookups.Args -join ' ') -match 'MailboxSettings\.Read') 'sync app: permissions not User.Read.All + MailboxSettings.Read'
 Assert-True (($lookups.Args -join ' ') -notmatch 'GroupMember') 'sync app: asked for GroupMember.Read.All without -GroupScoped'
 Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^ad app permission admin-consent').Count -eq 1) 'sync app: no admin consent'
+Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match 'appRoleAssignedTo').Count -eq 0) 'sync app: granted directly although admin consent applied'
+Assert-True (@(Get-CallsOf 'pnpm' | Where-Object Args -NotMatch ' --env=$').Count -eq 0) 'sync app: a wrangler call without --env='
 Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match "^rest --method GET --url https://graph.microsoft.com/v1.0/servicePrincipals/$global:Mock_spId/appRoleAssignments").Count -ge 1) 'sync app: consent not verified'
 $put = @(Get-CallsOf 'pnpm' | Where-Object Args -Match 'exec wrangler secret put M365_CLIENT_SECRET --config')
 Assert-True ($put.Count -eq 1 -and $put[0].Stdin -eq $global:Mock_fakeSecret) 'sync app: secret not piped to the Worker'
@@ -248,6 +289,7 @@ Assert-True ((Get-Content -LiteralPath $state -Raw) -eq 'old-ndr@example.test') 
 $null = Invoke-Script 'exchange-mirror.ps1' @{ StandbySubdomain = 'standby.example.com'; JournalAddressFile = $newFile; Enable = $true; SkipDnsCheck = $true }
 Assert-True ($global:MockRule.Enabled -eq $true) 'mirror: -Enable did not enable the rule'
 $null = Invoke-Script 'exchange-mirror.ps1' @{ StandbySubdomain = 'standby.example.com'; JournalAddressFile = $newFile; Rollback = $true }
+Assert-True (@(Get-CallsOf 'exo' | Where-Object Args -Match '^Connect .*-ErrorAction Stop').Count -ge 1) 'mirror: Connect-ExchangeOnline without -ErrorAction Stop'
 Assert-True ($null -eq $global:MockRule -and $null -eq $global:MockRemote -and $global:MockNdr -eq 'old-ndr@example.test') 'mirror: -Rollback did not remove the rule and remote domain and restore the NDR address'
 
 # ---- Permission setup ---------------------------------------------------------------
@@ -268,7 +310,6 @@ function Get-ServicePrincipal { }
 function New-ServicePrincipal { $global:MockCalls.Add([pscustomobject]@{ Tool = 'exo'; Args = 'New-ServicePrincipal'; Stdin = '' }) }
 function Add-RoleGroupMember { }
 function Get-EXOMailbox { [pscustomobject]@{ PrimarySmtpAddress = 'shared@example.test' } }
-function Add-MailboxPermission { if (-not $global:MockCanWrite) { throw 'The term Add-MailboxPermission is not recognized' } }
 function Get-EXOMailboxPermission { [pscustomobject]@{ User = 'person@example.test'; IsInherited = $false } }
 
 $permsArgs = @{ TenantId = $global:Mock_tenant; Organization = 'example.onmicrosoft.com'; WranglerConfig = $wranglerToml; WorkDir = (Join-Path $work 'perms'); PropagationWaitSeconds = 0; RepoRoot = $work }
@@ -285,12 +326,28 @@ Assert-True (-not (Get-ChildItem -Path (Join-Path $work 'perms') -Filter '*.pfx'
 Assert-True (@(Get-CallsOf 'exo' | Where-Object Args -EQ 'New-ServicePrincipal').Count -eq 1) 'perms: Exchange service principal not created'
 
 Reset-Mocks
-$global:MockCanWrite = $true
+$global:MockConsentApplies = $false
+$global:MockRoleEntries = @()
+$null = Invoke-Script 'perms-setup.ps1' $permsArgs
+Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^rest --method POST --url https://graph.microsoft.com/v1.0/servicePrincipals/00000000-0000-0000-0000-000000000004/appRoleAssignedTo').Count -eq 1) 'perms: did not grant Exchange.ManageAsApp directly when admin-consent did not apply it'
+Assert-True (@(Get-CallsOf 'pnpm' | Where-Object Args -Match 'M365_EXO_CERT_PFX_B64').Count -eq 1) 'perms: stopped after a direct grant'
+
+Reset-Mocks
+$global:MockRoles = @('Exchange Administrator', 'Application Administrator')
+$global:MockRoleEntries = @()
+$threw = $false
+try { $null = Invoke-Script 'perms-setup.ps1' $permsArgs } catch { $threw = "$_" -match 'PIM' }
+Assert-True $threw 'perms: did not stop without a role that can consent to application permissions'
+Assert-True (@(Get-CallsOf 'az' | Where-Object Args -Match '^ad app create').Count -eq 0) 'perms: created an app before the role check'
+
+Reset-Mocks
+function global:Add-MailboxPermission { throw 'must never be called' }
 $global:MockRoleEntries = @()
 $threw = $false
 try { $null = Invoke-Script 'perms-setup.ps1' $permsArgs } catch { $threw = "$_" -match 'NO-GO' }
 Assert-True $threw 'perms: did not stop with NO-GO when the app can write'
 Assert-True (@(Get-CallsOf 'pnpm').Count -eq 0) 'perms: stored secrets on a NO-GO'
+Remove-Item function:global:Add-MailboxPermission
 
 # ---- PSScriptAnalyzer (optional) ------------------------------------------------------
 if (Get-Module -ListAvailable PSScriptAnalyzer) {

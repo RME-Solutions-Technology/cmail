@@ -28,12 +28,25 @@ and how to undo it. Each script also has full help:
   copies it to the clipboard).
 - **Dry run first.** Every script takes `-WhatIf`: it signs in to nothing and
   lists what it would change. `-Confirm` asks before each change.
+- **Pre-flight first.** Before creating anything, each script checks `az` is
+  in the right tenant and the admin's active roles (Global Administrator, or
+  Privileged Role Administrator plus (Cloud) Application Administrator for
+  application permissions; Exchange Administrator for the Exchange steps).
+  Activate PIM roles, then `az login` again, before running.
 - **Stop on the first error.** A failed `az`, `wrangler` or Exchange command
-  stops the script; a check that fails (wrong `az` tenant, no-go, missing
-  role entry) stops it before anything is stored.
+  stops the script (every Exchange cmdlet runs with `-ErrorAction Stop`); a
+  check that fails (wrong `az` tenant, missing role, no-go, wrong role
+  entries) stops it before anything is stored.
+- **Consent is checked.** Application permissions are read back from the
+  service principal after `az ad app permission admin-consent`; any it did
+  not apply are granted directly (appRoleAssignment).
+- **Production environment.** Every Wrangler call passes `--env=` (the
+  top-level environment), never `[env.preview]`.
 - **Reruns are safe.** Existing apps, roles, rules and saved values are reused
-  rather than duplicated. A rerun of a secret step adds a new secret; delete
-  old ones in Entra once the new one works.
+  rather than duplicated (a valid certificate already on the app is reused).
+  A rerun of a client-secret step adds a new secret; delete old ones in
+  Entra once the new one works. `-Remove` and `-Rollback` treat things
+  already gone as done.
 
 ## Before you run them
 

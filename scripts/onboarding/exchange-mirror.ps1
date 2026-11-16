@@ -29,7 +29,10 @@
   restores the saved JournalingReportNdrTo.
 
   Needs: PowerShell 7, the ExchangeOnlineManagement module, an account with
-  the Exchange "Journaling" permission. Mode 1 also needs pnpm install done
+  the Exchange "Journaling" permission (Exchange Administrator or Global
+  Administrator, activated in PIM before you run it). After connecting, the
+  script checks the cmdlets it needs are available and stops before any
+  change if not. Every Exchange call stops on error. Mode 1 also needs pnpm install done
   in the repo and Wrangler signed in.
 
   Before mode 3, the standby subdomain's SPF TXT record must include
@@ -116,10 +119,11 @@ if ($NewJournalAddress) {
     $address = "journal-$(New-RandomHex 20)@$StandbySubdomain"
     $dir = Split-Path -Parent ([IO.Path]::GetFullPath($JournalAddressFile))
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    Set-Content -LiteralPath $JournalAddressFile -Value $address -Encoding ascii -NoNewline
-    if (-not $IsWindows) { & chmod 600 $JournalAddressFile }
     try {
+      # Secret first, file second: a failed upload leaves no file, so a rerun starts clean.
       Set-WranglerSecret -Name M365_JOURNAL_ADDRESS -Value $address -WranglerConfig $WranglerConfig -RepoRoot $RepoRoot
+      Set-Content -LiteralPath $JournalAddressFile -Value $address -Encoding ascii -NoNewline
+      if (-not $IsWindows) { & chmod 600 $JournalAddressFile }
     } finally { Remove-Variable address -ErrorAction SilentlyContinue }
   }
   Write-Step 'Next'
@@ -145,30 +149,41 @@ if ($dryRun) {
   }
   $connect = @{ ShowBanner = $false }
   if ($UserPrincipalName) { $connect.UserPrincipalName = $UserPrincipalName }
-  Connect-ExchangeOnline @connect
+  Connect-ExchangeOnline @connect -ErrorAction Stop
+  # Pre-flight before any change: the signed-in admin must hold the Exchange
+  # journaling and transport permissions (Exchange Administrator, or Global
+  # Administrator; activate PIM roles before connecting).
+  $needed = if ($Rollback) { 'Get-JournalRule', 'Disable-JournalRule', 'Remove-JournalRule', 'Get-RemoteDomain', 'Remove-RemoteDomain', 'Set-TransportConfig' }
+            elseif ($Enable) { 'Get-JournalRule', 'Enable-JournalRule' }
+            else { 'Get-TransportConfig', 'Set-TransportConfig', 'Get-RemoteDomain', 'New-RemoteDomain', 'Set-RemoteDomain', 'Get-JournalRule', 'New-JournalRule' }
+  $absent = @($needed | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) })
+  if ($absent.Count) {
+    Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+    throw "This Exchange sign-in cannot run: $($absent -join ', '). Activate Exchange Administrator (or Global Administrator) in PIM, wait a minute, then rerun. Nothing was changed."
+  }
 }
 
 try {
   if ($Rollback) {
     Write-Step 'Rolling back the Exchange mirror'
-    $rule = if ($dryRun) { $true } else { Get-JournalRule -Identity $RuleName -ErrorAction SilentlyContinue }
+    $rule = if ($dryRun) { $true } else { Get-ExoOrNull { Get-JournalRule -Identity $RuleName -ErrorAction Stop } }
     if ($rule -and $PSCmdlet.ShouldProcess("journal rule '$RuleName'", 'disable and remove')) {
-      Disable-JournalRule -Identity $RuleName -Confirm:$false
-      Remove-JournalRule -Identity $RuleName -Confirm:$false
+      Disable-JournalRule -Identity $RuleName -Confirm:$false -ErrorAction Stop
+      Remove-JournalRule -Identity $RuleName -Confirm:$false -ErrorAction Stop
       Write-Note 'Journal rule removed. Reports stop now.'
     }
-    $remote = if ($dryRun) { $true } else { Get-RemoteDomain -Identity $RemoteDomainName -ErrorAction SilentlyContinue }
+    $remote = if ($dryRun) { $true } else { Get-ExoOrNull { Get-RemoteDomain -Identity $RemoteDomainName -ErrorAction Stop } }
     if ($remote -and $PSCmdlet.ShouldProcess("remote domain '$RemoteDomainName'", 'remove')) {
-      Remove-RemoteDomain -Identity $RemoteDomainName -Confirm:$false
+      Remove-RemoteDomain -Identity $RemoteDomainName -Confirm:$false -ErrorAction Stop
       Write-Note 'Remote domain removed.'
     }
     $before = if (Test-Path -LiteralPath $StateFile) { (Get-Content -LiteralPath $StateFile -Raw).Trim() } else { $null }
     $restoreTo = if ($before) { $before } else { '(empty)' }
     if ($PSCmdlet.ShouldProcess('JournalingReportNdrTo', "restore to $restoreTo")) {
-      if ($before) { Set-TransportConfig -JournalingReportNdrTo $before }
+      if ($before) { Set-TransportConfig -JournalingReportNdrTo $before -ErrorAction Stop }
       else {
         Write-Warning 'No saved value (it was empty, or the state file is missing). Trying to clear it; if Exchange refuses, set it to another mailbox outside Exchange Online.'
-        Set-TransportConfig -JournalingReportNdrTo $null
+        Set-TransportConfig -JournalingReportNdrTo $null -ErrorAction Stop
       }
       Write-Note 'Undeliverable journal report address restored.'
     }
@@ -186,8 +201,8 @@ try {
       } else { Write-Warning "Cannot check DNS here. Check by hand that $StandbySubdomain's SPF has include:spf.protection.outlook.com." }
     }
     if ($PSCmdlet.ShouldProcess("journal rule '$RuleName'", 'enable (journaling copies ALL mail from now on)')) {
-      Enable-JournalRule -Identity $RuleName -Confirm:$false
-      Write-Note (Get-JournalRule -Identity $RuleName | Select-Object Name, Enabled, Scope | Format-List | Out-String).Trim()
+      Enable-JournalRule -Identity $RuleName -Confirm:$false -ErrorAction Stop
+      Write-Note (Get-JournalRule -Identity $RuleName -ErrorAction Stop | Select-Object Name, Enabled, Scope | Format-List | Out-String).Trim()
     }
     Write-Step 'Next: send a test message between two licensed users; Admin > Exchange mirror should show a last report time and "filed".'
     return
@@ -196,26 +211,26 @@ try {
   Write-Step "Exchange mirror setup (rule created DISABLED)"
   if ($PSCmdlet.ShouldProcess('JournalingReportNdrTo', "save current value to $StateFile, then set to $NdrAddress")) {
     if (-not (Test-Path -LiteralPath $StateFile)) {
-      $current = [string](Get-TransportConfig).JournalingReportNdrTo
+      $current = [string](Get-TransportConfig -ErrorAction Stop).JournalingReportNdrTo
       Set-Content -LiteralPath $StateFile -Value $current -Encoding utf8NoBOM -NoNewline
       Write-Note "Saved the previous value to $StateFile."
     } else { Write-Note "$StateFile already exists; keeping the value saved the first time." }
-    Set-TransportConfig -JournalingReportNdrTo $NdrAddress
+    Set-TransportConfig -JournalingReportNdrTo $NdrAddress -ErrorAction Stop
   }
   if ($PSCmdlet.ShouldProcess("remote domain '$RemoteDomainName' ($StandbySubdomain)", 'create if missing, TNEFEnabled $false')) {
-    if (-not (Get-RemoteDomain -Identity $RemoteDomainName -ErrorAction SilentlyContinue)) {
-      New-RemoteDomain -Name $RemoteDomainName -DomainName $StandbySubdomain | Out-Null
+    if (-not (Get-ExoOrNull { Get-RemoteDomain -Identity $RemoteDomainName -ErrorAction Stop })) {
+      New-RemoteDomain -Name $RemoteDomainName -DomainName $StandbySubdomain -ErrorAction Stop | Out-Null
     }
-    Set-RemoteDomain -Identity $RemoteDomainName -TNEFEnabled $false
+    Set-RemoteDomain -Identity $RemoteDomainName -TNEFEnabled $false -ErrorAction Stop
   }
   if ($PSCmdlet.ShouldProcess("journal rule '$RuleName'", 'create DISABLED, Scope Global, all users, to the journal address')) {
-    $existing = Get-JournalRule -Identity $RuleName -ErrorAction SilentlyContinue
+    $existing = Get-ExoOrNull { Get-JournalRule -Identity $RuleName -ErrorAction Stop }
     if (-not $existing) {
-      New-JournalRule -Name $RuleName -JournalEmailAddress $journal -Scope Global -Enabled $false | Out-Null
+      New-JournalRule -Name $RuleName -JournalEmailAddress $journal -Scope Global -Enabled $false -ErrorAction Stop | Out-Null
     } elseif ([string]$existing.JournalEmailAddress -ine $journal) {
       Write-Warning "Journal rule '$RuleName' already exists and its address does not look like the one in the file. Check it by hand (docs/exchange-mirror.md#rotating-the-journal-token)."
     }
-    Write-Note (Get-JournalRule -Identity $RuleName | Select-Object Name, Enabled, Scope | Format-List | Out-String).Trim()
+    Write-Note (Get-JournalRule -Identity $RuleName -ErrorAction Stop | Select-Object Name, Enabled, Scope | Format-List | Out-String).Trim()
   }
   Write-Step 'Next: Admin > Exchange mirror > Turn on in cmail, then run this script with -Enable.'
 } finally {

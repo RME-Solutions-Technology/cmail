@@ -16,7 +16,9 @@
   never passed as an argument and never written to a file.
 
   Needs: Azure CLI signed in to the tenant (`az login --tenant <id>
-  --allow-no-subscriptions`) as an admin who can create app registrations,
+  --allow-no-subscriptions`) with an active Application Administrator, Cloud
+  Application Administrator or Global Administrator role (checked first;
+  activate PIM roles, then `az login` again),
   Node + pnpm with `pnpm install` done in the repo, and Wrangler signed in to
   the Cloudflare account that holds the Pages project.
 
@@ -25,7 +27,7 @@
   the next deployment.
 
   Undo: az ad app delete --id <app id>, then
-  `wrangler pages secret delete MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET`
+  `wrangler pages secret delete MICROSOFT_CLIENT_ID --env=""` / `MICROSOFT_CLIENT_SECRET`
   and redeploy.
 
 .PARAMETER TenantId
@@ -77,6 +79,7 @@ if ($dryRun) {
   Write-Note 'Dry run: nothing is read from or written to Entra or Cloudflare.'
 } else {
   Assert-AzTenant $TenantId
+  Assert-AdminRoles -Need AppRegistration
   if (-not $AppId) { $AppId = Find-EntraApp $DisplayName }
 }
 

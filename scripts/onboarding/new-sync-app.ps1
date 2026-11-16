@@ -8,14 +8,19 @@
 .DESCRIPTION
   Step 5 of docs/onboarding-microsoft-365.md; the feature is docs/m365-sync.md.
 
+  Pre-flight: stops before creating anything unless the az user has an active
+  Global Administrator role, or Privileged Role Administrator plus (Cloud)
+  Application Administrator (activate PIM roles, then `az login` again).
+
   Microsoft Graph application permissions, nothing else:
   - User.Read.All (always);
   - MailboxSettings.Read with -DetectSharedMailboxes;
   - GroupMember.Read.All with -GroupScoped (M365_SCOPE_GROUP_ID or M365_SHARED_GROUP_ID).
   Permission ids are looked up from Microsoft Graph's service principal in the
-  tenant, not hard-coded. Admin consent is granted with
-  `az ad app permission admin-consent` and then checked on the service
-  principal's appRoleAssignments.
+  tenant, not hard-coded. Admin consent is tried with
+  `az ad app permission admin-consent`; any permission it did not apply is
+  granted directly (POST appRoleAssignedTo), and the result is read back from
+  the service principal's appRoleAssignments.
 
   The client secret is piped from `az ad app credential reset --append`
   straight into `wrangler secret put M365_CLIENT_SECRET`: never printed,
@@ -26,7 +31,7 @@
   install done in the repo, Wrangler signed in to the Cloudflare account.
 
   Undo: Admin > Microsoft 365 sync > off; `wrangler secret delete
-  M365_CLIENT_SECRET --config <WranglerConfig>`; az ad app delete --id <app id>.
+  M365_CLIENT_SECRET --config <WranglerConfig> --env=""`; az ad app delete --id <app id>.
 
 .PARAMETER TenantId
   Directory (tenant) ID, a GUID.
@@ -45,7 +50,7 @@
 .PARAMETER SecretMonths
   Months until the client secret expires (1 to 24).
 .PARAMETER ConsentWaitSeconds
-  How long to wait for admin consent to show on the service principal.
+  How long to wait for admin consent to show before granting directly.
 .PARAMETER SkipSecret
   Create and consent the app only; store nothing on Cloudflare.
 .PARAMETER RepoRoot
@@ -64,7 +69,7 @@ param(
   [switch]$DetectSharedMailboxes,
   [switch]$GroupScoped,
   [ValidateRange(1, 24)][int]$SecretMonths = 12,
-  [ValidateRange(0, 600)][int]$ConsentWaitSeconds = 120,
+  [ValidateRange(0, 600)][int]$ConsentWaitSeconds = 30,
   [switch]$SkipSecret,
   [string]$RepoRoot = ''
 )
@@ -87,6 +92,7 @@ if ($dryRun) {
   $roleIds = @()
 } else {
   Assert-AzTenant $TenantId
+  Assert-AdminRoles -Need AppRegistration, AppRoleConsent
   $roleIds = @(foreach ($p in $permissions) { Get-ResourcePermissionId -ResourceAppId $script:GraphResourceAppId -Value $p -Kind Role })
   if (-not $AppId) { $AppId = Find-EntraApp $DisplayName }
 }
@@ -117,16 +123,13 @@ if (-not $AppId) {
 
 if ($PSCmdlet.ShouldProcess("Entra app $AppId", 'create service principal and grant admin consent')) {
   $spId = Get-FirstLine (Invoke-Az ad sp list --filter "appId eq '$AppId'" --query '[].id' -o tsv)
-  if (-not $spId) { $spId = Get-FirstLine (Invoke-Az ad sp create --id $AppId --query id -o tsv) }
-  Assert-Guid $spId 'Service principal id'
-  # A new service principal can take a few seconds to be visible to consent.
-  $tries = 0
-  while ($true) {
-    try { Invoke-Az ad app permission admin-consent --id $AppId | Out-Null; break }
-    catch { if (++$tries -ge 4) { throw }; Start-Sleep -Seconds 15 }
+  if (-not $spId) {
+    $spId = Get-FirstLine (Invoke-Az ad sp create --id $AppId --query id -o tsv)
+    if ($ConsentWaitSeconds) { Start-Sleep -Seconds 15 }  # a new service principal takes a moment to be usable for consent
   }
-  Wait-AppRoleAssignments -ServicePrincipalId $spId -ExpectedRoleIds $roleIds -WaitSeconds $ConsentWaitSeconds
-  Write-Note "Admin consent granted and visible for: $($permissions -join ', ')."
+  Assert-Guid $spId 'Service principal id'
+  Grant-AppRoles -AppId $AppId -ServicePrincipalId $spId -ResourceAppId $script:GraphResourceAppId -RoleIds $roleIds -WaitSeconds $ConsentWaitSeconds
+  Write-Note "Application permissions granted and checked: $($permissions -join ', ')."
 }
 
 if (-not $SkipSecret -and $PSCmdlet.ShouldProcess("Entra app $AppId -> Worker ($WranglerConfig)", "create a $SecretMonths-month client secret and store it as M365_CLIENT_SECRET")) {
