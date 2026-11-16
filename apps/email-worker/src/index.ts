@@ -19,6 +19,7 @@ import type { StandbyEnv } from '@cmail/shared/standby';
 import { isJournalAddress, type ExchangeMirrorEnv } from '@cmail/shared/exchange-mirror';
 import { exchangeMirrorConfigDiagnostic, handleJournalDelivery, type InboundTools } from './exchange-mirror/ingest';
 import { runAliasSyncTick } from './m365-sync/aliases';
+import { runWelcomeTick, welcomeConfigDiagnostic, type WelcomeWorkerEnv } from './m365-welcome/welcome';
 import PostalMime from 'postal-mime';
 import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
 import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
@@ -66,7 +67,7 @@ export {
   reserveInboundDelivery,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
   /** Subrequests one Exchange journal report may use for filing (docs/exchange-mirror.md). */
   M365_JOURNAL_SUBREQUEST_BUDGET?: string | number;
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
@@ -816,6 +817,11 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/exchange-mirror/config' && request.method === 'GET') {
     return Response.json(exchangeMirrorConfigDiagnostic(env));
   }
+  // Microsoft 365 welcome emails (docs/m365-welcome-emails.md): whether this
+  // Worker can send at all, by setting name only.
+  if (url.pathname === '/internal/m365-welcome/config' && request.method === 'GET') {
+    return Response.json(welcomeConfigDiagnostic(env));
+  }
   if (url.pathname === '/internal/standby/run' && request.method === 'POST') {
     try {
       return Response.json(await runStandbyProbeNow(env));
@@ -936,6 +942,16 @@ export default {
         else if (result.status !== 'off' && result.status !== 'idle' && result.status !== 'sync_off') console.warn('Microsoft 365 alias import', { status: result.status });
       }, (caught: unknown) => {
         console.error('Microsoft 365 alias import failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      // Microsoft 365 welcome emails: returns after one settings read unless a
+      // manager turned them on (and the sync is on). See docs/m365-welcome-emails.md.
+      ctx.waitUntil(runWelcomeTick(env).then((result) => {
+        // Counts and codes only, never addresses or content.
+        if (result.status === 'worked') console.log('Microsoft 365 welcome emails ran', { queued: result.queued, sent: result.sent, retried: result.retried, failed: result.failed, skipped: result.skipped, limited: result.limited, stopped: result.stopped });
+        else if (result.status === 'not_configured') console.warn('Microsoft 365 welcome emails', { status: result.status, problems: result.problems });
+        else if (result.status === 'not_installed') console.warn('Microsoft 365 welcome emails', { status: result.status });
+      }, (caught: unknown) => {
+        console.error('Microsoft 365 welcome emails failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
       }));
       // Standby copy-back into Exchange shares this schedule: returns at once
       // unless switched on and a manager started a job. See docs/copy-back.md.

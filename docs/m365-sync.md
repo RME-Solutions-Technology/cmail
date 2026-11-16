@@ -10,7 +10,9 @@ This is the directory half of using cmail as a standby for Exchange Online:
 the people who would need the standby already have accounts when it is
 needed. Sign-in itself is separate (Google, Microsoft, an email code, or the
 [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge), which
-adopts synced pending accounts on a first visit).
+adopts synced pending accounts on a first visit). Optional
+[welcome emails](m365-welcome-emails.md) (off by default) tell each new
+person how to sign in.
 
 - Code: `apps/email-worker/src/m365-sync/` (Graph client, rules, apply,
   scheduled driver), `packages/shared/src/m365-sync.ts` (switch, config check,
