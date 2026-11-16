@@ -1,4 +1,17 @@
+---
+title: "Microsoft 365 mailbox sync"
+summary: "How to keep cmail accounts and shared mailboxes in step with a Microsoft 365 tenant, read only."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Microsoft 365 sync"
+last_reviewed: 2026-11-16
+related: [m365-welcome-emails.md, staff-sign-in.md, credentials.md, onboarding-microsoft-365.md]
+---
+
 # Microsoft 365 mailbox sync
+
+**Status:** running on one Microsoft 365 tenant since
+November 2026 (dry run first, then live).
 
 Optional and off by default. When a manager turns it on, the email Worker
 reads the organisation's Microsoft 365 (Entra ID) users on a schedule and keeps
@@ -27,6 +40,22 @@ person how to sign in.
   `org_settings`.
 - Tests: `apps/email-worker/src/m365-sync/*.test.ts` and
   `apps/web/src/lib/server/m365-sync-admin.test.ts`.
+
+**In this article**
+
+- [How it works](#how-it-works)
+- [Sync points, and why these ones](#sync-points-and-why-these-ones)
+- [Which accounts are synced](#which-accounts-are-synced)
+- [What the sync changes in cmail](#what-the-sync-changes-in-cmail)
+- [First sign-in](#first-sign-in)
+- [Mass-pause brake](#mass-pause-brake)
+- [The switch (Admin > Microsoft 365 sync)](#the-switch-admin--microsoft-365-sync)
+- [Troubleshoot the sync](#troubleshoot-the-sync)
+- [How to set up the Entra app (least privilege)](#how-to-set-up-the-entra-app-least-privilege)
+- [Configuration](#configuration)
+- [Runbook](#runbook)
+- [How to test](#how-to-test)
+- [Limits](#limits)
 
 ## How it works
 
@@ -412,7 +441,7 @@ configured"). If the web app cannot ask the Worker (no `EMAIL_SERVICE`
 binding), the switch still works, and the Worker records `not_configured`
 itself on its next run without changing anything.
 
-## Failure modes
+## Troubleshoot the sync
 
 | What happens | What the sync does | Shown as |
 |---|---|---|
@@ -438,7 +467,7 @@ itself on its next run without changing anything.
 Logs carry outcome codes and counts only: no addresses, names, tokens or
 response bodies.
 
-## Entra app setup (least privilege)
+## How to set up the Entra app (least privilege)
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#5-microsoft-365-sync), step 5, with `scripts/onboarding/new-sync-app.ps1`.
 
@@ -621,8 +650,8 @@ prove a live tenant's behaviour.
 - A mailbox converted in Exchange (user to shared or back) is picked up at
   the daily reconciliation or on Sync now: the conversion itself is not in
   the users delta, and a cached type stands until then.
-- Shared mailbox detection is built and tested against a fake Graph only; it
-  has not yet been run against a real tenant. Start it in dry run.
+- Shared mailbox detection has run on one real tenant (dry run, then live,
+  November 2026). Start it in dry run on each new tenant.
 - Mail aliases (`proxyAddresses`) are not synced; only the primary address.
 - Mailbox delegation and Send As are not synced.
 - One mail domain (`MAIL_DOMAIN`). Users on other domains in the tenant are

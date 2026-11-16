@@ -1,8 +1,29 @@
+---
+title: "Inbox rules"
+summary: "How to file mail automatically with Outlook-style rules, and how the rules engine runs."
+applies_to: both
+audience: [user, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [user-guide.md, spam-and-quarantine.md]
+---
+
 # Inbox rules
 
 Rules act on new mail as it arrives in a mailbox's Inbox, like rules in
 Outlook (**Settings > Mail > Rules**). In cmail they live under
 **Mail > Settings > Rules** (`/mail/rules`).
+
+**In this article**
+
+- [Who can set rules](#who-can-set-rules)
+- [What a rule is made of](#what-a-rule-is-made-of)
+- [How rules run](#how-rules-run)
+- [Starting a rule](#starting-a-rule)
+- [Run rule now](#run-rule-now)
+- [What cmail rules don't do](#what-cmail-rules-dont-do)
+- [For operators](#for-operators)
+- [How the rules engine works (developers)](#how-the-rules-engine-works-developers)
 
 ## Who can set rules
 
@@ -94,7 +115,7 @@ Rules are stored in the `inbox_rules` table (migration `0018`). Apply it with
 table exists, delivery carries on as if no mailbox had rules, and the Rules
 page can't load.
 
-## How rules run
+## How the rules engine works (developers)
 
 For developers. The rule format and the matching code live in
 `packages/shared/src/inbox-rules.ts` and are shared by the email Worker and the

@@ -1,9 +1,33 @@
+---
+title: "Developer guide"
+summary: "How to run cmail locally, test, add migrations and endpoints, and release, for contributors."
+applies_to: both
+audience: [developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [maintainer-guide.md, cloudflare-platform.md]
+---
+
 # Developer guide
 
 How to do the common development jobs in this repository. For first-time
 resource setup see [Getting started](getting-started.md); for the rules every
 change must meet see [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [AGENTS.md](../AGENTS.md). Run every command from the repository root.
+
+**In this article**
+
+- [Layout](#layout)
+- [1. Run it locally](#1-run-it-locally)
+- [2. Run the tests](#2-run-the-tests)
+- [3. Add a D1 migration](#3-add-a-d1-migration)
+- [4. Add a route or server endpoint](#4-add-a-route-or-server-endpoint)
+- [5. Change the email Worker](#5-change-the-email-worker)
+- [6. Change the shared package](#6-change-the-shared-package)
+- [7. Update dependencies](#7-update-dependencies)
+- [8. Preview deployments and config:check](#8-preview-deployments-and-configcheck)
+- [9. Common errors](#9-common-errors)
+- [10. Release](#10-release)
 
 ## Layout
 

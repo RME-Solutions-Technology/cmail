@@ -1,3 +1,13 @@
+---
+title: "Manager handbook"
+summary: "How to run cmail as a Manager: people, mailboxes, organisation, policy, mail trace, audit and settings."
+applies_to: both
+audience: [manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [user-guide.md, support-process.md]
+---
+
 # Manager handbook
 
 This handbook covers cmail's management functions, for the **Manager** role.
@@ -8,6 +18,24 @@ and Cloudflare operations are the operator's job — see the
 cmail's management centre uses concepts familiar from enterprise mail systems,
 but it is not Microsoft Exchange, is not affiliated with Microsoft, and does
 not match it feature-for-feature.
+
+**In this article**
+
+- [Three separate access concepts](#three-separate-access-concepts)
+- [Recommended first-run order](#recommended-first-run-order)
+- [Overview](#overview)
+- [People](#people)
+- [Mailboxes](#mailboxes)
+- [Email signatures](#email-signatures)
+- [Organisation and public directory](#organisation-and-public-directory)
+- [Usage policy](#usage-policy)
+- [Mail trace](#mail-trace)
+- [Spam and quarantine](#spam-and-quarantine)
+- [Audit log](#audit-log)
+- [Settings](#settings)
+- [Update notices](#update-notices)
+- [Safe operating routine](#safe-operating-routine)
+- [Support and escalation](#support-and-escalation)
 
 ## Three separate access concepts
 

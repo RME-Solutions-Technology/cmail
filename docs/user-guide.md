@@ -1,8 +1,29 @@
+---
+title: "User guide"
+summary: "How to sign in, read, write and organise mail in cmail."
+applies_to: both
+audience: [user]
+switch: none
+last_reviewed: 2026-11-16
+related: [mobile-pwa.md, shared-mailboxes.md]
+---
+
 # User guide
 
 This guide is for anyone who reads and sends mail in cmail. If you manage the
 service, start with the [manager handbook](manager-handbook.md) instead. For
 installing cmail on a phone or tablet, see the [mobile app guide](mobile-pwa.md).
+
+**In this article**
+
+- [Before you sign in](#before-you-sign-in)
+- [Find your way around Mail](#find-your-way-around-mail)
+- [Read mail safely](#read-mail-safely)
+- [Compose, reply, and forward](#compose-reply-and-forward)
+- [Inbox rules](#inbox-rules)
+- [New-mail alerts](#new-mail-alerts)
+- [Connect an AI assistant](#connect-an-ai-assistant)
+- [Sign out and get help](#sign-out-and-get-help)
 
 ## Before you sign in
 

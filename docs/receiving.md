@@ -1,3 +1,13 @@
+---
+title: "How receiving works"
+summary: "How inbound mail goes from Email Routing to the Inbox: rejects, limits, parsing, spam and storage."
+applies_to: both
+audience: [operator, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [spam-and-quarantine.md, cloudflare-platform.md]
+---
+
 # How receiving works
 
 This page follows one message from Cloudflare Email Routing to a user's
@@ -71,7 +81,7 @@ A message can end in one of three ways:
 13. **First contact.** If this mailbox has never exchanged mail with the
     sender, the message is flagged so the reading view can warn about it.
 14. **Inbox rules.** For mail going to the Inbox only. See
-    [Inbox rules: how they run](inbox-rules.md#how-rules-run).
+    [Inbox rules: how they run](inbox-rules.md#how-the-rules-engine-works-developers).
 15. **Store.** The body and attachments go to R2 under random UUID keys.
     Metadata goes to D1 (`messages`, `attachments`) in one transaction. If any
     write fails, the new R2 objects are deleted and the error is thrown, so

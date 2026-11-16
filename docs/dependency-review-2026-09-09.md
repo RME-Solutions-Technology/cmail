@@ -1,3 +1,13 @@
+---
+title: "Staff sign-in release dependency review"
+summary: "Dependency review for the staff sign-in release (9 September 2026). Historical record."
+applies_to: both
+audience: [developer, reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [dependency-review-2026-09-22.md]
+---
+
 # Staff sign-in release dependency review
 
 This focused repair retains pnpm 11.18.0, Wrangler 4.118.0, and the existing

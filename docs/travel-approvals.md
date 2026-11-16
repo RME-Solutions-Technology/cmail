@@ -1,3 +1,13 @@
+---
+title: "Travel approvals"
+summary: "How to limit sign-in to approved countries and approve exceptions."
+applies_to: both
+audience: [manager]
+switch: "Admin > Settings > Sign-in security"
+last_reviewed: 2026-11-16
+related: [manager-handbook.md]
+---
+
 # Travel approvals
 
 Travel approvals lets an organisation restrict sign-in to specific countries — across every sign-in method, Google, Microsoft, and email sign-in code alike — and gives managers a way to let someone through anyway when they're legitimately travelling.

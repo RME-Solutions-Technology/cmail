@@ -1,3 +1,13 @@
+---
+title: "Privacy and data-handling guide"
+summary: "Data inventory, provider boundary, retention, rights and a privacy-notice checklist."
+applies_to: both
+audience: [reviewer, operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [assurance.md]
+---
+
 # Privacy and data-handling guide
 
 **Last reviewed:** 14 August 2026
@@ -14,6 +24,15 @@ deployment operator normally determines why and how personal information is
 processed. It must identify its own legal role. Cloudflare, Google, Microsoft,
 Postmark, support providers, DNS/reporting services, and backup destinations
 may have separate roles under their agreements and the operator's law.
+
+**In this article**
+
+- [Data inventory](#data-inventory)
+- [Storage and disclosures](#storage-and-disclosures)
+- [Public directory privacy](#public-directory-privacy)
+- [Retention, deletion, and preservation](#retention-deletion-and-preservation)
+- [Individual requests and organisational mail](#individual-requests-and-organisational-mail)
+- [Operator notice checklist](#operator-notice-checklist)
 
 ## Data inventory
 

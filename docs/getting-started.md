@@ -1,6 +1,31 @@
+---
+title: "Getting started"
+summary: "How to set up cmail locally and create its Cloudflare storage: the first step for primary mail."
+applies_to: primary
+audience: [operator, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [configuration.md, deployment.md, credentials.md]
+---
+
 # Getting started
 
 This guide takes a new cmail deployment from an empty Cloudflare account to local development. See [deployment.md](deployment.md) for the production rollout.
+
+**In this article**
+
+- [Prerequisites](#prerequisites)
+- [Decide the deployment shape](#decide-the-deployment-shape)
+- [Install](#install)
+- [Create Cloudflare resources](#create-cloudflare-resources)
+- [Create local secret configuration](#create-local-secret-configuration)
+- [Initialise local storage](#initialise-local-storage)
+- [Register OAuth callbacks](#register-oauth-callbacks)
+- [Bootstrap local administration](#bootstrap-local-administration)
+- [Optional browser notifications](#optional-browser-notifications)
+- [Optional external outbound delivery](#optional-external-outbound-delivery)
+- [Start the applications](#start-the-applications)
+- [First useful checks](#first-useful-checks)
 
 ## Prerequisites
 

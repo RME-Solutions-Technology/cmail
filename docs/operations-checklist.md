@@ -1,3 +1,13 @@
+---
+title: "Operations checklist"
+summary: "The operations checklist to complete for every environment."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [operations.md, security-checklist.md]
+---
+
 # Operations checklist
 
 Use this checklist for each environment. Adapt it to your organisation's change-management, privacy, retention, and incident-response requirements. See [Email authentication and sender requirements](email-authentication.md) for DNS validation, current receiver policies, and the bulk-marketing boundary.

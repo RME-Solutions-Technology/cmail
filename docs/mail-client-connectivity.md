@@ -1,4 +1,23 @@
+---
+title: "Mail client connectivity architecture"
+summary: "Why cmail has no IMAP or Outlook connection today, and the staged plan for JMAP and IMAP."
+applies_to: both
+audience: [user, operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [mobile-pwa.md]
+---
+
 # Mail client connectivity architecture
+
+**In this article**
+
+- [Where cmail stands today](#where-cmail-stands-today)
+- [Current and future support](#current-and-future-support)
+- [Recommended architecture](#recommended-architecture)
+- [Permissions, shared mailboxes, and the account lifecycle](#permissions-shared-mailboxes-and-the-account-lifecycle)
+- [Operational requirements](#operational-requirements)
+- [Build, test, and rollout plan](#build-test-and-rollout-plan)
 
 ## Where cmail stands today
 

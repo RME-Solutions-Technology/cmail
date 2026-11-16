@@ -1,11 +1,22 @@
+---
+title: "Exchange mirror (warm standby from Exchange Online journaling)"
+summary: "How to keep cmail a live copy of every Exchange Online mailbox from one journal rule, with no setup per address."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Exchange mirror"
+last_reviewed: 2026-11-16
+related: [onboarding-microsoft-365.md, credentials.md, standby-switch.md]
+---
+
 # Exchange mirror (warm standby from Exchange Online journaling)
 
-Status: **built, off by default, not yet tested against a real Exchange
-Online tenant or a real Cloudflare account.** The code paths are covered by
-tests with journal reports built from Microsoft's documented format (see
-[How to test](#how-to-test)). Several details of a real Exchange Online
-journal report are not documented by Microsoft and must be checked on the
-first live test: see [What is not verified](#what-is-not-verified).
+Status: **built, off by default, running on one Microsoft 365 tenant
+since 16 November 2026.** Live journal reports from that tenant pass the
+checks in [How a report is trusted](#how-a-report-is-trusted) and are filed.
+What a live report carries is in
+[What Exchange Online actually stamps](#what-exchange-online-actually-stamps);
+what is still unproven is in [What is not verified](#what-is-not-verified).
+The code paths are covered by tests (see [How to test](#how-to-test)).
 
 cmail's main use is primary email for a small organisation. This feature is
 for the other case: an organisation that stays on Exchange Online and wants
@@ -27,18 +38,18 @@ and two cmail switches cover a tenant of any size (built for 200+ seats and
                                                                      sender's copy into Sent
 ```
 
-## Contents
+**In this article**
 
 - [Why journaling](#why-journaling)
 - [What is and is not mirrored](#what-is-and-is-not-mirrored)
 - [How a report is trusted](#how-a-report-is-trusted)
 - [How mail is filed](#how-mail-is-filed)
 - [Aliases](#aliases)
-- [Setup](#setup)
+- [How to set up the Exchange mirror](#how-to-set-up-the-exchange-mirror)
 - [Admin](#admin)
 - [Size limits](#size-limits)
 - [Privacy](#privacy)
-- [Rollback](#rollback)
+- [How to turn it off and roll back](#how-to-turn-it-off-and-roll-back)
 - [What is not verified](#what-is-not-verified)
 - [How to test](#how-to-test)
 
@@ -146,7 +157,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
 > for someone who has the address, but none proves on its own that a report
 > came from your tenant: the journal and tenant headers can be written by
 > any sender, and the SPF and DKIM checks have the limits stated below. Keep
-> the address secret and [rotate the token](#rotating-the-journal-token) if
+> the address secret and [rotate the token](#how-to-rotate-the-journal-token) if
 > it may have leaked.
 
 0. **Size first.** Before anything is read, the report must be no larger
@@ -322,7 +333,7 @@ off by default) adds them:
 - Turning the import off stops the mirror using aliases at once; the rows
   stay until the import runs again.
 
-## Setup
+## How to set up the Exchange mirror
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#10-exchange-mirror-optional), step 10, with `scripts/onboarding/exchange-mirror.ps1` for the Exchange side.
 
@@ -444,13 +455,13 @@ Needs the Exchange Online "Journaling" permission
    `X-MS-Exchange-CrossTenant-AuthAs: Internal` and your tenant id before
    turning on `M365_JOURNAL_MIRROR_SENT`.
 4. If the counts show refused reports, the reason is in Admin and the audit
-   log (see [Diagnosing refused reports](#diagnosing-refused-reports)).
+   log (see [Troubleshoot refused reports](#troubleshoot-refused-reports)).
    `auth_failed` or `auth_missing`: compare the DKIM `d=` and the SPF
    `smtp.mailfrom` domain in the diagnostic with `M365_JOURNAL_SENDER_DOMAINS`
    and `M365_JOURNAL_NDR_DOMAIN`. `wrong_tenant`: compare the
    `x-ms-exchange-crosstenant-id` values with `M365_TENANT_ID`.
 
-### Diagnosing refused reports
+### Troubleshoot refused reports
 
 Each refused report's audit row (`exchange_mirror.report_rejected`, at most
 50 a day) carries a safe diagnostic: from the OUTER report only, the names
@@ -522,7 +533,7 @@ never stored. The journal address is a secret: anyone who has it and can pass
 the checks above could add mail to mailboxes, so keep it in Worker secrets
 and Exchange only, and rotate the token if it may have leaked.
 
-## Rotating the journal token
+## How to rotate the journal token
 
 Do this if the journal address may have leaked (a screenshot, a ticket, a
 former admin), or once a year. No mail is lost: Exchange queues reports while
@@ -545,7 +556,7 @@ the old address refuses them, and retries.
 5. Check Admin > Exchange mirror shows a new last report time.
 6. Cloudflare: delete the old address's routing rule.
 
-## Rollback
+## How to turn it off and roll back
 
 1. Exchange: `Disable-JournalRule -Identity "cmail mirror"` (or Purview >
    Journal rules > Disable). Reports stop. Remove it later with
@@ -595,14 +606,15 @@ real tenant:
 - **Exchange Online MAIL FROM enforcement (check 5b).** Whether Exchange
   Online stops other tenants from sending with a MAIL FROM on your NDR
   domain is not documented by Microsoft. Check 5b relies on it.
-- **DKIM of journal reports.** Whether Exchange Online DKIM-signs journal
-  reports, and with which domain, is still not known; a Microsoft Q&A thread
-  reports them unsigned
+- **DKIM of journal reports.** The live reports seen so far carried no
+  `dkim=` result; whether Exchange Online ever DKIM-signs journal reports is
+  not documented. A Microsoft Q&A thread reports them unsigned
   ([Q&A](https://learn.microsoft.com/en-us/answers/questions/1153499/how-to-enable-dkim-for-journaling)).
   The diagnostic shows it on the first refused report. Check 5b does not
   depend on it.
-- **Cloudflare acceptance.** Cloudflare Email Routing refuses mail that
-  passes neither SPF nor DKIM
+- **Cloudflare acceptance.** Live reports were accepted because SPF passed
+  for the NDR domain. Cloudflare Email Routing refuses mail that passes
+  neither SPF nor DKIM
   ([postmaster](https://developers.cloudflare.com/email-service/reference/postmaster/#mail-authentication-requirement)).
   An unsigned report with an empty envelope sender might be refused before
   cmail sees it.

@@ -1,3 +1,13 @@
+---
+title: "Staff portal sign-in contract"
+summary: "How staff sign in: portal links, the Cloudflare Access bridge, and Microsoft sign-in for synced people."
+applies_to: both
+audience: [operator, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [passkeys.md, m365-sync.md, credentials.md]
+---
+
 # Staff portal sign-in contract
 
 A staff portal can link to `APP_URL` + `/mail`. An existing, valid cmail

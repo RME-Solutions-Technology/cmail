@@ -1,3 +1,13 @@
+---
+title: "Onboarding an organisation that uses Microsoft 365"
+summary: "The tested order from an empty instance to staff signing in with Microsoft, then the optional standby steps."
+applies_to: standby
+audience: [operator, client admin]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, m365-sync.md, exchange-mirror.md, standby-switch.md]
+---
+
 # Onboarding an organisation that uses Microsoft 365
 
 This guide takes a new cmail instance from nothing to "staff sign in with
@@ -20,7 +30,7 @@ from each step stay the reference for settings and behaviour.
 Every step that changes a live system (DNS, Entra, Exchange, a remote
 database) needs the owner's yes under your own change process.
 
-## Contents
+**In this article**
 
 - [Checklist](#checklist)
 - [0. What you need first](#0-what-you-need-first)
@@ -71,11 +81,13 @@ usual reason a step stalls halfway.
   If you work with several accounts, set `CLOUDFLARE_ACCOUNT_ID` in the
   session before every Wrangler command.
 - **Microsoft 365 roles, active:** Application Administrator (or Cloud
-  Application Administrator) to create apps (step 3); **Global
-  Administrator** for admin consent, as the
+  Application Administrator) to create apps (step 3). The sign-in app asks
+  only for delegated `openid`, `email` and `profile`: that role or the app
+  owner can consent for everyone, and users can usually consent themselves,
+  so step 3 needs no Global Administrator. **Global Administrator** for admin
+  consent to application permissions, as the
   [az ad app permission admin-consent](https://learn.microsoft.com/en-us/cli/azure/ad/app/permission#az-ad-app-permission-admin-consent)
-  documentation requires (steps 5 and 11; also step 3 with
-  `-GrantAdminConsent`); Exchange Administrator (or Global Administrator)
+  documentation requires (steps 5 and 11); Exchange Administrator (or Global Administrator)
   for steps 10 and 11. The scripts also accept Privileged Role Administrator
   plus Application Administrator for steps 5 and 11; that combination is
   not verified, so use Global Administrator where you can. The scripts check
@@ -288,7 +300,7 @@ grants any that are still missing directly
 ([grant an appRoleAssignment](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-post-approleassignedto)),
 and pipes a new client secret into the Worker secret `M365_CLIENT_SECRET`.
 
-**Manual equivalent.** [Microsoft 365 sync: Entra app setup](m365-sync.md#entra-app-setup-least-privilege).
+**Manual equivalent.** [Microsoft 365 sync: Entra app setup](m365-sync.md#how-to-set-up-the-entra-app-least-privilege).
 
 Then, either way, in `apps/email-worker/wrangler.toml` `[vars]`:
 `M365_TENANT_ID`, `M365_CLIENT_ID`, `MAIL_DOMAIN`,
@@ -355,7 +367,7 @@ passkeys are kept.
 
 **Pitfalls.** Passkeys are bound to the `APP_URL` host. Behind Cloudflare
 Access, `/auth/passkey` needs its own Bypass application. Details:
-[Passkey break-glass sign-in](passkeys.md#set-up).
+[Passkey break-glass sign-in](passkeys.md#how-to-set-up-passkeys).
 
 ## 8. Welcome emails (optional)
 
@@ -465,7 +477,7 @@ before changing it.
 **Check.** Send a message between two licensed users. Within a minute Admin >
 Exchange mirror shows a last report time, the message "filed", and no
 refused reports. If reports are refused, read the reason and the safe
-diagnostic in the audit log ([diagnosing](exchange-mirror.md#diagnosing-refused-reports)).
+diagnostic in the audit log ([diagnosing](exchange-mirror.md#troubleshoot-refused-reports)).
 
 **Undo.** `exchange-mirror.ps1 @m -Rollback`: disables and removes the
 rule, removes the remote domain and restores the saved NDR address. Then
@@ -491,7 +503,7 @@ Admin > Exchange mirror > Turn off; optionally delete the routing rule and
 - Journaling copies **all** mail from the moment the rule is enabled; the
   mirror holds only mail from then on, nothing older.
 - The secret journal address is the real security boundary. Keep the file
-  private; rotate it if it leaks ([rotating](exchange-mirror.md#rotating-the-journal-token)).
+  private; rotate it if it leaks ([rotating](exchange-mirror.md#how-to-rotate-the-journal-token)).
 - The NDR address must be outside Exchange Online (Microsoft's rule).
 - Not verified: whether Exchange Online accepts clearing
   `JournalingReportNdrTo` to empty on rollback when it was empty before. If
@@ -530,7 +542,7 @@ the PFX (base64) and its random password into the Worker secrets
 `M365_EXO_CERT_PFX_B64` and `M365_EXO_CERT_PASSWORD`, and delete the PFX file
 ([app-only auth for Exchange Online PowerShell](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2)).
 
-**Manual equivalent.** [Setup steps 1 to 5](m365-mailbox-permissions.md#setup).
+**Manual equivalent.** [Setup steps 1 to 5](m365-mailbox-permissions.md#how-to-set-up-shared-mailbox-access).
 
 Then: `[vars]` `M365_EXO_APP_ID` and `M365_EXO_ORGANIZATION`; uncomment the
 container block from `wrangler.toml.example`; migration `0028`; with Docker

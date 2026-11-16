@@ -1,9 +1,19 @@
+---
+title: "Passkey break-glass sign-in"
+summary: "How to sign in with a passkey when Microsoft or Cloudflare Access is down."
+applies_to: both
+audience: [manager, operator, user]
+switch: "Admin > Passkey sign-in"
+last_reviewed: 2026-11-16
+related: [staff-sign-in.md, onboarding-microsoft-365.md]
+---
+
 # Passkey break-glass sign-in
 
-**Status:** built, off by default, not yet tested against a real tenant, a
-live Cloudflare Access application or real phones and security keys. The
-tests drive the server with generated credentials (a software authenticator),
-not with a browser.
+**Status:** built, off by default, in use on one live instance since
+November 2026, where adding a passkey and passkey-only sign-in are verified.
+The automated tests drive the server with generated credentials (a software
+authenticator), not with a browser.
 
 Passkeys let people sign in to cmail when the normal sign-in route is down.
 While Microsoft (or Google, an email code or the Cloudflare Access bridge)
@@ -15,6 +25,18 @@ This is layer 2 of "what if Entra itself is down". Layer 1 is long sessions:
 anyone who used cmail recently stays signed in through an outage
 (`SESSION_TTL_HOURS` and the Access application session). Passkeys cover the
 people whose sessions have lapsed.
+
+**In this article**
+
+- [How it works](#how-it-works)
+- [Threat model](#threat-model)
+- [Cloudflare Access](#cloudflare-access)
+- [How to set up passkeys](#how-to-set-up-passkeys)
+- [Recovery](#recovery)
+- [Audit events](#audit-events)
+- [Code](#code)
+- [References](#references)
+- [Not yet verified](#not-yet-verified)
 
 ## How it works
 
@@ -242,7 +264,7 @@ Prepare it: write the policy as a reusable policy in advance and practise
 adding and removing it, so the step takes a minute. Opening the gate is the
 last resort; layer 1 (long sessions) covers most outages without it.
 
-## Set up
+## How to set up passkeys
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#7-passkeys), step 7.
 
@@ -332,6 +354,9 @@ kept for when it is turned on again.
   relies on (cmail also revokes those sessions itself).
 
 ## Not yet verified
+
+Verified on one live instance (November 2026): adding a passkey and
+passkey-only sign-in, on Cloudflare Pages. Still open:
 
 - Real devices: iPhone, Android, Windows Hello, macOS and a FIDO2 security
   key, in Safari, Chrome, Edge and Firefox.

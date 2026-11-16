@@ -1,3 +1,13 @@
+---
+title: "Standby test address and daily probe"
+summary: "How to give every mailbox a standby test address and test it daily."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Standby test"
+last_reviewed: 2026-11-16
+related: [standby-switch.md, exchange-mirror.md]
+---
+
 # Standby test address and daily probe
 
 Status: **built, off by default, not yet tested against real DNS or a real
@@ -215,7 +225,7 @@ Green does **not** mean:
 Amber or red is a reason to look, not proof of an outage: one failed probe
 can be a short Cloudflare delay. Run test now to check again.
 
-## Setup
+## How to set up the standby test
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#9-standby-subdomain-optional), steps 9 and 12.
 
@@ -253,7 +263,7 @@ own change process.
 To turn it off, use the switch: mail to the standby domain is refused at once
 and no more tests run. The routing rules and DNS can stay.
 
-## Failure modes and what to do
+## Troubleshoot the standby test
 
 | Shown | Likely cause | What to do |
 |---|---|---|

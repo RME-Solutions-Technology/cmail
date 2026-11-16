@@ -1,3 +1,13 @@
+---
+title: "Email authentication and sender requirements"
+summary: "SPF, DKIM, DMARC and sender requirements to check before changing mail DNS or enabling external delivery."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [deployment.md, sending.md]
+---
+
 # Email authentication and sender requirements
 
 Last reviewed against official sources: **4 August 2026**.
@@ -15,6 +25,15 @@ whenever sending volume or message purpose changes.
 > warm-up, or feedback-loop operations. Do not use cmail for bulk marketing
 > until those capabilities, provider controls, and an organisation-specific
 > compliance review are in place.
+
+**In this article**
+
+- [Standards, provider policy, and law are different](#standards-provider-policy-and-law-are-different)
+- [Current Internet standards](#current-internet-standards)
+- [Configure Cloudflare Email Service](#configure-cloudflare-email-service)
+- [Current major-provider policies](#current-major-provider-policies)
+- [Why cmail is not bulk-marketing-ready](#why-cmail-is-not-bulk-marketing-ready)
+- [Production checklist](#production-checklist)
 
 ## Standards, provider policy, and law are different
 

@@ -1,3 +1,13 @@
+---
+title: "Maintainer release guide"
+summary: "How maintainers cut and publish a cmail release."
+applies_to: both
+audience: [developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [development.md]
+---
+
 # Maintainer release guide
 
 This guide covers public-repository and release hygiene. It does not replace

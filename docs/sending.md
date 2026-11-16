@@ -1,3 +1,13 @@
+---
+title: "How sending works"
+summary: "How outbound mail goes from compose to the provider, and every error a user can see."
+applies_to: both
+audience: [operator, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [delivery-and-bounces.md, credentials.md]
+---
+
 # How sending works
 
 This page follows one message from the compose page to the recipient. It is for
@@ -5,6 +15,16 @@ developers and operators who need to know what cmail checks, what it stores,
 and what each error means. For the security model behind it, see
 [Architecture and trust boundaries](architecture.md#outbound-mail). For the
 settings named here, see the [Configuration reference](configuration.md).
+
+**In this article**
+
+- [The pieces](#the-pieces)
+- [Saving a draft](#saving-a-draft)
+- [Sending, step by step](#sending-step-by-step)
+- [How the message leaves Cloudflare](#how-the-message-leaves-cloudflare)
+- [The journal states](#the-journal-states)
+- [What the user sees when it fails](#what-the-user-sees-when-it-fails)
+- [Tests](#tests)
 
 ## The pieces
 

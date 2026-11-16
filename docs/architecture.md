@@ -1,3 +1,13 @@
+---
+title: "Architecture and trust boundaries"
+summary: "How cmail is built and where its trust boundaries are: sign-in, mailbox access, mail flow, public data and storage."
+applies_to: both
+audience: [operator, developer, reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [cloudflare-platform.md, assurance.md]
+---
+
 # Architecture and trust boundaries
 
 cmail separates authenticated web/admin traffic from inbound mail processing. Both runtimes share the same Cloudflare D1 database and R2 bucket.
