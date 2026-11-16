@@ -66,3 +66,6 @@ jobs:
 
       - name: Run collect.ps1 against mocked Exchange cmdlets
         run: pwsh -NoProfile -NonInteractive -File apps/email-worker/container/m365-perms/collect.Tests.ps1
+
+      - name: Check the onboarding scripts (mocked az, Wrangler and Exchange)
+        run: pwsh -NoProfile -NonInteractive -File scripts/onboarding/onboarding.Tests.ps1

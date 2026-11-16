@@ -324,6 +324,8 @@ off by default) adds them:
 
 ## Setup
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#10-exchange-mirror-optional), step 10, with `scripts/onboarding/exchange-mirror.ps1` for the Exchange side.
+
 Order matters: cmail first, then Cloudflare, then Exchange. Every step that
 changes a live system needs the owner's yes.
 

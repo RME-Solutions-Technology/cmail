@@ -211,6 +211,8 @@ Until you configure credentials, this deployment deliberately shows no sign-in p
 
 ## 4. Configure identity providers and secrets
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#3-sign-in-app), steps 3 and 4, with `scripts/onboarding/new-signin-app.ps1` and `set-bootstrap-secrets.ps1`.
+
 Register callbacks from the production `APP_URL`:
 
 ```text

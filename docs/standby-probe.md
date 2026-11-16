@@ -217,6 +217,8 @@ can be a short Cloudflare delay. Run test now to check again.
 
 ## Setup
 
+Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#9-standby-subdomain-optional), steps 9 and 12.
+
 Do these in order. DNS and Email Routing changes are live changes; follow your
 own change process.
 
