@@ -81,7 +81,7 @@ A message can end in one of three ways:
 13. **First contact.** If this mailbox has never exchanged mail with the
     sender, the message is flagged so the reading view can warn about it.
 14. **Inbox rules.** For mail going to the Inbox only. See
-    [Inbox rules: how they run](inbox-rules.md#how-rules-run).
+    [Inbox rules: how they run](inbox-rules.md#how-the-rules-engine-works-developers).
 15. **Store.** The body and attachments go to R2 under random UUID keys.
     Metadata goes to D1 (`messages`, `attachments`) in one transaction. If any
     write fails, the new R2 objects are deleted and the error is thrown, so

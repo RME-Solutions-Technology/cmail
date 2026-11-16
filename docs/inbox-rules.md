@@ -23,7 +23,7 @@ Outlook (**Settings > Mail > Rules**). In cmail they live under
 - [Run rule now](#run-rule-now)
 - [What cmail rules don't do](#what-cmail-rules-dont-do)
 - [For operators](#for-operators)
-- [How rules run](#how-rules-run)
+- [How the rules engine works (developers)](#how-the-rules-engine-works-developers)
 
 ## Who can set rules
 
@@ -115,7 +115,7 @@ Rules are stored in the `inbox_rules` table (migration `0018`). Apply it with
 table exists, delivery carries on as if no mailbox had rules, and the Rules
 page can't load.
 
-## How rules run
+## How the rules engine works (developers)
 
 For developers. The rule format and the matching code live in
 `packages/shared/src/inbox-rules.ts` and are shared by the email Worker and the

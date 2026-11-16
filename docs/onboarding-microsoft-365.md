@@ -81,11 +81,13 @@ usual reason a step stalls halfway.
   If you work with several accounts, set `CLOUDFLARE_ACCOUNT_ID` in the
   session before every Wrangler command.
 - **Microsoft 365 roles, active:** Application Administrator (or Cloud
-  Application Administrator) to create apps (step 3); **Global
-  Administrator** for admin consent, as the
+  Application Administrator) to create apps (step 3). The sign-in app asks
+  only for delegated `openid`, `email` and `profile`: that role or the app
+  owner can consent for everyone, and users can usually consent themselves,
+  so step 3 needs no Global Administrator. **Global Administrator** for admin
+  consent to application permissions, as the
   [az ad app permission admin-consent](https://learn.microsoft.com/en-us/cli/azure/ad/app/permission#az-ad-app-permission-admin-consent)
-  documentation requires (steps 5 and 11; also step 3 with
-  `-GrantAdminConsent`); Exchange Administrator (or Global Administrator)
+  documentation requires (steps 5 and 11); Exchange Administrator (or Global Administrator)
   for steps 10 and 11. The scripts also accept Privileged Role Administrator
   plus Application Administrator for steps 5 and 11; that combination is
   not verified, so use Global Administrator where you can. The scripts check

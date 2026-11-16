@@ -10,10 +10,10 @@ related: [staff-sign-in.md, onboarding-microsoft-365.md]
 
 # Passkey break-glass sign-in
 
-**Status:** built, off by default, not yet tested against a real tenant, a
-live Cloudflare Access application or real phones and security keys. The
-tests drive the server with generated credentials (a software authenticator),
-not with a browser.
+**Status:** built, off by default, in use on one live instance since
+November 2026, where adding a passkey and passkey-only sign-in are verified.
+The automated tests drive the server with generated credentials (a software
+authenticator), not with a browser.
 
 Passkeys let people sign in to cmail when the normal sign-in route is down.
 While Microsoft (or Google, an email code or the Cloudflare Access bridge)
@@ -354,6 +354,9 @@ kept for when it is turned on again.
   relies on (cmail also revokes those sessions itself).
 
 ## Not yet verified
+
+Verified on one live instance (November 2026): adding a passkey and
+passkey-only sign-in, on Cloudflare Pages. Still open:
 
 - Real devices: iPhone, Android, Windows Hello, macOS and a FIDO2 security
   key, in Safari, Chrome, Edge and Firefox.

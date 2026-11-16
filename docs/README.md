@@ -80,7 +80,7 @@ with scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
 - [Delivery status and bounces](delivery-and-bounces.md).
 - [How receiving works](receiving.md).
 - [Reading mail safely](reading-mail-safely.md).
-- [Inbox rules: how they run](inbox-rules.md#how-rules-run).
+- [Inbox rules: how the engine works](inbox-rules.md#how-the-rules-engine-works-developers).
 - [Push notification reliability](push-notification-reliability.md): a design, not built.
 
 ## Governance

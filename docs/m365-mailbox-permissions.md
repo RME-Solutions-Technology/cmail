@@ -13,8 +13,9 @@ related: [m365-sync.md, credentials.md, onboarding-microsoft-365.md]
 Copies **Full Access** and **Send As** on Exchange Online shared mailboxes into
 cmail's shared mailbox assignments, automatically, once a day.
 
-**Status: built, off by default, not yet tested against a real tenant or a
-deployed Cloudflare Container.** Everything below that says "unverified" must
+**Status: built, off by default. On one live tenant the collector (in a
+deployed Cloudflare Container) and a dry run are verified; live mode has not
+yet run.** Everything below that says "unverified" must
 be checked in a test tenant (never a client's) before the first live use.
 
 It is an optional add-on to the [Microsoft 365 mailbox sync](m365-sync.md):
@@ -552,6 +553,10 @@ through the module, holds no data beyond one snapshot, and the image carries
 no secret. Restricting egress to Microsoft hosts is a planned hardening step.
 
 ## Not verified yet
+
+Verified on one live tenant (November 2026): the container builds and
+starts, the collector signs in and reads Exchange Online, and a dry run
+completes. Live mode and the points below are still open for other tenants.
 
 - A real run against Exchange Online (cmdlet output formats, trustee formats,
   timings, throttling).
