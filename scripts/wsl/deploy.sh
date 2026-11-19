@@ -5,7 +5,7 @@
 # Needs CLOUDFLARE_API_TOKEN in the environment (pass it in from Windows with WSLENV; never print it) and
 # CMAIL_INSTANCES_FILE: a bash file that sets, per instance <i>:  ACCT[<i>]=<cloudflare account id>
 #   HOST[<i>]=<public host>  CLONE[<i>]=<dir with that instance's untracked wrangler.toml files>
-# and (optional) CMAIL_DEPLOY_LOG. Migrations are never run here: if any are pending it stops.
+# and (optional) CMAIL_DEPLOY_LOG. CMAIL_DRY=1 stops before deploying, after checks and rollback ids. Migrations are never run here: if any are pending it stops.
 set -uo pipefail
 INST=${1:?instance}; SHA=${2:?sha}; REVIEW=${3:?review line}
 declare -A ACCT HOST CLONE
