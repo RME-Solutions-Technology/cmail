@@ -5,7 +5,7 @@
 # Needs CLOUDFLARE_API_TOKEN in the environment (pass it in from Windows with WSLENV; never print it) and
 # CMAIL_INSTANCES_FILE: a bash file that sets, per instance <i>:  ACCT[<i>]=<cloudflare account id>
 #   HOST[<i>]=<public host>  CLONE[<i>]=<dir with that instance's untracked wrangler.toml files>
-# and (optional) CMAIL_DEPLOY_LOG. CMAIL_DRY=1 stops before deploying, after checks and rollback ids. Migrations are never run here: if any are pending it stops.
+# and (optional) CMAIL_DEPLOY_LOG. CMAIL_DRY=1 stops before deploying, after the checks and rollback ids. CMAIL_DRY=1 stops before deploying, after checks and rollback ids. Migrations are never run here: if any are pending it stops.
 set -uo pipefail
 INST=${1:?instance}; SHA=${2:?sha}; REVIEW=${3:?review line}
 declare -A ACCT HOST CLONE
@@ -41,6 +41,7 @@ latest() { (cd apps/email-worker && $W deployments list --json 2>/dev/null | pyt
 prevWorker=$(latest)
 prevPages=$($W pages deployment list --project-name "$PROJ" --environment production --json 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['Id'])")
 [ -n "$prevWorker" ] && [ -n "$prevPages" ] || die "could not read rollback ids"
+if [ "${CMAIL_DRY:-}" = 1 ]; then log "DRY RUN ok: $SHA installs, no migrations pending, rollback worker $prevWorker, pages $prevPages. Nothing deployed."; exit 0; fi
 log "deploy $SHA start (WSL); rollback worker $prevWorker, pages $prevPages; $REVIEW"
 smoke() {
   local h=${HOST[$INST]} root mail mcp prm rewrites enc
