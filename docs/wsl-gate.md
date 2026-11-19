@@ -35,3 +35,11 @@ CMAIL_INSTANCES_FILE=/path/to/instances.sh bash scripts/wsl/deploy.sh <instance>
 ```
 
 `instances.sh` is private (not in git) and sets `ACCT[<i>]`, `HOST[<i>]` and `CLONE[<i>]`, the folder holding that instance's untracked `wrangler.toml` files. `CLOUDFLARE_API_TOKEN` comes from the environment. The script stops if D1 migrations are pending, records the rollback ids, deploys the email worker then Pages, smoke-tests, and rolls back by itself if a smoke test fails. It never runs migrations.
+
+Run it first with `CMAIL_DRY=1` to check installs, migrations and rollback ids without deploying anything.
+
+## Known limits
+
+- The Docker-backed worker (the RME instance's mailbox-permissions container) needs a Docker the WSL user can use. Until the WSL user is in the `docker` group, deploy that worker from the Windows path.
+- PowerShell in WSL is whatever Microsoft ships for your Ubuntu (7.7.0 on Ubuntu 26.04); the CI image pins 7.6.10.
+- One web test (`passkeys.test.ts`, Access bridge) failed once under full-suite load on Node 22 and passed alone, twice. Treat a single failure there as a flake and re-run that file before blocking a merge.
