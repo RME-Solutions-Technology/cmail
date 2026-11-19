@@ -5,7 +5,7 @@
 # Needs CLOUDFLARE_API_TOKEN in the environment (pass it in from Windows with WSLENV; never print it) and
 # CMAIL_INSTANCES_FILE: a bash file that sets, per instance <i>:  ACCT[<i>]=<cloudflare account id>
 #   HOST[<i>]=<public host>  CLONE[<i>]=<dir with that instance's untracked wrangler.toml files>
-# and (optional) CMAIL_DEPLOY_LOG. CMAIL_DRY=1 stops before deploying, after the checks and rollback ids. CMAIL_DRY=1 stops before deploying, after checks and rollback ids. Migrations are never run here: if any are pending it stops.
+# and (optional) CMAIL_DEPLOY_LOG. CMAIL_DRY=1 stops before deploying, after the checks and rollback ids.
 set -uo pipefail
 INST=${1:?instance}; SHA=${2:?sha}; REVIEW=${3:?review line}
 declare -A ACCT HOST CLONE
@@ -28,11 +28,13 @@ D=$HOME/cmail-deploy-$INST
 cd "$D" || die "no work copy"
 git fetch -q origin --tags && git checkout -q --detach "$SHA" || die "cannot check out $SHA"
 [ "$(git rev-parse --short HEAD)" = "${SHA:0:7}" ] || die "HEAD is not $SHA"
-# Instance configs are not in git. Copy them from the instance's clone.
-for f in apps/email-worker/wrangler.toml apps/web/wrangler.toml apps/backup-worker/wrangler.toml; do
-  [ -f "${CLONE[$INST]}/$f" ] && cp "${CLONE[$INST]}/$f" "$f"
+git clean -fdxq -e node_modules  # no leftover configs or build output from an earlier run
+# Instance configs are not in git. Copy them from the instance's clone; the two main ones must exist.
+for f in apps/email-worker/wrangler.toml apps/web/wrangler.toml; do
+  [ -f "${CLONE[$INST]}/$f" ] || die "missing ${CLONE[$INST]}/$f"
+  cp "${CLONE[$INST]}/$f" "$f"
 done
-[ -f apps/email-worker/wrangler.toml ] && [ -f apps/web/wrangler.toml ] || die "instance wrangler.toml files missing"
+[ -f "${CLONE[$INST]}/apps/backup-worker/wrangler.toml" ] && cp "${CLONE[$INST]}/apps/backup-worker/wrangler.toml" apps/backup-worker/wrangler.toml
 pnpm install --frozen-lockfile >/dev/null 2>&1 || die "pnpm install failed"
 W="$D/node_modules/.bin/wrangler"
 pending=$($W d1 migrations list DB --remote --config apps/web/wrangler.toml 2>&1)
@@ -54,7 +56,10 @@ smoke() {
   log "smoke: / $root, /mail $mail, /mcp $mcp, protected-resource $prm, rewrites $rewrites, encoding ${enc:-none}"
   [ "$root" = 200 ] && { [ "$mail" = 302 ] || [ "$mail" = 303 ]; } && [ "$mcp" = 401 ] && [ "$prm" = 200 ] && [ "$rewrites" = 0 ]
 }
-rollback_worker() { (cd apps/email-worker && $W rollback "$prevWorker" --message "auto rollback $SHA" -y >/dev/null 2>&1); log "ROLLED BACK worker to $prevWorker"; }
+rollback_worker() {
+  if (cd apps/email-worker && $W rollback "$prevWorker" --message "auto rollback $SHA" -y >/dev/null 2>&1); then log "ROLLED BACK worker to $prevWorker"
+  else log "ROLLBACK FAILED: worker is still $(latest); roll back by hand to $prevWorker"; fi
+}
 # A Docker-backed worker can come back half-applied; wrangler says to run the same deploy again, once.
 (cd apps/email-worker && $W deploy --message "cmail $SHA" >/tmp/cmail-$INST-worker.out 2>&1) \
   || { grep -q "not fully applied" /tmp/cmail-$INST-worker.out && (cd apps/email-worker && $W deploy --message "cmail $SHA (retry)" >/tmp/cmail-$INST-worker.out 2>&1); } \
@@ -69,7 +74,8 @@ sleep 8
 newPages=$($W pages deployment list --project-name "$PROJ" --environment production --json 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['Id'])")
 if ! smoke || [ "$newPages" = "$prevPages" ]; then
   log "SMOKE FAIL after pages; rolling Pages back to $prevPages, then the worker"
-  curl -s -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  # The token goes in on stdin (-K -), not on the command line where ps could show it.
+  printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" | curl -s -K - -X POST \
     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJ/deployments/$prevPages/rollback" \
     | python3 -c "import sys,json;print('pages rollback success:',json.load(sys.stdin).get('success'))" | tee -a "$LOG"
   rollback_worker; die "pages smoke failed"

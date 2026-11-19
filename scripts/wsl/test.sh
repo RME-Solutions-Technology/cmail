@@ -9,16 +9,21 @@ set -euo pipefail
 REF=${1:?usage: test.sh <ref> [--only ...] [--nodes ...]}; shift || true
 ONLY=all; NODES="22 24 26"; REPO=${CMAIL_REPO_URL:-https://github.com/RME-Solutions-Technology/cmail.git}
 while [ $# -gt 0 ]; do case "$1" in --only) ONLY=$2; shift 2;; --nodes) NODES=$2; shift 2;; --repo) REPO=$2; shift 2;; *) echo "unknown $1"; exit 2;; esac; done
+case "$ONLY" in all|validate|collector|e2e) ;; *) echo "bad --only $ONLY (all|validate|collector|e2e)"; exit 2;; esac
+[ -n "${NODES// }" ] || { echo "empty --nodes"; exit 2; }
 export PATH="$HOME/.local/share/fnm:$HOME/.local/bin:$PATH"; eval "$(fnm env --shell bash)"
 W=$HOME/cmail-gate
 [ -d "$W/.git" ] || git clone -q "$REPO" "$W"
 cd "$W"; git remote set-url origin "$REPO"; git fetch -q origin "+refs/heads/*:refs/remotes/origin/*" --tags
-git checkout -q --detach "$(git rev-parse --verify -q "origin/$REF" || git rev-parse "$REF")"; git clean -fdxq -e node_modules
+git checkout -q --detach "$(git rev-parse --verify -q "origin/$REF" || git rev-parse "$REF")"; git clean -fdxq
+# CI tests a pull request merged with current main. Do the same here (only in this scratch copy).
+if ! git -c user.name=gate -c user.email=gate@localhost merge -q --no-edit origin/main >/dev/null 2>&1; then git merge --abort 2>/dev/null; echo "GATE FAIL: $REF does not merge cleanly with origin/main"; exit 1; fi
 echo "gate: $(git rev-parse --short HEAD) ($REF)"
 fail=0; step() { echo; echo "== $*"; }
 if [ "$ONLY" = all ] || [ "$ONLY" = validate ]; then
   for n in $NODES; do
     step "Validate on Node $n (pnpm install --frozen-lockfile; pnpm release:check)"
+    rm -rf node_modules apps/*/node_modules packages/*/node_modules  # fresh install per Node major, like CI
     fnm exec --using="$n" bash -c 'node -v && pnpm install --frozen-lockfile >/dev/null && pnpm release:check' || { echo "FAIL validate node $n"; fail=1; }
   done
 fi
@@ -29,6 +34,8 @@ if [ "$ONLY" = all ] || [ "$ONLY" = collector ]; then
 fi
 if [ "$ONLY" = all ] || [ "$ONLY" = e2e ]; then
   step "axe + smoke, perf budgets, Focused Inbox (Node 24)"
+  sudo -n true || { echo "FAIL e2e: passwordless sudo is needed for Playwright's system packages (run setup.sh)"; exit 1; }
+  rm -rf node_modules apps/*/node_modules packages/*/node_modules
   fnm exec --using=24 bash -c '
     set -e; pnpm install --frozen-lockfile >/dev/null
     pnpm exec playwright install --with-deps chromium >/dev/null
