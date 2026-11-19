@@ -22,7 +22,7 @@ fi
 PROJ=cmail-$INST-web
 log() { echo "$(date +%Y-%m-%dT%H:%M:%S%z) $INST $*" | tee -a "$LOG"; }
 die() { log "STOP: $*"; exit 1; }
-REPO=$(git -C "$(dirname "$0")/../.." remote get-url origin)
+REPO=${CMAIL_REPO_URL:-https://github.com/RME-Solutions-Technology/cmail.git}
 D=$HOME/cmail-deploy-$INST
 [ -d "$D/.git" ] || git clone -q "$REPO" "$D"
 cd "$D" || die "no work copy"
