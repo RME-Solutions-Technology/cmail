@@ -92,12 +92,12 @@
 </section>
 
 <style>
-  .m365-section { display: grid; gap: 14px; }
+  .m365-section { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .section-heading h2 { margin: 0 0 6px; font-size: var(--fs-title-3, var(--fs-subtitle)); font-weight: 600; }
   .section-heading p { max-width: 760px; margin: 0; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
   .muted { margin: 0; color: var(--text-muted); font-size: 13px; }
   .checks { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .checks li { display: grid; grid-template-columns: minmax(180px, 1fr) 2fr; gap: 2px 16px; font-size: 13px; }
+  .checks li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 2px 16px; font-size: 13px; }
   .check-label { color: var(--text-muted); }
   .check-detail { grid-column: 2; }
   .check-badge { display: inline-block; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--bg-subtle); font-size: 12px; font-weight: 650; }

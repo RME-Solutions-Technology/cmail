@@ -191,17 +191,17 @@
 </section>
 
 <style>
-  .m365-section { display: grid; gap: 20px; scroll-margin-top: 16px; }
+  .m365-section { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; scroll-margin-top: 16px; }
   .section-heading h2 { margin: 0 0 6px; font-size: var(--fs-title-3, var(--fs-subtitle)); font-weight: 600; }
   .section-heading p { max-width: 760px; margin: 0; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
   h3 { margin: 0 0 4px; font-size: var(--fs-subtitle); font-weight: 600; }
   .muted { margin: 0; color: var(--text-muted); font-size: 13px; }
-  .notice { padding: 8px 12px; border: 0; border-left: 3px solid; border-radius: 0; }
+  .notice { overflow-wrap: anywhere; padding: 8px 12px; border: 0; border-left: 3px solid; border-radius: 0; }
   .notice ul { margin: 6px 0; padding-left: 18px; }
   .notice-error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 28%, var(--border)); }
   .notice-success { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 28%, var(--border)); }
   .notice-warning { color: var(--text); background: var(--bg-subtle); border-color: var(--border); }
-  .card { display: grid; gap: 12px; padding: 0 0 8px; border: 0; border-radius: 0; background: none; }
+  .card { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 0 0 8px; border: 0; border-radius: 0; background: none; }
   .switch-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
   .state-badge { flex: 0 0 auto; padding: 3px 10px; border-radius: var(--radius-pill); background: var(--bg-subtle); color: var(--text-muted); font-size: 12px; font-weight: 650; }
   .state-badge.on { background: var(--success-soft); color: var(--success); }
@@ -212,7 +212,7 @@
   .confirm summary { display: inline-block; cursor: pointer; list-style: none; }
   .confirm summary::-webkit-details-marker { display: none; }
   .confirm-body { display: grid; gap: 10px; margin-top: 10px; }
-  fieldset { display: grid; gap: 6px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  fieldset { min-width: 0; display: grid; gap: 6px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
   legend { padding: 0 4px; font-weight: 600; }
   .recipients { display: grid; gap: 8px; }
   .recipients h4 { margin: 0; font-size: 15px; font-weight: 600; }

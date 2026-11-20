@@ -12,9 +12,9 @@
 </section>
 
 <style>
-  .m365-section { display: grid; gap: 12px; }
+  .m365-section { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .section-heading h2 { margin: 0 0 6px; font-size: var(--fs-title-3, var(--fs-subtitle)); font-weight: 600; }
   .section-heading p { max-width: 760px; margin: 0; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
-  .notice { padding: 8px 12px; border: 0; border-left: 3px solid var(--border); background: var(--bg-subtle); color: var(--text); }
+  .notice { overflow-wrap: anywhere; padding: 8px 12px; border: 0; border-left: 3px solid var(--border); background: var(--bg-subtle); color: var(--text); }
   p { margin: 0; }
 </style>

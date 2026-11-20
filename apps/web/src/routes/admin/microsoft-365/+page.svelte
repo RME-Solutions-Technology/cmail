@@ -49,5 +49,7 @@
   .page-heading > p:last-child { max-width: 760px; margin: 0; color: var(--text-muted); font-size: var(--fs-body); font-weight: 400; }
   .eyebrow { margin: 0; }
   .jump { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
-  .m365-page > div { scroll-margin-top: 16px; }
+  .m365-page > div { scroll-margin-top: 16px; min-width: 0; }
+  .m365-page { min-width: 0; }
+  .jump a { overflow-wrap: anywhere; }
 </style>
