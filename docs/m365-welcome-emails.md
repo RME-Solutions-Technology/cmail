@@ -3,7 +3,7 @@ title: "Microsoft 365 welcome emails"
 summary: "How to email each person the sync creates with first sign-in steps."
 applies_to: standby
 audience: [manager, operator]
-switch: "Admin > Microsoft 365 sync > Welcome emails"
+switch: "Admin > Microsoft 365 > Welcome emails"
 last_reviewed: 2026-11-16
 related: [m365-sync.md, staff-sign-in.md]
 ---
@@ -17,13 +17,13 @@ on `node:sqlite` and a mocked Cloudflare Email Sending binding.
 When the [Microsoft 365 sync](m365-sync.md) creates a person in cmail (or
 links an existing account that is still pending), cmail can email them once
 with plain first sign-in steps. A manager turns it on in **Admin >
-Microsoft 365 sync > Welcome emails**. Off, it changes nothing: the cron reads
+Microsoft 365 > Welcome emails**. Off, it changes nothing: the cron reads
 one settings row and returns, and no mail is sent.
 
 - Code: `packages/shared/src/m365-welcome.ts` (switch, eligibility SQL, the
   email template), `apps/email-worker/src/m365-welcome/welcome.ts` (the
   scheduled sender), `apps/web/src/lib/server/m365-welcome-admin.ts` and
-  `apps/web/src/routes/admin/m365-sync/` (Admin).
+  `apps/web/src/routes/admin/microsoft-365/` (Admin).
 - Data: migration `0029_m365_welcome_emails.sql` (`m365_welcome_emails`, the
   once-only record; `m365_welcome_state`, the status row) and
   `0032_m365_sync_upn.sql` (additive: `m365_sync_links.upn`, the person's
@@ -38,7 +38,7 @@ one settings row and returns, and no mail is sent.
 - [Who gets one](#who-gets-one)
 - [How they sign in (no link token)](#how-they-sign-in-no-link-token)
 - [Which address it is sent to](#which-address-it-is-sent-to)
-- [The switch (Admin > Microsoft 365 sync > Welcome emails)](#the-switch-admin--microsoft-365-sync--welcome-emails)
+- [The switch (Admin > Microsoft 365 > Welcome emails)](#the-switch-admin--microsoft-365--welcome-emails)
 - [Exactly once, retries and limits](#exactly-once-retries-and-limits)
 - [The email](#the-email)
 - [Configuration](#configuration)
@@ -158,7 +158,7 @@ cmail cannot read your DNS or Cloudflare account, so it cannot prove DMARC
 passes before the first send: check the first welcome email's headers
 (`Authentication-Results: dmarc=pass`) in Exchange.
 
-## The switch (Admin > Microsoft 365 sync > Welcome emails)
+## The switch (Admin > Microsoft 365 > Welcome emails)
 
 Managers only. Off by default.
 
@@ -198,7 +198,7 @@ waits until dry run is off.
 
 ## Send a test to me
 
-**Send a test to me** (Admin > Microsoft 365 sync > Welcome emails, managers
+**Send a test to me** (Admin > Microsoft 365 > Welcome emails, managers
 only) sends the current email to the signed-in manager's own address and no
 one else, with the subject prefixed `[Test] `. It:
 
@@ -342,7 +342,7 @@ only those two settings and the organisation details every public page shows.
 | Link | `APP_URL` |
 | Product name in the text and footer | Admin > Settings app name, or `APP_NAME` |
 | Colour | `BRAND_PRIMARY_COLOR` |
-| Standby sentence | Admin > Microsoft 365 sync > Welcome emails |
+| Standby sentence | Admin > Microsoft 365 > Welcome emails |
 | Wording | `renderWelcomeEmail` in `packages/shared/src/m365-welcome.ts`, in your own fork or deployment branch (keep the tests in `welcome.sql.node.test.ts` passing: no images, no external links, passkey step only when on) |
 
 The web app owns the organisation details, `APP_URL` and the sign-in
@@ -385,7 +385,7 @@ Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](o
    failing, but the UPN is not recorded until the column exists.
 2. Make sure first sign-in works (see [First sign-in](m365-sync.md#first-sign-in): try it with one synced test account), the sync and Cloudflare Email Sending for the
    From domain all work. Send yourself a normal test message first.
-3. Open Admin > Microsoft 365 sync. Read the preview; set the standby sentence
+3. Open Admin > Microsoft 365 > Directory sync. Read the preview; set the standby sentence
    if you want one.
 4. With the sync in **dry run**, turn welcome emails on ("only people created
    from now on"). The next run lists who would be emailed.

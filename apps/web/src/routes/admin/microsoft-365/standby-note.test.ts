@@ -1,7 +1,8 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import { STANDBY_SWITCH_SOONER_NOTE, emptyGraphMirrorStatus } from '@cmail/shared/graph-mirror';
-import ExchangeMirrorPage from './+page.svelte';
+import MailFeed from './sections/MailFeed.svelte';
+import StandbyLink from './sections/StandbyLink.svelte';
 import StandbyPage from '../standby/+page.svelte';
 
 // The "switch sooner" note (if Exchange is down, nothing new arrives here
@@ -44,15 +45,22 @@ describe('standby "switch sooner" note', () => {
     expect(STANDBY_SWITCH_SOONER_NOTE).toContain('held and retried by the sender');
   });
 
-  it('renders on Admin > Exchange mirror (Graph source on or off) with the Graph controls', () => {
+  it('renders in the Mail feed section (Graph source on or off) with the Graph controls', () => {
     for (const enabled of [false, true]) {
-      const { body } = render(ExchangeMirrorPage, { props: { data: { overview: mirrorOverview(enabled), appName: 'cmail' }, form: null } as never });
+      const { body } = render(MailFeed, { props: { data: { overview: mirrorOverview(enabled), appName: 'cmail' }, form: null } as never });
       expect(body).toContain('data-testid="standby-sooner-note"');
       expect(body.includes(STANDBY_SWITCH_SOONER_NOTE) || body.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
       expect(body).toContain('Graph source (recommended)');
       expect(body).toContain('not recommended with Cloudflare Email Routing');
       expect(body.includes('value="graph_run_now"')).toBe(enabled);
     }
+  });
+
+  it('renders on the Microsoft 365 page link card to Standby', () => {
+    const { body } = render(StandbyLink, { props: {} });
+    expect(body).toContain('data-testid="standby-link-note"');
+    expect(body.includes(STANDBY_SWITCH_SOONER_NOTE) || body.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
+    expect(body).toContain('href="/admin/standby"');
   });
 
   it('renders on Admin > Standby, even when that page has nothing else to show', () => {

@@ -141,7 +141,7 @@ MAIL_DOMAIN = ""
 # Optional shared mailbox access from Exchange Online
 # (docs/m365-mailbox-permissions.md). Copies Full Access and Send As on
 # shared mailboxes into cmail once a day. Nothing runs until a manager turns
-# it on in Admin > Shared mailbox access, and it also needs the container
+# it on in Admin > Microsoft 365 > Shared mailbox access, and it also needs the container
 # block further down (Workers Paid plan, Docker on the deploying machine).
 # Uses a SEPARATE Entra app with Exchange.ManageAsApp and a read-only Exchange
 # role, signed in with a certificate. Shares M365_TENANT_ID; group grants are
@@ -182,7 +182,7 @@ STANDBY_PROBE_TIMEOUT_MINUTES = "10"
 
 # Optional Exchange mirror (docs/exchange-mirror.md): files the original of
 # each Exchange Online journal report into every recipient's mailbox. Nothing
-# is read or filed until a manager turns it on in Admin > Exchange mirror;
+# is read or filed until a manager turns it on in Admin > Microsoft 365 > Mail feed;
 # with M365_JOURNAL_ADDRESS empty it is off whatever the switch says. Needs
 # migration 0027, INBOUND_AUTHSERV_ID above and MAIL_DOMAIN.
 # The journal address: journal-<32 to 64 random lower-case letters/digits>@<a
@@ -217,7 +217,7 @@ M365_JOURNAL_SUBREQUEST_BUDGET = "8000"
 # Exchange mirror, Graph source (recommended; docs/exchange-mirror.md#graph-source-recommended).
 # Uses the Microsoft 365 sync app (M365_TENANT_ID, M365_CLIENT_ID, M365_CLIENT_SECRET)
 # with "Application Mail.Read" assigned in Exchange Online RBAC for Applications.
-# Off until a manager turns it on in Admin > Exchange mirror.
+# Off until a manager turns it on in Admin > Microsoft 365 > Mail feed.
 # Hours back the first pull of each folder starts (1 to 168).
 M365_GRAPH_MIRROR_LOOKBACK_HOURS = "24"
 # Most messages the first pull of one folder files (1 to 5000); "Import older mail" in Admin lifts it.

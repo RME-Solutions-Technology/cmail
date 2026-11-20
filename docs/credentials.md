@@ -185,10 +185,10 @@ What each rotation breaks, secret by secret, is in
 | Wrangler: `Authentication error [code: 10000]` | The token lacks a permission for that command, or targets another account | Check the deploy token row above and `CLOUDFLARE_ACCOUNT_ID` |
 | `Set CLOUDFLARE_API_TOKEN in the environment (not on the command line).` | Standby script run without a session token | Set it with a hidden prompt, as above |
 | `CLOUDFLARE_API_TOKEN is not set or does not look like an API token.` | Empty or malformed token in the session | Paste the token again |
-| Admin > Microsoft 365 sync: `error (unauthorized)` | Sync secret expired, or admin consent removed | New secret, or grant consent again ([m365-sync.md](m365-sync.md)) |
-| Admin > Microsoft 365 sync: "Type unknown" for every mailbox | `MailboxSettings.Read` missing or not consented | Add it and grant admin consent |
-| Admin > Shared mailbox access: `credentials_rejected` | Reader certificate expired or replaced | Upload a new certificate and update both Worker secrets |
-| Admin > Exchange mirror, Graph source: "permission missing", or mailboxes refused | `Application Mail.Read` not assigned, the mailbox outside its scope, or Exchange's cache (up to 2 hours) | `Test-ServicePrincipalAuthorization` for one mailbox; check the scope; wait |
+| Admin > Microsoft 365 > Directory sync: `error (unauthorized)` | Sync secret expired, or admin consent removed | New secret, or grant consent again ([m365-sync.md](m365-sync.md)) |
+| Admin > Microsoft 365 > Directory sync: "Type unknown" for every mailbox | `MailboxSettings.Read` missing or not consented | Add it and grant admin consent |
+| Admin > Microsoft 365 > Shared mailbox access: `credentials_rejected` | Reader certificate expired or replaced | Upload a new certificate and update both Worker secrets |
+| Admin > Microsoft 365 > Mail feed, Graph source: "permission missing", or mailboxes refused | `Application Mail.Read` not assigned, the mailbox outside its scope, or Exchange's cache (up to 2 hours) | `Test-ServicePrincipalAuthorization` for one mailbox; check the scope; wait |
 | Admin > Copy back to Exchange: many `access_denied` | Mailbox outside the RBAC scope, or Exchange's cache (up to 2 hours) | Check group membership with `Test-ServicePrincipalAuthorization`; wait; **Retry failed** |
 | Compose: no **Unblock and send again** on a blocked recipient | `CLOUDFLARE_SUPPRESSIONS_API_TOKEN` or `CLOUDFLARE_ACCOUNT_ID` unset | Set both, redeploy Pages |
 

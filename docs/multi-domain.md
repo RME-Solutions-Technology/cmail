@@ -3,7 +3,7 @@ title: "Multiple mail domains"
 summary: "How cmail serves every mail domain your organisation owns, found and proven automatically from Microsoft 365, with nothing to type in."
 applies_to: both
 audience: [manager, operator, developer]
-switch: "Admin > Microsoft 365 sync (no switch of its own)"
+switch: "Admin > Microsoft 365 > Directory sync (no switch of its own)"
 last_reviewed: 2026-11-16
 related: [m365-sync.md, exchange-mirror.md, sending.md, shared-mailboxes.md, focused-inbox.md]
 ---
@@ -78,7 +78,7 @@ Details:
 - With no Microsoft 365 sync, the list is `MAIL_DOMAIN` alone, and cmail
   behaves exactly as before.
 
-Admin > Microsoft 365 sync shows the list under **Status > Mail domains**,
+Admin > Microsoft 365 > Directory sync shows the list under **Status > Mail domains**,
 when it was last read, and any problem.
 
 ## What uses the list
@@ -150,7 +150,7 @@ There is no separate switch. With the Microsoft 365 sync already working:
    ([permissions](https://learn.microsoft.com/en-us/graph/api/domain-list#permissions)).
    **Grant admin consent** and check it shows "Granted". This is a tenant
    change: get the owner's yes first.
-2. In **Admin > Microsoft 365 sync**, turn **dry run** on, then press **Sync
+2. In **Admin > Microsoft 365 > Directory sync**, turn **dry run** on, then press **Sync
    now**.
 3. Within 15 minutes, check **Status > Mail domains** lists the domains you
    expect, and the dry run report shows the accounts and shared mailboxes it

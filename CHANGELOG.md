@@ -6,6 +6,9 @@ Notable changes to cmail are recorded here. The project follows
 
 ## [Unreleased]
 
+### Changed
+- Admin: the Microsoft 365 pages are now one page, **Admin > Microsoft 365** (`/admin/microsoft-365`), with sections for Connection (permission checks and discovered domains), Directory sync, Shared mailbox access (including Include manager accounts), Welcome emails, Mail feed (Graph source, Import older mail, aliases; the legacy journal source is collapsed) and a link card to Standby, which stays its own page. The three old Admin entries (Microsoft 365 sync, Shared mailbox access, Exchange mirror) are gone from the menu; their old addresses (`/admin/m365-sync`, `/admin/m365-mailbox-access`, `/admin/exchange-mirror`) redirect to the matching section. Layout only: every switch, setting and check is the same, with the same manager-only server checks. Docs and the doc `switch:` fields use the new menu path. No migration.
+
 ## [0.9.0-beta.2] - 2026-11-17
 
 **Highlights**
