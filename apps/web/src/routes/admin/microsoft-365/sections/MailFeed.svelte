@@ -143,7 +143,7 @@
           {/if}
         {/if}
         {#if graph.enabled}
-          <div class="import-box" aria-labelledby="feed-import-heading">
+          <div class="import-box" role="group" aria-labelledby="feed-import-heading">
             <h4 id="feed-import-heading">Import older mail</h4>
             <p class="muted">Bring older mail from Microsoft 365 into every mirrored mailbox (people and shared, all domains). It is a finite import, not a copy that keeps growing: first a count (a dry run that writes no mail), then your confirmation, then the import in the background.</p>
 
@@ -294,7 +294,7 @@
       </dl>
     </section>
 
-    <details class="legacy" data-testid="journal-source">
+    <details class="legacy" data-testid="journal-source" open={overview.enabled}>
       <summary>Journal source (legacy, not recommended with Cloudflare Email Routing) <span class="state-badge" class:on={overview.enabled}>{overview.enabled ? 'On' : 'Off'}</span></summary>
       <section class="card" aria-labelledby="feed-switch-heading">
         <div class="switch-head">

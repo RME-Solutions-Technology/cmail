@@ -60,7 +60,7 @@
       <p class="muted">Sent from <strong>{welcome.sender.fromEmail || 'no address'}</strong>. It must be on {welcome.sender.mailDomain || 'MAIL_DOMAIN'}, and that domain must be onboarded to Cloudflare Email Sending so the message passes DMARC (Cloudflare's DKIM signature matches the From domain). Otherwise Exchange may junk or reject it.</p>
 
       {#if welcome.installed}
-        <div class="recipients" aria-labelledby="sync-welcome-recipients-heading">
+        <div class="recipients" role="group" aria-labelledby="sync-welcome-recipients-heading">
           <h4 id="sync-welcome-recipients-heading">Who would be emailed: {welcome.toggle.enabled && welcome.recipients.auto !== welcome.recipients.total ? `${welcome.recipients.auto} now, ${welcome.recipients.total - welcome.recipients.auto} more by Send` : `${welcome.recipients.total} ${welcome.recipients.total === 1 ? 'person' : 'people'}`}</h4>
           <p class="muted">
             Licensed, enabled people the sync created, who have not been sent a welcome email. Shared mailboxes, unlicensed and disabled accounts are never listed or emailed. Each name below is the Microsoft sign-in name (UPN) the email tells them to use.

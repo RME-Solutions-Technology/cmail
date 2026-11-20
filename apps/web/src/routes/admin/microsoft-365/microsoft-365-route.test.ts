@@ -38,7 +38,7 @@ describe('Admin > Microsoft 365 actions', () => {
   it('refuses a standard user (403) in every section and changes nothing', async () => {
     for (const [section, action] of [['sync', 'enable'], ['access', 'enable'], ['mirror', 'enable'], ['mirror', 'alias_enable'], ['sync', 'welcome_enable']] as const) {
       const { result, sqlite, fetch } = post(section, action, { id: 'u1', role: 'standard' });
-      expect(await result).toMatchObject({ status: 403, data: { section } });
+      expect(await result).toMatchObject({ status: 403, data: { section: action.startsWith('welcome_') ? 'welcome' : section } });
       expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM org_settings WHERE key LIKE 'exchange_mirror%' OR key LIKE 'm365%'`).get()).toEqual({ n: 0 });
       expect(fetch).not.toHaveBeenCalled();
     }
@@ -68,6 +68,14 @@ describe('Admin > Microsoft 365 old routes', () => {
 });
 
 describe('Admin > Microsoft 365 page', () => {
+  it('a section that fails to load shows as unavailable and the others still load', async () => {
+    const broken = { prepare() { throw new Error('d1 down'); }, batch() { throw new Error('d1 down'); }, exec() { throw new Error('d1 down'); } };
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const data = await (load as any)({ platform: platformFor(broken), locals: { user: { id: 'm1', role: 'manager' } } });
+    quiet.mockRestore();
+    expect(data).toEqual({ sync: null, welcome: null, access: null, feed: null });
+  });
+
   it('loads nothing for a non-manager', async () => {
     const { d1 } = createTestDatabase();
     const data = await (load as any)({ platform: platformFor(d1), locals: { user: { id: 'u1', role: 'standard' } } });

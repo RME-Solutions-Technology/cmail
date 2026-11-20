@@ -29,15 +29,18 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
   // the sync overview writes the profile snapshot, so this checks for itself.
   if (!env || locals.user?.role !== 'manager') return { sync: null, welcome: null, access: null, feed: null };
   const envRecord = env as unknown as EnvRecord;
+  // One section failing to load must not take the others down: each shows "not available" instead.
+  const settle = async <T,>(label: string, load: Promise<T>): Promise<T | null> =>
+    load.catch((caught: unknown) => { console.error('microsoft-365 admin: section failed to load', label, caught instanceof Error ? caught.name : 'error'); return null; });
   const [sync, welcome, access, feed] = await Promise.all([
-    loadM365SyncOverview(env),
-    loadWelcomeOverview(envRecord, locals.user.id ?? null),
-    loadM365PermsOverview(env),
-    loadExchangeMirrorOverview(env),
+    settle('sync', loadM365SyncOverview(env)),
+    settle('welcome', loadWelcomeOverview(envRecord, locals.user.id ?? null)),
+    settle('access', loadM365PermsOverview(env)),
+    settle('feed', loadExchangeMirrorOverview(env)),
   ]);
   return {
     sync,
-    welcome: { ...welcome, problemText: welcome.problems.map(welcomeProblemText) },
+    welcome: welcome ? { ...welcome, problemText: welcome.problems.map(welcomeProblemText) } : null,
     access,
     feed,
   };
@@ -56,11 +59,12 @@ function gate(section: Section, { platform, locals }: ActionEvent) {
 
 export const actions: Actions = {
   sync: async (event) => {
-    const checked = gate('sync', event);
+    // The welcome buttons post here too; a refusal belongs under the section that was pressed.
+    const form = await event.request.formData().catch(() => new FormData());
+    const welcomeAction = parseWelcomeAdminAction(form.get('action'));
+    const checked = gate(welcomeAction ? 'welcome' : 'sync', event);
     if ('refusal' in checked) return checked.refusal;
     const { env, user } = checked;
-    const form = await event.request.formData();
-    const welcomeAction = parseWelcomeAdminAction(form.get('action'));
     if (welcomeAction) {
       const result = await applyWelcomeAdminAction(env as unknown as EnvRecord, user, welcomeAction, {
         scope: field(form, 'scope'),
