@@ -112,10 +112,10 @@ Mail metadata, bodies, and attachments live in separate D1 and R2 resources. Bac
 Use Cloudflare's [D1 export](https://developers.cloudflare.com/d1/best-practices/import-export-data/) and an S3-compatible client such as the documented [`rclone` integration](https://developers.cloudflare.com/r2/examples/rclone/). Give the R2 client a restricted token and a separately controlled backup destination. A D1 export blocks other database requests while it runs. For a routine recovery point: pre-copy R2, export D1, then copy R2 again — the second copy catches objects committed around the export without deleting backup objects. For a strict recovery point, pause Email Routing and interactive writes before the first command, and resume only after validation. Replace all names and the date before running:
 
 ```sh
-rclone copy r2-production:cmail-storage r2-backup:cmail-storage-YYYY-MM-DD --checksum
-pnpm exec wrangler d1 export cmail-db --remote --output ../cmail-backups/cmail-db-YYYY-MM-DD.d1-export.sql
-rclone copy r2-production:cmail-storage r2-backup:cmail-storage-YYYY-MM-DD --checksum
-rclone check r2-production:cmail-storage r2-backup:cmail-storage-YYYY-MM-DD --one-way
+rclone copy r2-production:stanchion-storage r2-backup:stanchion-storage-YYYY-MM-DD --checksum
+pnpm exec wrangler d1 export stanchion-db --remote --output ../stanchion-backups/stanchion-db-YYYY-MM-DD.d1-export.sql
+rclone copy r2-production:stanchion-storage r2-backup:stanchion-storage-YYYY-MM-DD --checksum
+rclone check r2-production:stanchion-storage r2-backup:stanchion-storage-YYYY-MM-DD --one-way
 ```
 
 Hash the D1 export (`sha256sum` on Unix, or `Get-FileHash -Algorithm SHA256` in PowerShell) and keep the checksum with the R2 prefix and maintenance-window record. A two-pass live copy can include harmless extra R2 objects created after the D1 snapshot — it's not a substitute for pausing writes when you need exact consistency.
@@ -123,10 +123,10 @@ Hash the D1 export (`sha256sum` on Unix, or `Get-FileHash -Algorithm SHA256` in 
 Before production mail flow starts, rehearse recovery at least once into **new, isolated** resources — never overwrite production. Create a recovery D1 database and R2 bucket, then import the matching export and object backup:
 
 ```sh
-pnpm exec wrangler d1 create cmail-db-recovery
-pnpm exec wrangler d1 execute cmail-db-recovery --remote --file ../cmail-backups/cmail-db-YYYY-MM-DD.d1-export.sql
-rclone copy r2-backup:cmail-storage-YYYY-MM-DD r2-recovery:cmail-storage-recovery --checksum
-rclone check r2-backup:cmail-storage-YYYY-MM-DD r2-recovery:cmail-storage-recovery --one-way
+pnpm exec wrangler d1 create stanchion-db-recovery
+pnpm exec wrangler d1 execute stanchion-db-recovery --remote --file ../stanchion-backups/stanchion-db-YYYY-MM-DD.d1-export.sql
+rclone copy r2-backup:stanchion-storage-YYYY-MM-DD r2-recovery:stanchion-storage-recovery --checksum
+rclone check r2-backup:stanchion-storage-YYYY-MM-DD r2-recovery:stanchion-storage-recovery --one-way
 ```
 
 Record the D1 export checksum, R2 backup prefix, creation time, source resource names, and confirmation the recovery validated. Check table counts and a small approved sample of message bodies/attachments on the isolated resources. Restoring a live environment needs an approved outage plan: stop mail routing and writes, restore the matching D1 and R2 point together, update both application bindings together, then test before re-enabling routing.
@@ -134,7 +134,7 @@ Record the D1 export checksum, R2 backup prefix, creation time, source resource 
 Create the Pages project before writing Pages secrets:
 
 ```sh
-pnpm exec wrangler pages project create cmail-web --production-branch main
+pnpm exec wrangler pages project create stanchion-web --production-branch main
 ```
 
 If you choose another project name, use it consistently in deployment and secret commands.
@@ -152,7 +152,7 @@ If you choose another project name, use it consistently in deployment and secret
 It holds the same private mail as production: keep the backup bucket private (no public access, no `r2.dev` URL), and treat access to it like access to the mail bucket. It protects against accidental deletion and overwrites within the retention window, not against losing the whole account: for that, also keep the off-account export described above. Large mailboxes need the Workers Paid plan (a run can exceed the Free plan's CPU time per invocation), and each run holds both bucket listings in memory, so it suits deployments up to tens of thousands of mail objects; watch the Worker's Cron Trigger history after the first runs.
 
 ```sh
-pnpm exec wrangler r2 bucket create cmail-backup
+pnpm exec wrangler r2 bucket create stanchion-backup
 cp apps/backup-worker/wrangler.toml.example apps/backup-worker/wrangler.toml   # fill in the D1 id and bucket names
 cd apps/backup-worker && pnpm exec wrangler deploy
 ```
@@ -160,8 +160,8 @@ cd apps/backup-worker && pnpm exec wrangler deploy
 To restore one object, copy it back by key (`objects/` prefix removed) and keep its content type, then delete the local copy (it is private mail). This is enough while the message's D1 row still exists; if the row is gone too, restore D1 first (Time Travel below, within its window).
 
 ```sh
-pnpm exec wrangler r2 object get cmail-backup/objects/<key> --remote --file restore.bin
-pnpm exec wrangler r2 object put cmail-storage/<key> --remote --file restore.bin --content-type "<original content type>"
+pnpm exec wrangler r2 object get stanchion-backup/objects/<key> --remote --file restore.bin
+pnpm exec wrangler r2 object put stanchion-storage/<key> --remote --file restore.bin --content-type "<original content type>"
 rm restore.bin
 ```
 
@@ -179,12 +179,12 @@ This is a backstop, not protection: the list mostly covers threats aimed at Poli
 
 D1 keeps history for 30 days on Workers Paid (7 days on Workers Free) through [Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/), so a bad data change (a faulty migration, a wrong bulk action, a script error) can be undone without an export. It covers D1 only: R2 objects deleted or overwritten in the same window are not brought back, so keep the R2 copy described above.
 
-- Before any migration or bulk change, record a bookmark with `pnpm exec wrangler d1 time-travel info cmail-db`, and keep it with the change record.
+- Before any migration or bulk change, record a bookmark with `pnpm exec wrangler d1 time-travel info stanchion-db`, and keep it with the change record.
 - To undo, get approval, pause Email Routing and interactive writes, and restore to that bookmark. To go back to a moment instead, look up the bookmark for that time first (`info` takes an RFC 3339 timestamp), then restore by bookmark. A restore rewinds **every** table in place, cancels in-flight queries and asks for confirmation; Wrangler then prints an undo bookmark, so record it.
 
 ```sh
-pnpm exec wrangler d1 time-travel info cmail-db --timestamp=2026-01-01T09:00:00Z
-pnpm exec wrangler d1 time-travel restore cmail-db --bookmark=<bookmark-before-the-change>
+pnpm exec wrangler d1 time-travel info stanchion-db --timestamp=2026-01-01T09:00:00Z
+pnpm exec wrangler d1 time-travel restore stanchion-db --bookmark=<bookmark-before-the-change>
 ```
 
 A D1-only restore can leave rows pointing at R2 objects that changed since. If the incident also touched message bodies or attachments, restore the matching R2 point too, as for a full recovery above. Rehearse on a **preview or recovery** database, never production: record a bookmark, make a harmless marker change (for example create an empty table), restore, and confirm the marker is gone. After any restore, compare per-table row counts with what you expect before re-enabling routing.
@@ -193,10 +193,10 @@ A D1-only restore can leave rows pointing at R2 objects that changed since. If t
 
 Pages preview builds must never inherit production mail data, storage, service bindings, or outbound capability. The committed Wrangler examples repeat every non-inheritable preview binding and variable on purpose — don't collapse those blocks into production defaults.
 
-1. Create a separate `cmail-db-preview` D1 database and
-   `cmail-storage-preview` R2 bucket. Put the preview database ID only in
+1. Create a separate `stanchion-db-preview` D1 database and
+   `stanchion-storage-preview` R2 bucket. Put the preview database ID only in
    `env.preview` in both ignored Wrangler files.
-2. Keep Pages preview bound to `cmail-email-worker-preview`. The Worker preview
+2. Keep Pages preview bound to `stanchion-email-worker-preview`. The Worker preview
    environment has `workers_dev=false`, `preview_urls=false`, empty routes, and
    no `send_email` binding. Its Pages variables keep
    `OUTBOUND_PROVIDER="none"`.
@@ -217,7 +217,7 @@ Pages preview builds must never inherit production mail data, storage, service b
    and restrict which branches create previews.
 
 Before each deploy, inspect the resolved environment and confirm Preview names,
-IDs, and bindings can't reach `cmail-db`, `cmail-storage`, the production email
+IDs, and bindings can't reach `stanchion-db`, `stanchion-storage`, the production email
 Worker, or an outbound provider.
 
 ## 3. Establish the final application origin
@@ -261,12 +261,12 @@ Now add a unique session key and the credentials for one or both registered
 providers. The Pages project must already exist for these commands to work:
 
 ```sh
-pnpm exec wrangler pages secret put SESSION_SECRET --project-name cmail-web
-pnpm exec wrangler pages secret put GOOGLE_CLIENT_ID --project-name cmail-web
-pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name cmail-web
+pnpm exec wrangler pages secret put SESSION_SECRET --project-name stanchion-web
+pnpm exec wrangler pages secret put GOOGLE_CLIENT_ID --project-name stanchion-web
+pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name stanchion-web
 # Optional Microsoft provider:
-pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name cmail-web
-pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name cmail-web
+pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name stanchion-web
+pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name stanchion-web
 ```
 
 A provider's sign-in button appears only once its own credentials, the shared `APP_URL`, and `SESSION_SECRET` are all set. The default Cloudflare outbound path needs no Pages API token — add an outbound secret only for Postmark or the optional Cloudflare REST fallback.
@@ -299,7 +299,7 @@ Use a production-only value, distinct from the development key `pnpm run setup` 
 Skip this step if you don't need browser notifications. Generate one VAPID (keys that authenticate your server to push services) pair with `pnpm push:keys`. Put the same public key and subject in the web and Worker Wrangler `[vars]`, then store the same private key independently in both runtime secret stores:
 
 ```sh
-pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name cmail-web
+pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name stanchion-web
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY --config apps/email-worker/wrangler.toml
 ```
 
@@ -376,13 +376,13 @@ Cloudflare puts each delivery event on a queue and the email Worker reads it:
 To turn it on:
 
 1. Apply migrations `0019` and `0020` (`pnpm db:migrate`) before deploying this release.
-2. Create a queue, for example `cmail-email-events`
-   (`npx wrangler queues create cmail-email-events`).
+2. Create a queue, for example `stanchion-email-events`
+   (`npx wrangler queues create stanchion-email-events`).
 3. In the queue's **Subscriptions**, subscribe it to **Email Sending** for each
    sending domain. Choose all six events, or at least `message.bounced`,
    `message.failed`, `message.rejected` and `message.complained`. From the
    command line, use the short event names:
-   `npx wrangler queues subscription create cmail-email-events --source email.sending --zone-id <zone ID> --domain <sending domain> --events "message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained"`
+   `npx wrangler queues subscription create stanchion-email-events --source email.sending --zone-id <zone ID> --domain <sending domain> --events "message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained"`
 4. Uncomment the `[[queues.consumers]]` block in the email Worker's Wrangler
    file, set `queue` to your queue's name, and deploy the email Worker.
 5. Send a test message to an address that does not exist on a domain you
@@ -432,7 +432,7 @@ Before each release, record the deployed Git commit and the exact prior Worker v
 
 ```sh
 pnpm exec wrangler deployments list --config apps/email-worker/wrangler.toml
-pnpm exec wrangler pages deployment list --project-name cmail-web
+pnpm exec wrangler pages deployment list --project-name stanchion-web
 ```
 
 Keep a known-good release available until the new release passes verification. Normal releases deploy a backward-compatible Worker first, then Pages. A full rollback reverses that order: roll Pages back first, while the newer Worker still supports the previous private API, then roll the Worker back. This avoids leaving the newer Pages application calling an older Worker contract. Use the Pages project's **Deployments → Rollback to this deployment** action, then roll back the Worker to the recorded version:
@@ -467,8 +467,8 @@ both temporary Pages secrets and redeploy:
 
 ```sh
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name cmail-web
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name cmail-web
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name stanchion-web
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name stanchion-web
 pnpm deploy:web
 ```
 
@@ -482,8 +482,8 @@ Open `<APP_URL>/bootstrap` directly — never append the token to the URL. Submi
 Delete both values immediately after successful bootstrap and redeploy:
 
 ```sh
-pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_TOKEN --project-name cmail-web
-pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_EMAIL --project-name cmail-web
+pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_TOKEN --project-name stanchion-web
+pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_EMAIL --project-name stanchion-web
 pnpm deploy:web
 ```
 

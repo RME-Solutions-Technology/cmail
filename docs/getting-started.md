@@ -45,10 +45,10 @@ Choose these values before creating resources:
 
 | Setting | Example | Purpose |
 |---|---|---|
-| Pages project | `cmail-web` | Hosts the SvelteKit application |
-| Worker name | `cmail-email-worker` | Receives Email Routing events and privately submits native Cloudflare outbound mail |
-| D1 database | `cmail-db` | Stores users, mailbox metadata, messages, audit, and trace data |
-| R2 bucket | `cmail-storage` | Stores message bodies and attachments |
+| Pages project | `stanchion-web` | Hosts the SvelteKit application |
+| Worker name | `stanchion-email-worker` | Receives Email Routing events and privately submits native Cloudflare outbound mail |
+| D1 database | `stanchion-db` | Stores users, mailbox metadata, messages, audit, and trace data |
+| R2 bucket | `stanchion-storage` | Stores message bodies and attachments |
 | `APP_URL` | `https://mail.example.org` | Public origin and OAuth callback base |
 | `MAIL_DOMAIN` | `example.org` | Domain used for mailbox addresses |
 | `OUTBOUND_PROVIDER` | `cloudflare` | Selects Cloudflare Email Service; `postmark`, `auto`, and non-sending `none` are alternatives |

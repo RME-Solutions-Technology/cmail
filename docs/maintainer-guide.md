@@ -108,10 +108,14 @@ are legacy names, kept on purpose:
 - saved-HTML markers: `data-cmail-signature`, `data-cmail-link-risk`,
   `data-cmail-link-host`;
 - environment variables and build constants: `CMAIL_*`, `__CMAIL_BUILD__`;
-- Cloudflare resource names and service hosts in `wrangler.toml.example`:
-  `cmail-web`, `cmail-db`, `cmail-storage`, `cmail-backup`,
-  `cmail-email-worker`, `cmail-email-worker.internal`, `cmail-email-events`,
-  `cmail-exo-permissions`, `cmail-standby-probe` and the rate-limit namespaces;
+- Cloudflare resource names of existing instances (`cmail-web`, `cmail-db`,
+  `cmail-storage`, `cmail-backup`, `cmail-email-worker` and the like): the
+  `wrangler.toml.example` files and docs now default to `stanchion-*` for new
+  installs, and existing instances keep their `cmail-*` names. Also kept:
+  the service host `cmail-email-worker.internal`, `cmail-email-events`,
+  `cmail-exo-permissions`, `cmail-standby-probe`, the container paths
+  `/opt/cmail` and `/tmp/cmail-out`, the `scripts/wsl` helper names and the
+  rate-limit namespaces;
 - identity names that tenants already hold: the `cmail mirror` journal rule,
   `cmail Mailbox Access Readers` role group, `cmail Exchange permission reader`
   app, the `cmail standby copy` Outlook category, the `cmail standby test`
@@ -120,8 +124,8 @@ are legacy names, kept on purpose:
   `cmail standby copy-back` app and the `cmail copy-back mailboxes` and
   `cmail mirror mailboxes` groups and management scopes (docs and scripts quote
   these exactly, so copied commands match what customers already have);
-- the `@cmail/*` package scope, type and CSS variable names, and the GitHub
-  repository URL, until each is renamed in its own change.
+- the GitHub repository URL, until the repository is renamed. The package
+  scope is now `@stanchion/*`.
 
 New text should say Stanchion. Keep a legacy name exactly as it is when you
 quote it.

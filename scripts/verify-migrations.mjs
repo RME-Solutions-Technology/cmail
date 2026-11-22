@@ -16,8 +16,8 @@ if (expectedMigrations.length === 0) {
   throw new Error('No D1 migration files were found.');
 }
 
-const persistenceDirectory = mkdtempSync(join(tmpdir(), 'cmail-migrations-'));
-const upgradeFixtureDirectory = mkdtempSync(join(tmpdir(), 'cmail-migrations-upgrade-'));
+const persistenceDirectory = mkdtempSync(join(tmpdir(), 'stanchion-migrations-'));
+const upgradeFixtureDirectory = mkdtempSync(join(tmpdir(), 'stanchion-migrations-upgrade-'));
 const upgradePersistenceDirectory = join(upgradeFixtureDirectory, 'd1');
 const upgradeMigrationsDirectory = join(upgradeFixtureDirectory, 'migrations');
 const upgradeConfigPath = join(upgradeFixtureDirectory, 'wrangler.toml');
@@ -69,7 +69,7 @@ function assertWranglerFailure(args, label) {
 }
 
 const baseArguments = [
-  'cmail-schema-test',
+  'stanchion-schema-test',
   '--local',
   '--config',
   'scripts/wrangler.test.toml',
@@ -90,10 +90,10 @@ function verifyUpgradeFixture() {
   for (const migration of expectedMigrations.filter((name) => name < '0006_')) {
     copyFileSync(join(root, 'packages', 'shared', 'migrations', migration), join(upgradeMigrationsDirectory, migration));
   }
-  writeFileSync(upgradeConfigPath, `name = "cmail-migration-upgrade-test"\ncompatibility_date = "2026-08-01"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "cmail-migration-upgrade-test"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\nmigrations_dir = "migrations"\n`);
+  writeFileSync(upgradeConfigPath, `name = "stanchion-migration-upgrade-test"\ncompatibility_date = "2026-08-01"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "stanchion-migration-upgrade-test"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\nmigrations_dir = "migrations"\n`);
 
   const upgradeArguments = [
-    'cmail-migration-upgrade-test',
+    'stanchion-migration-upgrade-test',
     '--local',
     '--config', upgradeConfigPath,
     '--persist-to', upgradePersistenceDirectory,

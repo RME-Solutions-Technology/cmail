@@ -51,7 +51,7 @@ database) needs the owner's yes under your own change process.
 ## Checklist
 
 Placeholders: `example.com` is the organisation's mail domain,
-`https://mail.example.com` the web app, `cmail-web` the Pages project,
+`https://mail.example.com` the web app, `stanchion-web` the Pages project,
 `apps/email-worker/wrangler.toml` the instance's own Worker config.
 
 | # | Step | Done when |
@@ -195,7 +195,7 @@ else. The sync (step 5) has its own app.
 
 ```powershell
 pwsh -File scripts/onboarding/new-signin-app.ps1 -TenantId <tenant id> `
-  -AppUrl https://mail.example.com -PagesProject cmail-web -WhatIf
+  -AppUrl https://mail.example.com -PagesProject stanchion-web -WhatIf
 # then without -WhatIf; add -GrantAdminConsent if users may not consent to apps
 ```
 
@@ -210,7 +210,7 @@ The secret is never shown.
 registration: single tenant; redirect URI platform **Web**,
 `https://mail.example.com/auth/callback/microsoft`. API permissions: Microsoft
 Graph delegated `openid`, `email`, `profile` only. Certificates & secrets >
-New client secret; then `pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name cmail-web --env=""`
+New client secret; then `pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name stanchion-web --env=""`
 and the same for `MICROSOFT_CLIENT_SECRET`, pasting at the prompt.
 
 Then, either way: `MICROSOFT_TENANT_ID = "<tenant id>"` in
@@ -221,7 +221,7 @@ effect on the next deployment).
 useful until step 4: nobody has an account yet.
 
 **Undo.** `az ad app delete --id <app id>`;
-`pnpm exec wrangler pages secret delete MICROSOFT_CLIENT_SECRET --project-name cmail-web --env=""`
+`pnpm exec wrangler pages secret delete MICROSOFT_CLIENT_SECRET --project-name stanchion-web --env=""`
 (and `MICROSOFT_CLIENT_ID`); redeploy.
 
 **Pitfalls.**
@@ -245,11 +245,11 @@ invitation. Bootstrap is on only while two temporary secrets exist.
 **Script.**
 
 ```powershell
-pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -AdminEmail admin@example.com
+pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject stanchion-web -AdminEmail admin@example.com
 pnpm deploy:web
 # open https://mail.example.com/bootstrap, paste the token (it is on your clipboard),
 # sign in with Microsoft as admin@example.com
-pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -Remove
+pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject stanchion-web -Remove
 pnpm deploy:web
 ```
 

@@ -50,7 +50,7 @@ subscriptions**:
 
 Setup is in [Deployment: bounce and complaint feedback](deployment.md#bounce-and-complaint-feedback-optional).
 The queue consumer is commented out in `apps/email-worker/wrangler.toml.example`
-(queue `cmail-email-events`, `max_retries = 5`, optional dead-letter queue);
+(queue `stanchion-email-events`, `max_retries = 5`, optional dead-letter queue);
 turn it on there.
 
 ### Timing and retries

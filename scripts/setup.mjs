@@ -57,8 +57,8 @@ if (created > 0) {
   console.log('  3. Replace all six email-Worker rate-limit namespace_id placeholders with unique positive IDs');
   console.log('     (three production and three preview IDs; do not reuse an ID across environments).');
   console.log('  4. Edit public [vars] and development-only values, then run pnpm db:migrate');
-  console.log('  5. Create production Pages first: pnpm exec wrangler pages project create cmail-web --production-branch main');
-  console.log('  6. Set production secrets via: pnpm exec wrangler pages secret put <NAME> --project-name cmail-web');
+  console.log('  5. Create production Pages first: pnpm exec wrangler pages project create stanchion-web --production-branch main');
+  console.log('  6. Set production secrets via: pnpm exec wrangler pages secret put <NAME> --project-name stanchion-web');
   console.log('     Required: SESSION_SECRET, plus one OAuth provider');
   console.log('     First run only: BOOTSTRAP_ADMIN_EMAIL and a distinct strong BOOTSTRAP_ADMIN_TOKEN');
   console.log('     Delete both bootstrap values immediately after the first manager enrols');
