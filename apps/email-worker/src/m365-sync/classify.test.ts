@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { m365SyncConfig } from '@cmail/shared/m365-sync';
+import { m365SyncConfig } from '@stanchion/shared/m365-sync';
 import { classify, needsGroupCheck, needsPurposeCheck } from './classify';
 import { CLIENT_ID, DOMAIN, PLAN_EXCHANGE_1, PLAN_EXCHANGE_FOUNDATION, SCOPE_GROUP, SHARED_GROUP, TENANT_ID, person, removed } from './testing/fake-graph';
 

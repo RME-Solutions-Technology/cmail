@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { AuthProvider, Env, User, UserRole, UserStatus } from '@cmail/shared/types';
-import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
+import type { AuthProvider, Env, User, UserRole, UserStatus } from '@stanchion/shared/types';
+import { pausedAccountLockoutStatements } from '@stanchion/shared/account-lockout';
 import { audit, generateId } from '#lib/server/db.js';
 import { detectProvider, sendEmail } from '#lib/server/outbound.js';
 import { generateInviteEmail } from '#lib/server/invite-email.js';
@@ -22,7 +22,7 @@ import {
 } from '#lib/server/validation.js';
 import { managerIdentityAllowed, managerInviteProviderAllowed } from './users-security';
 import { chooseOrgDomain, orgDomainsForDisplay } from '#lib/server/org-domains.js';
-import { orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
+import { orgDomains, type OrgDomains } from '@stanchion/shared/org-domains';
 
 const PAGE_SIZE = 25;
 const USER_ROLES: readonly UserRole[] = ['standard', 'manager'];

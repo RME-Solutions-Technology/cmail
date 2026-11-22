@@ -16,7 +16,7 @@
 //
 // The class is a plain Durable Object (fetch + alarm, no RPC) so the Worker
 // bundle needs no `cloudflare:workers` import.
-import { loadM365PermsSwitch, type M365PermsEnv } from '@cmail/shared/m365-perms';
+import { loadM365PermsSwitch, type M365PermsEnv } from '@stanchion/shared/m365-perms';
 import { SNAPSHOT_MAX_BYTES } from './snapshot';
 
 const COLLECTOR_NAME = 'm365-perms-collector';

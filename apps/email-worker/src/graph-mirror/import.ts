@@ -40,7 +40,7 @@ import {
   type GraphImportEstimate,
   type GraphImportJob,
   type GraphImportRequest,
-} from '@cmail/shared/graph-import';
+} from '@stanchion/shared/graph-import';
 import { GraphError } from '../m365-sync/graph';
 import { importCountUrl, importListUrl } from './graph';
 import { fileDeltaPage, outOfBudget, RunStop, type FolderRow, type MailboxRow, type Puller } from './run';

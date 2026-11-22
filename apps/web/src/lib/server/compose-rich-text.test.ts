@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { htmlToText, sanitizeComposeHtml } from '@cmail/shared/compose-html';
-import { sanitizeEmailHtml } from '@cmail/shared/sanitize-email';
+import { htmlToText, sanitizeComposeHtml } from '@stanchion/shared/compose-html';
+import { sanitizeEmailHtml } from '@stanchion/shared/sanitize-email';
 import {
   buildQuotedMessageHtml,
   composeBodyFormat,

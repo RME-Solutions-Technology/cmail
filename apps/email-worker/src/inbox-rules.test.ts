@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { InboxRuleRow } from '@cmail/shared/inbox-rules';
+import type { InboxRuleRow } from '@stanchion/shared/inbox-rules';
 import { GUARDS_OFF, deliverInbound, deliveryDatabase, insertedRow, memoryStorage, type Statement } from './testing/delivery';
 
 const pushMocks = vi.hoisted(() => ({ sendNewMailNotifications: vi.fn(async () => ({})) }));
-vi.mock('@cmail/shared/push', async (original) => ({
-  ...(await original<typeof import('@cmail/shared/push')>()),
+vi.mock('@stanchion/shared/push', async (original) => ({
+  ...(await original<typeof import('@stanchion/shared/push')>()),
   sendNewMailNotifications: pushMocks.sendNewMailNotifications,
 }));
 

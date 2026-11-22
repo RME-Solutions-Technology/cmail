@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LINK_BLOCKLIST_META_KEY, buildShards, shardKey } from '@cmail/shared/link-blocklist';
+import { LINK_BLOCKLIST_META_KEY, buildShards, shardKey } from '@stanchion/shared/link-blocklist';
 import { linkSignature } from '#lib/server/link-check.js';
 import { load } from './+page.server';
 

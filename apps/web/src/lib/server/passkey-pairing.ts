@@ -34,7 +34,7 @@
 //   passkeyRouteContext), and a failure on an unknown or used token says
 //   nothing about why.
 import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/server';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { audit } from './db';
 import { consumeRateLimit, rateLimitCount } from './rate-limit';
 import {

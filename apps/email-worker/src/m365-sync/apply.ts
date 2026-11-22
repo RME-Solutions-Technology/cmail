@@ -22,15 +22,15 @@
 // conditional on the status the sync read, and the audit row and link mark
 // are conditional on the change having landed, so a concurrent manager
 // action is never overwritten. A unique-key clash becomes a reported conflict.
-import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
-import { hasUpnColumn } from '@cmail/shared/m365-welcome';
+import { pausedAccountLockoutStatements } from '@stanchion/shared/account-lockout';
+import { hasUpnColumn } from '@stanchion/shared/m365-welcome';
 import {
   M365_REPORT_LIMIT,
   type M365CountKey,
   type M365PendingEntry,
   type M365QueuedPause,
   type M365Round,
-} from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/m365-sync';
 
 interface LinkRow {
   object_id: string;

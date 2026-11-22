@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { PROVIDER_PREFERENCE_COOKIE } from '#lib/server/provider-preference.js';
 
 const mocks = vi.hoisted(() => ({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadM365SyncState } from '@cmail/shared/m365-sync';
+import { loadM365SyncState } from '@stanchion/shared/m365-sync';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { runM365SyncTick, dueRound, type M365SyncDeps } from './sync';
 import { INITIAL_DELTA_URL } from './graph';

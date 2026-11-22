@@ -6,7 +6,7 @@ import {
   readSpamScore,
   shouldQuarantine,
   spamQuarantineThreshold,
-} from '@cmail/shared/inbound-risk';
+} from '@stanchion/shared/inbound-risk';
 
 function headers(values: Record<string, string>): { get(name: string): string | null } {
   const lower = new Map(Object.entries(values).map(([key, value]) => [key.toLowerCase(), value]));

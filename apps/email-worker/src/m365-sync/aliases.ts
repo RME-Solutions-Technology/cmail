@@ -25,7 +25,7 @@
 import {
   loadM365SyncSwitch,
   m365SyncConfig,
-} from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/m365-sync';
 import {
   ALIAS_BRAKE_MIN,
   ALIAS_BRAKE_PERCENT,
@@ -34,8 +34,8 @@ import {
   loadAliasSyncSwitch,
   type AliasSyncCounts,
   type AliasSyncState,
-} from '@cmail/shared/exchange-mirror';
-import { domainIn, orgDomains } from '@cmail/shared/org-domains';
+} from '@stanchion/shared/exchange-mirror';
+import { domainIn, orgDomains } from '@stanchion/shared/org-domains';
 import type { OrgDomainSet } from './classify';
 import { ALIAS_USERS_URL, GraphClient, GraphError } from './graph';
 import type { M365SyncWorkerEnv } from './sync';

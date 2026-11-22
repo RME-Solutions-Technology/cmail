@@ -22,7 +22,7 @@
 //   reconciliation (sync.ts), so an answer from an earlier period is never used.
 // Dry run reads Microsoft but never this table: every dry run is a full
 // reconciliation, which reads every object anyway.
-import { M365_PURPOSE_FAILURE_ALERT, type M365Round } from '@cmail/shared/m365-sync';
+import { M365_PURPOSE_FAILURE_ALERT, type M365Round } from '@stanchion/shared/m365-sync';
 import { GraphError, MAILBOX_PURPOSES, type GraphClient, type GraphUser, type MailboxPurpose, type PurposeLookup } from './graph';
 import { needsPurposeCheck, type OrgDomainSet } from './classify';
 

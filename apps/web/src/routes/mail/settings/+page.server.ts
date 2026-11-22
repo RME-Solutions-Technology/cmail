@@ -9,8 +9,8 @@ import {
   type StoredPersonalSignature,
 } from '#lib/server/signatures.js';
 import { getComposeDefaults, parseComposeDefaultsForm, saveComposeDefaults } from '#lib/server/compose-preferences.js';
-import { DEFAULT_COMPOSE_DEFAULTS } from '@cmail/shared/compose-style';
-import { isFocusClass, normalizeFocusAddress, normalizeFocusDomain } from '@cmail/shared/focused-inbox';
+import { DEFAULT_COMPOSE_DEFAULTS } from '@stanchion/shared/compose-style';
+import { isFocusClass, normalizeFocusAddress, normalizeFocusDomain } from '@stanchion/shared/focused-inbox';
 import {
   canManageMailboxFocus,
   focusedInboxOrgEnabled,

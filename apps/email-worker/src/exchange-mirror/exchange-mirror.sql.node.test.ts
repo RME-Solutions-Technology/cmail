@@ -3,7 +3,7 @@ import worker, { RECIPIENT_UNAVAILABLE_SMTP_RESPONSE } from '../index';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { GUARDS_OFF } from '../testing/delivery';
 import { JOURNAL_REJECT_RESPONSE } from './ingest';
-import { FOCUS_LOOKUP_SQL } from '@cmail/shared/focused-inbox';
+import { FOCUS_LOOKUP_SQL } from '@stanchion/shared/focused-inbox';
 import { AUTHSERV, DOMAIN, JOURNAL, NDR, NDR_DOMAIN, OTHER_TENANT, TENANT, defaultEnvelope, innerMessage, journalReport } from './fixtures';
 
 // The Exchange mirror against every real migration (node:sqlite), driving

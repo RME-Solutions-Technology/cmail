@@ -1,4 +1,4 @@
-import { loadColleagueSendViaExchange } from '@cmail/shared/exchange-mirror';
+import { loadColleagueSendViaExchange } from '@stanchion/shared/exchange-mirror';
 
 /**
  * Domains whose mail lives in Exchange Online rather than in Stanchion.

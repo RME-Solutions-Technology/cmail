@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ORG_DOMAINS_SETTING, loadOrgDomainsCache, orgDomains } from '@cmail/shared/org-domains';
+import { ORG_DOMAINS_SETTING, loadOrgDomainsCache, orgDomains } from '@stanchion/shared/org-domains';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { runM365SyncTick, type M365SyncDeps } from './sync';
 import { DOMAINS_URL } from './graph';

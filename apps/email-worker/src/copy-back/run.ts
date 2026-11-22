@@ -51,7 +51,7 @@ import {
   type CopyBackEnv,
   type CopyBackJobRow,
   type CopyBackParams,
-} from '@cmail/shared/copy-back';
+} from '@stanchion/shared/copy-back';
 import { GraphError } from '../m365-sync/graph';
 import { buildGraphMessage, copyableMessageId, type CopyAttachmentRow, type CopyMessageRow } from './build';
 import { CopyBackGraphClient } from './graph';

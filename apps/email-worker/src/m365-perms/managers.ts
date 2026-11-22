@@ -12,7 +12,7 @@
 // here: no person link is created and the directory sync keeps ignoring
 // managers. The diff then treats the match like a link, for additions and
 // raises only.
-import type { M365PermsManagerMatch, M365PermsReportItem } from '@cmail/shared/m365-perms';
+import type { M365PermsManagerMatch, M365PermsReportItem } from '@stanchion/shared/m365-perms';
 import { primaryAddress } from '../m365-sync/classify';
 import { GraphError } from '../m365-sync/graph';
 import type { PermsApplyContext } from './apply';

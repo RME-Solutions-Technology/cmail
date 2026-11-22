@@ -1,7 +1,7 @@
 import { redirect, error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { Message, Attachment } from '@cmail/shared/types';
-import { buildIcs, parseIcs } from '@cmail/shared/ics';
+import type { Message, Attachment } from '@stanchion/shared/types';
+import { buildIcs, parseIcs } from '@stanchion/shared/ics';
 import { sanitizeEmailHtmlWithLinkGuard, type RiskyLink } from '#lib/server/sanitize-email.js';
 import { linkSignature } from '#lib/server/link-check.js';
 import { resolveInlineImages } from '#lib/server/inline-images.js';
@@ -22,7 +22,7 @@ import { consumeCalendarOutboundLimits } from '#lib/server/calendar-outbound.js'
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 import { deliveryStatus, type DeliveryEventView, type DeliveryStatus } from '#lib/mail/delivery-status.js';
 import { mailboxFocusEnabled } from '#lib/server/focused-inbox.js';
-import { FOCUS_REASON_TEXT, isFocusReason } from '@cmail/shared/focused-inbox';
+import { FOCUS_REASON_TEXT, isFocusReason } from '@stanchion/shared/focused-inbox';
 
 interface InviteViewModel {
   eventId: string | null;

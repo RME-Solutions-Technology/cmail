@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from '#lib/ui/Icon.svelte';
-  import type { Message } from '@cmail/shared/types';
-  import type { LinkRisk } from '@cmail/shared/link-risk';
+  import type { Message } from '@stanchion/shared/types';
+  import type { LinkRisk } from '@stanchion/shared/link-risk';
 
   /** Only what the banner renders. Full hrefs stay on the server. */
   type LinkFinding = { risk: LinkRisk; host: string };

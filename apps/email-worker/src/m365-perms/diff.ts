@@ -19,11 +19,11 @@ import {
   type M365PermsBrake,
   type M365PermsCounts,
   type M365PermsReportItem,
-} from '@cmail/shared/m365-perms';
+} from '@stanchion/shared/m365-perms';
 import type { PermissionSnapshot } from './snapshot';
 
-export type CmailLevel = 'read' | 'send-as' | 'full';
-export const LEVEL_RANK: Record<CmailLevel, number> = { read: 1, 'send-as': 2, full: 3 };
+export type StanchionLevel = 'read' | 'send-as' | 'full';
+export const LEVEL_RANK: Record<StanchionLevel, number> = { read: 1, 'send-as': 2, full: 3 };
 
 /** Bit flags kept in the ledger: what Exchange granted when the row was written. */
 export const RIGHT_FULL_ACCESS = 1;
@@ -38,8 +38,8 @@ export interface PersonLink {
   /** An unlinked manager account matched by address: additions and raises only. */
   manager?: boolean;
 }
-export interface LiveAssignment { permissions: CmailLevel; assignedAt: string; assignedBy: string | null }
-export interface LedgerRow { level: CmailLevel; assignedAt: string }
+export interface LiveAssignment { permissions: StanchionLevel; assignedAt: string; assignedBy: string | null }
+export interface LedgerRow { level: StanchionLevel; assignedAt: string }
 
 export interface DiffInput {
   snapshot: PermissionSnapshot;
@@ -70,9 +70,9 @@ export interface DiffInput {
 }
 
 export type DiffOp =
-  | { type: 'add'; mailboxId: string; userId: string; level: CmailLevel; rights: number; mailbox: string; user: string }
-  | { type: 'upgrade' | 'downgrade'; mailboxId: string; userId: string; from: CmailLevel; level: CmailLevel; marker: string; rights: number; mailbox: string; user: string }
-  | { type: 'remove'; mailboxId: string; userId: string; from: CmailLevel; marker: string; mailbox: string; user: string }
+  | { type: 'add'; mailboxId: string; userId: string; level: StanchionLevel; rights: number; mailbox: string; user: string }
+  | { type: 'upgrade' | 'downgrade'; mailboxId: string; userId: string; from: StanchionLevel; level: StanchionLevel; marker: string; rights: number; mailbox: string; user: string }
+  | { type: 'remove'; mailboxId: string; userId: string; from: StanchionLevel; marker: string; mailbox: string; user: string }
   /** Ledger row whose assignment is no longer the sync's: forget it (no assignment change). */
   | { type: 'release'; mailboxId: string; userId: string; mailbox: string; user: string }
   /** Exchange no longer grants a pair a manager had removed: forget that mark (no assignment change). */
@@ -90,7 +90,7 @@ export interface DiffResult {
 
 export const key = (mailboxId: string, userId: string) => `${mailboxId}|${userId}`;
 
-export function levelFor(rights: number, fullAccessImpliesSend: boolean): CmailLevel | null {
+export function levelFor(rights: number, fullAccessImpliesSend: boolean): StanchionLevel | null {
   const fa = (rights & RIGHT_FULL_ACCESS) !== 0;
   const sa = (rights & RIGHT_SEND_AS) !== 0;
   if (fa && sa) return 'full';

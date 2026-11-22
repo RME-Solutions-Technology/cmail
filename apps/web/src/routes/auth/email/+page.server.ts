@@ -10,7 +10,7 @@
 // geography, or ran out of attempts. The real reason is always audited.
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import {
   assertStrongSessionSecret,
   emailOtpEnabled,

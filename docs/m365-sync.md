@@ -608,9 +608,9 @@ secret and vars and delete the Entra app; the two tables can stay.
 Locally, single files only (the full suite runs in CI):
 
 ```sh
-pnpm --filter @cmail/email-worker exec vitest run src/m365-sync
-pnpm --filter @cmail/web exec vitest run src/lib/server/m365-sync-admin.test.ts
-pnpm --filter @cmail/email-worker check
+pnpm --filter @stanchion/email-worker exec vitest run src/m365-sync
+pnpm --filter @stanchion/web exec vitest run src/lib/server/m365-sync-admin.test.ts
+pnpm --filter @stanchion/email-worker check
 ```
 
 `shared-detection.sql.node.test.ts` covers shared mailbox detection: off by

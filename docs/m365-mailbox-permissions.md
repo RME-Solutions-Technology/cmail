@@ -602,7 +602,7 @@ report), read the report. When it matches Exchange **and step 4 was a go**,
   untouched, failures keep access, switch off changes nothing (whole-database
   hash), dry run writes nothing, and the collector's container handling with
   a fake container. Run one file locally with
-  `pnpm --filter @cmail/email-worker exec vitest run src/m365-perms`.
+  `pnpm --filter @stanchion/email-worker exec vitest run src/m365-perms`.
 - **Collector harness** (no tenant): `pwsh -File apps/email-worker/container/m365-perms/collect.Tests.ps1`
   runs `collect.ps1` against mocked Exchange cmdlets (system, orphaned,
   inherited, deny, group, room and unresolvable trustees, a failed query, the

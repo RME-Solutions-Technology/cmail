@@ -3,7 +3,7 @@
   import Icon from '#lib/ui/Icon.svelte';
   import { onMount, tick } from 'svelte';
   import { dateTimeAttribute, formatDate } from '#lib/dates.js';
-  import { sanitizeParticipantName } from '@cmail/shared/message-participants';
+  import { sanitizeParticipantName } from '@stanchion/shared/message-participants';
   import type { PageData } from './$types';
 
   type MessageItem = PageData['messages'][number];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadM365SyncState } from '@cmail/shared/m365-sync';
+import { loadM365SyncState } from '@stanchion/shared/m365-sync';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { runM365SyncTick, type M365SyncDeps, type M365SyncWorkerEnv } from './sync';
 import {

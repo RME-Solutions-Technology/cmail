@@ -1,6 +1,6 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { buildIcs } from '@cmail/shared/ics';
+import { buildIcs } from '@stanchion/shared/ics';
 import {
   cancellationBody,
   icsAttendeeInput,

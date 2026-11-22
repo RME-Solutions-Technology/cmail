@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env, User } from '@cmail/shared/types';
+import type { Env, User } from '@stanchion/shared/types';
 
 const mocks = vi.hoisted(() => ({
   notifyManagers: vi.fn(),

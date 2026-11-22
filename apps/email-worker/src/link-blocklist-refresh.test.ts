@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LINK_BLOCKLIST_META_KEY, LINK_BLOCKLIST_SOURCE, shardKey, shardOf } from '@cmail/shared/link-blocklist';
+import { LINK_BLOCKLIST_META_KEY, LINK_BLOCKLIST_SOURCE, shardKey, shardOf } from '@stanchion/shared/link-blocklist';
 import { refreshLinkBlocklist } from './link-blocklist-refresh';
 import { memoryStorage } from './testing/delivery';
 

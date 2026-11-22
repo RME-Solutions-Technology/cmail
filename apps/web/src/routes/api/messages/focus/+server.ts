@@ -3,7 +3,7 @@
 // (a per-mailbox entry, Outlook's "Always move to Other").
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { isFocusClass } from '@cmail/shared/focused-inbox';
+import { isFocusClass } from '@stanchion/shared/focused-inbox';
 import { audit } from '#lib/server/db.js';
 import { MAX_FOCUS_MOVE_IDS, moveMessagesFocus } from '#lib/server/focused-inbox.js';
 

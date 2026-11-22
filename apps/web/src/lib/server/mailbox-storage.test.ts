@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   mailboxStorageQuotaBytes,
   reserveMailboxStorage,
-} from '@cmail/shared/mailbox-storage';
+} from '@stanchion/shared/mailbox-storage';
 
 interface CapturedStatement {
   query: string;

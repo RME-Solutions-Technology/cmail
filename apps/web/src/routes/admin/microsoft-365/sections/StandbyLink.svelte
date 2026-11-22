@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
+  import { STANDBY_SWITCH_SOONER_NOTE } from '@stanchion/shared/graph-mirror';
 </script>
 
 <section class="m365-section" aria-labelledby="standby-link-title">

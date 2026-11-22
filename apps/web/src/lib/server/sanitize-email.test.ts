@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sanitizeEmailHtml } from './sanitize-email';
-import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
+import { sanitizeBoundedEmailHtml } from '@stanchion/shared/sanitize-email';
 
 describe('email HTML sanitization', () => {
   it('removes executable, navigational, form, and embedded content', () => {

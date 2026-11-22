@@ -1,5 +1,5 @@
 // Test-only helpers that drive the real OAuth endpoints end to end.
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { handleRegister, handleToken } from '../oauth-http';
 import { answerAuthorizationRequest, storeAuthorizationRequest, validateAuthorizationRequest } from '../oauth';
 import { handleMcpRequest } from '../protocol';

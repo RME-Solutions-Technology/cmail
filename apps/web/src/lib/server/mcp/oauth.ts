@@ -1,7 +1,7 @@
 // OAuth 2.1 authorization server for Stanchion's MCP endpoint: authorization
 // requests, consent, authorization codes, token issue/rotation, revocation
 // and bearer-token validation. All state is in D1; only hashes of secrets.
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { audit, generateId } from '../db';
 import {
   ACCESS_TOKEN_TTL_SECONDS,

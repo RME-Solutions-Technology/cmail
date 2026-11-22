@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EXCHANGE_MIRROR_REASON_TEXT } from '@cmail/shared/exchange-mirror';
+  import { EXCHANGE_MIRROR_REASON_TEXT } from '@stanchion/shared/exchange-mirror';
   import { onMount } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import {
@@ -11,8 +11,8 @@
     formatDuration,
     formatUsd,
     graphImportProgress,
-  } from '@cmail/shared/graph-import';
-  import { GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
+  } from '@stanchion/shared/graph-import';
+  import { GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@stanchion/shared/graph-mirror';
 
   let { data, form } = $props();
   const appName = $derived(data.appName || 'Stanchion');

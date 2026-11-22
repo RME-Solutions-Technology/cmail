@@ -20,17 +20,17 @@ import {
   type ExchangeMirrorConfig,
   type ExchangeMirrorCounts,
   type ExchangeMirrorEnv,
-} from '@cmail/shared/exchange-mirror';
-import { decideInboundPlacement } from '@cmail/shared/inbound-risk';
-import { orgDomains } from '@cmail/shared/org-domains';
-import { decideFocusAtDelivery, focusUpdateStatement, focusedInboxOrgEnabled } from '@cmail/shared/focused-inbox';
-import { parseMessageImportance } from '@cmail/shared/message-importance';
+} from '@stanchion/shared/exchange-mirror';
+import { decideInboundPlacement } from '@stanchion/shared/inbound-risk';
+import { orgDomains } from '@stanchion/shared/org-domains';
+import { decideFocusAtDelivery, focusUpdateStatement, focusedInboxOrgEnabled } from '@stanchion/shared/focused-inbox';
+import { parseMessageImportance } from '@stanchion/shared/message-importance';
 import {
   normalizeParticipants,
   serializeParticipants,
   type MessageParticipant,
-} from '@cmail/shared/message-participants';
-import { mailboxStorageQuotaBytes } from '@cmail/shared/mailbox-storage';
+} from '@stanchion/shared/message-participants';
+import { mailboxStorageQuotaBytes } from '@stanchion/shared/mailbox-storage';
 import { releaseInboundReservation, type InboundGuardEnv } from '../inbound-guard';
 import { attachedOriginal, envelopeText, parseJournalEnvelope, type JournalEnvelope } from './report';
 import { headerBlockWellFormed, headerValues, verifyJournalReport } from './verify';

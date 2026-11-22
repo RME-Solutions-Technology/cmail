@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildShards, fnv1a, hostCandidates, normalizeHost, parseDomainList, shardKey, shardLists, shardOf } from '@cmail/shared/link-blocklist';
+import { buildShards, fnv1a, hostCandidates, normalizeHost, parseDomainList, shardKey, shardLists, shardOf } from '@stanchion/shared/link-blocklist';
 
 describe('link blocklist helpers', () => {
   it('normalises hosts and rejects anything that is not a DNS name', () => {

@@ -7,7 +7,7 @@ import {
   publicPushKey,
   pushConfiguration,
   sendNewMailNotifications,
-} from '@cmail/shared/push';
+} from '@stanchion/shared/push';
 
 const encoder = new TextEncoder();
 

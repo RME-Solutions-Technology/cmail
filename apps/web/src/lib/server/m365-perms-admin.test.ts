@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadM365PermsSwitch } from '@cmail/shared/m365-perms';
+import { loadM365PermsSwitch } from '@stanchion/shared/m365-perms';
 import { createTestDatabase } from './mcp/testing/harness';
 import { applyM365PermsAdminAction, loadM365PermsOverview, parseM365PermsAdminAction, permsWorkerConfigStatus } from './m365-perms-admin';
 

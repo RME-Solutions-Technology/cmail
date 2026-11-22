@@ -30,8 +30,8 @@ import {
   type M365PermsMode,
   type M365PermsRound,
   type M365PermsState,
-} from '@cmail/shared/m365-perms';
-import { m365SyncConfig, type M365SyncEnv } from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/m365-perms';
+import { m365SyncConfig, type M365SyncEnv } from '@stanchion/shared/m365-sync';
 import { GraphError } from '../m365-sync/graph';
 import {
   applyOp,

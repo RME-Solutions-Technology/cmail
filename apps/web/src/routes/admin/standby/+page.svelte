@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import { STANDBY_REASON_TEXT } from '@cmail/shared/standby';
-  import { STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
+  import { STANDBY_REASON_TEXT } from '@stanchion/shared/standby';
+  import { STANDBY_SWITCH_SOONER_NOTE } from '@stanchion/shared/graph-mirror';
 
   let { data, form } = $props();
   const overview = $derived(data.overview);

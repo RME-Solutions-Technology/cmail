@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { OAUTH_NONCE_COOKIE_PREFIX, exchangeCode, fetchUserInfo, getOAuthCallbackUrl, isAuthProvider } from '#lib/server/auth.js';
 import {
   BOOTSTRAP_PROOF_COOKIE,

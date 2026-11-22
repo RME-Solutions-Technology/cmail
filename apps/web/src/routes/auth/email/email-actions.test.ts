@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import type { EnrollmentRecord } from '#lib/server/identity.js';
 
 // The email one-time-code sign-in actions. Every pre-authentication refusal

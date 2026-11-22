@@ -7,7 +7,7 @@ import {
   getEligibleMailboxAssignee,
 } from '#lib/server/mailbox-assignees.js';
 import { orgDomainsForDisplay } from '#lib/server/org-domains.js';
-import { orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
+import { orgDomains, type OrgDomains } from '@stanchion/shared/org-domains';
 
 const DOMAINS_UNAVAILABLE = 'Mail domains are temporarily unavailable. Try again shortly.';
 

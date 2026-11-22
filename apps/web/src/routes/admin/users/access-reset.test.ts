@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { createTestDatabase, type TestDatabase } from '#lib/server/mcp/testing/harness';
 import { resolveAccessUser } from '#lib/server/access-bridge';
 import { actions } from './+page.server';

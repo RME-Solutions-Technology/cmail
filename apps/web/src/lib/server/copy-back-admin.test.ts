@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadCopyBackSwitch, parseCopyBackParams } from '@cmail/shared/copy-back';
+import { loadCopyBackSwitch, parseCopyBackParams } from '@stanchion/shared/copy-back';
 import { createTestDatabase } from './mcp/testing/harness';
 import { applyCopyBackAction, loadCopyBackOverview, parseCopyBackAction } from './copy-back-admin';
 

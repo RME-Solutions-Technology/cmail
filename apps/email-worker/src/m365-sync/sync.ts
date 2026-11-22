@@ -38,9 +38,9 @@ import {
   type M365SyncConfig,
   type M365SyncEnv,
   type M365SyncState,
-} from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/m365-sync';
 import { applyEntries, applyQueuedPause, linkedPeopleInScope, sweepUnseen, type ApplyContext } from './apply';
-import { orgDomainsFrom } from '@cmail/shared/org-domains';
+import { orgDomainsFrom } from '@stanchion/shared/org-domains';
 import { classify, needsGroupCheck, type OrgDomainSet } from './classify';
 import { refreshOrgDomains } from './domains';
 import { GraphClient, GraphError, INITIAL_DELTA_URL, type GraphUser } from './graph';

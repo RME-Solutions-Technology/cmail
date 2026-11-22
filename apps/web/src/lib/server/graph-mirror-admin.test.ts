@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadGraphMirrorSwitch } from '@cmail/shared/graph-mirror';
+import { loadGraphMirrorSwitch } from '@stanchion/shared/graph-mirror';
 import {
   D1_MAX_DATABASE_BYTES,
   GRAPH_IMPORT_SETTING_ESTIMATE,
   GRAPH_IMPORT_SETTING_JOB,
   GRAPH_IMPORT_SETTING_REQUEST,
-} from '@cmail/shared/graph-import';
+} from '@stanchion/shared/graph-import';
 import { createTestDatabase } from './mcp/testing/harness';
 import {
   applyExchangeMirrorAdminAction,

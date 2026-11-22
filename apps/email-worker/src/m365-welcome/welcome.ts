@@ -24,7 +24,7 @@
 import {
   M365_SYNC_SETTING_DRY_RUN,
   M365_SYNC_SETTING_ENABLED,
-} from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/m365-sync';
 import {
   M365_WELCOME_DEFAULT_PER_HOUR,
   M365_WELCOME_LIST_LIMIT,
@@ -49,7 +49,7 @@ import {
   standbyIsOn,
   welcomeProfileProblems,
   type M365WelcomeState,
-} from '@cmail/shared/m365-welcome';
+} from '@stanchion/shared/m365-welcome';
 
 export interface WelcomeWorkerEnv {
   DB: D1Database;

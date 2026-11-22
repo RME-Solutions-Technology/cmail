@@ -3,7 +3,7 @@ import {
   mailboxStorageQuotaBytes,
   MAX_MAILBOX_STORAGE_QUOTA_BYTES,
   type MailboxStorageQuotaEnv,
-} from '@cmail/shared/mailbox-storage';
+} from '@stanchion/shared/mailbox-storage';
 
 export interface InboundGuardEnv extends MailboxStorageQuotaEnv {
   DB: D1Database;

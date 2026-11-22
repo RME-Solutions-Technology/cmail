@@ -25,7 +25,7 @@ import {
   type CopyBackProblemRow,
   type CopyBackProgress,
   type CopyBackSwitch,
-} from '@cmail/shared/copy-back';
+} from '@stanchion/shared/copy-back';
 import { audit } from './db';
 
 export type CopyBackConfigStatus =

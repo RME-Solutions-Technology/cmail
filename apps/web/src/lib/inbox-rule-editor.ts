@@ -4,8 +4,8 @@ import type {
   RuleActions,
   RuleConditions,
   RuleMoveFolder,
-} from '@cmail/shared/inbox-rules';
-import type { MessageImportance } from '@cmail/shared/types';
+} from '@stanchion/shared/inbox-rules';
+import type { MessageImportance } from '@stanchion/shared/types';
 
 /**
  * The rule editor's model: Outlook-style rows ("Add a condition", "Add an

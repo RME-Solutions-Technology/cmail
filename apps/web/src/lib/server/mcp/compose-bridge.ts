@@ -9,7 +9,7 @@
 // send rate); this bridge only translates arguments into the form fields the
 // action already accepts and its result back into plain data.
 import { isActionFailure, isHttpError, isRedirect, type RequestEvent } from '@sveltejs/kit';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { actions as composeActions } from '../../../routes/mail/compose/+page.server';
 
 export interface ComposeFields {

@@ -1,6 +1,6 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
-import { STANDBY_SWITCH_SOONER_NOTE, emptyGraphMirrorStatus } from '@cmail/shared/graph-mirror';
+import { STANDBY_SWITCH_SOONER_NOTE, emptyGraphMirrorStatus } from '@stanchion/shared/graph-mirror';
 import MailFeed from './sections/MailFeed.svelte';
 import StandbyLink from './sections/StandbyLink.svelte';
 import StandbyPage from '../standby/+page.svelte';

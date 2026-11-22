@@ -1,5 +1,5 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit/hooks';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { assertStrongSessionSecret, publicRuntimeConfig, sessionTtlMs } from '#lib/server/config.js';
 import { SESSION_COOKIE, clearSessionCookie, getSessionTokenFromCookie, hashToken, shouldRenewSession, verifySessionToken } from '#lib/server/session.js';
 import { mcpMaintenanceStatements } from '#lib/server/mcp/maintenance.js';
