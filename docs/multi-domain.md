@@ -1,6 +1,6 @@
 ---
 title: "Multiple mail domains"
-summary: "How cmail serves every mail domain your organisation owns, found and proven automatically from Microsoft 365, with nothing to type in."
+summary: "How Stanchion serves every mail domain your organisation owns, found and proven automatically from Microsoft 365, with nothing to type in."
 applies_to: both
 audience: [manager, operator, developer]
 switch: "Admin > Microsoft 365 > Directory sync (no switch of its own)"
@@ -10,9 +10,9 @@ related: [m365-sync.md, exchange-mirror.md, sending.md, shared-mailboxes.md, foc
 
 # Multiple mail domains
 
-One cmail instance serves one organisation. That organisation may own more
+One Stanchion instance serves one organisation. That organisation may own more
 than one mail domain: a main domain and others for brands, products or older
-names. cmail treats all of them as its own, without a domain list to fill in.
+names. Stanchion treats all of them as its own, without a domain list to fill in.
 
 **Status:** built and tested against every real migration, a fake Microsoft
 Graph and the real send, mirror and admin paths. Not yet run against a real
@@ -75,7 +75,7 @@ Details:
   odd answer never pauses anyone. Every change to the list is written to the
   audit log (`m365_sync.domains_changed`, with the domains added and removed).
 - **Turning the sync off freezes the list**, as it freezes the sync's links.
-- With no Microsoft 365 sync, the list is `MAIL_DOMAIN` alone, and cmail
+- With no Microsoft 365 sync, the list is `MAIL_DOMAIN` alone, and Stanchion
   behaves exactly as before.
 
 Admin > Microsoft 365 > Directory sync shows the list under **Status > Mail domains**,
@@ -92,29 +92,29 @@ stays under the switch it already had.
 | [Microsoft 365 sync](m365-sync.md) | People and shared mailboxes whose primary address is on any organisation domain get accounts and mailboxes. Shared mailbox detection and the group checks cover them too. | Microsoft 365 sync |
 | Alias import ([Exchange mirror](exchange-mirror.md#aliases)) | `smtp:` addresses on every organisation domain become aliases. | Alias import |
 | Exchange mirror filing | Journal copies are filed for mailboxes on every organisation domain. Once the sync has read the tenant's domains successfully, a mailbox on a domain that is not one of them is counted as unmatched (problem `unmatched_domain`), never filed. Before that, filing is by address exactly as before. | Exchange mirror |
-| Sending to colleagues | With **Send colleague mail through Exchange** on, colleagues on every organisation domain are sent through the provider, so Exchange and Outlook get the message ([details](exchange-mirror.md#mail-sent-from-cmail-to-colleagues)). Otherwise delivery is local as before. | Exchange mirror + Send colleague mail through Exchange |
+| Sending to colleagues | With **Send colleague mail through Exchange** on, colleagues on every organisation domain are sent through the provider, so Exchange and Outlook get the message ([details](exchange-mirror.md#mail-sent-from-stanchion-to-colleagues)). Otherwise delivery is local as before. | Exchange mirror + Send colleague mail through Exchange |
 | Admin > Mailboxes, Admin > People | A **domain picker** appears when there is more than one domain. A typed full address must be on one of them. The pickers say that only `MAIL_DOMAIN` can send for now. | none |
 | Delegates and the org chart | People whose personal mailbox is on any organisation domain can be delegates; work emails may use any of them. | none |
 | Public directory ([manager handbook](manager-handbook.md)) | Public work emails on any organisation domain are listed. | Public directory |
-| [Focused Inbox](focused-inbox.md) | A proven sender (DMARC pass at the trusted boundary, an Exchange-authenticated internal submission, or internal cmail mail) on any organisation domain counts as a colleague. | Focused Inbox |
+| [Focused Inbox](focused-inbox.md) | A proven sender (DMARC pass at the trusted boundary, an Exchange-authenticated internal submission, or internal Stanchion mail) on any organisation domain counts as a colleague. | Focused Inbox |
 
 ## What does not change
 
 - **Sending from other domains (phase 1).** Once the tenant's domains have
-  been read, cmail sends only from `MAIL_DOMAIN`. A mailbox on another domain
+  been read, Stanchion sends only from `MAIL_DOMAIN`. A mailbox on another domain
   (a person's own mailbox or a shared one, including one left on a domain that
   was dropped) can be read, filed and delegated, but every send from it is
   refused with "Sending from @domain isn't set up yet": compose, AI app
   sends, meeting invitations, replies and cancellations. A new meeting is
-  refused before it is saved. System mail cmail sends from its configured
+  refused before it is saved. System mail Stanchion sends from its configured
   system address (sign-in codes, invitations, notices) is never stopped.
   People whose own mailbox is on another domain therefore can't send from it
   yet. Before the first successful read nothing changes. Sending needs each
   domain onboarded to Cloudflare Email Sending (a DNS change) and a verified
   test first; that is a later step. The Message-ID already follows the From
   domain.
-- **Mail arriving by Cloudflare Email Routing** (cmail as the primary mail
-  host) is for the domains whose MX points at cmail, as before.
+- **Mail arriving by Cloudflare Email Routing** (Stanchion as the primary mail
+  host) is for the domains whose MX points at Stanchion, as before.
 - **Standby test address, probe and switch** work on `MAIL_DOMAIN` only.
 - **Cloudflare Access auto-provisioning** (`ACCESS_AUTO_PROVISION`) still
   creates accounts for `MAIL_DOMAIN` emails only.

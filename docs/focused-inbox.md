@@ -13,9 +13,9 @@ related: [user-guide.md, inbox-rules.md, spam-and-quarantine.md, exchange-mirror
 Focused and Other tabs above the Inbox, like Outlook's
 [Focused Inbox](https://support.microsoft.com/en-us/office/focused-inbox-for-outlook-f445ad7f-02f4-4294-a82e-71d8964e3978).
 Mail from people stays in **Focused**; newsletters, notifications and other
-automated mail go to **Other**. It works for every cmail mailbox, personal or
+automated mail go to **Other**. It works for every Stanchion mailbox, personal or
 shared, whatever the mail came through (Cloudflare Email Routing, the
-Exchange mirror, or another cmail mailbox).
+Exchange mirror, or another Stanchion mailbox).
 
 **Status:** built, off by default, covered by unit, database and browser tests.
 Not yet tried on a live deployment.
@@ -89,7 +89,7 @@ Archive, or that lands in Spam, gets no tab.
 
 Sorting is deterministic and explainable. It uses the sender address, a few
 standard headers, and this mailbox's own history. No message content is
-read, no AI is used, and nothing leaves cmail. The first signal that applies
+read, no AI is used, and nothing leaves Stanchion. The first signal that applies
 decides, in this order:
 
 | # | Signal | Goes to | Reason code |
@@ -101,7 +101,7 @@ decides, in this order:
 | 5 | **Authenticated** sender this mailbox has sent mail to (To, Cc or Bcc of its newest 2,000 Sent messages), even if the message has list headers | Focused | `correspondent` |
 | 6 | `List-Id` ([RFC 2919](https://www.rfc-editor.org/rfc/rfc2919)) or `List-Unsubscribe` ([RFC 2369](https://www.rfc-editor.org/rfc/rfc2369)) | Other | `mailing_list` |
 | 7 | `Precedence: bulk`, `list` or `junk` (widely used, not a standard) | Other | `bulk_precedence` |
-| 8 | **Authenticated** sender whose domain is exactly `MAIL_DOMAIN` (or, for mail from another cmail mailbox, that mailbox's domain) | Focused | `internal` |
+| 8 | **Authenticated** sender whose domain is exactly `MAIL_DOMAIN` (or, for mail from another Stanchion mailbox, that mailbox's domain) | Focused | `internal` |
 | 9 | The sender address looks automated: the part before `@`, without `+tag` and `. _ -`, starts with `noreply` or `donotreply`, or is `notification(s)`, `newsletter(s)`, `news`, `marketing` or `mailer` | Other | `automated_sender` |
 | 10 | Personal mailboxes only: 20 or more of the mailbox's newest 500 Inbox messages are from this exact address, and it has never been written to | Other | `frequent_sender` |
 | 11 | Anything else | Focused | `default` |
@@ -117,7 +117,7 @@ decides, in this order:
   instance (an authenticated submission by a user of this tenant, the same
   proof the mirror's Sent copy uses). Internet mail on the mirror is treated
   as unauthenticated;
-- mail between cmail mailboxes: always (a signed-in user sent it).
+- mail between Stanchion mailboxes: always (a signed-in user sent it).
 
 So a forged From never earns a place in Focused as a "correspondent" or
 "colleague", and the message view never says "The sender is in your
@@ -139,12 +139,12 @@ Notes on the signals:
   only runs for an authenticated sender not already decided by signal 3 or
   4; the frequency count only when no header, automated-looking address or
   internal match decides first.
-- **Contacts.** cMail has no address book: its recipient suggestions
+- **Contacts.** Stanchion has no address book: its recipient suggestions
   (`mailbox_contacts`) include every sender that ever wrote in, so they are
   not used. Signal 5 (people you have written to) stands in for "is a
   contact", as Outlook does with correspondence history.
 - **Shared mailboxes** are sorted with their own history and entries.
-- The **standby test address** and cmail's own notices (bounce notices, which
+- The **standby test address** and Stanchion's own notices (bounce notices, which
   are written straight to the Inbox) are not sorted and show under Focused.
 
 ## Learning: move and "always move"
@@ -192,9 +192,9 @@ messages are sorted once, in the background:
   mail that arrived while it was off. The state
   (`running`, `done` with a count, or `failed`) shows in Mail > Settings; a
   failed run has a **Try again** button.
-- cmail does not keep raw headers or authentication results of stored mail,
+- Stanchion does not keep raw headers or authentication results of stored mail,
   so signals 3, 4, 6 and 7 cannot be used here, and signals 5 and 8 only for
-  mail that came from another cmail mailbox. Old newsletters are caught only
+  mail that came from another Stanchion mailbox. Old newsletters are caught only
   by the person's entries, signal 9 (automated-looking address) or signal 10
   (frequent sender). New mail gets all signals.
 
@@ -230,7 +230,7 @@ the switch afresh, so turning it off takes effect at once):
 - each open of a received Inbox message: one small read (the switch and the
   mailbox's setting) before showing the Move line;
 - Mail settings and Admin settings: one read each;
-- each delivery to an Inbox (normal inbound and mail between cmail
+- each delivery to an Inbox (normal inbound and mail between Stanchion
   mailboxes): one lookup statement, which returns after reading the two
   settings rows (SQLite evaluates a `CASE` branch only when it is taken:
   ["Both forms of the CASE expression use lazy, or short-circuit, evaluation"](https://www.sqlite.org/lang_expr.html#the_case_expression));
@@ -288,7 +288,7 @@ switch reads as off and nothing new is written.
   order: `packages/shared/src/focused-inbox.test.ts`.
 - Delivery: `apps/email-worker/src/index.ts` (normal inbound),
   `apps/email-worker/src/exchange-mirror/ingest.ts` (mirror),
-  `apps/web/src/lib/server/outbound-journal.ts` (mail between cmail
+  `apps/web/src/lib/server/outbound-journal.ts` (mail between Stanchion
   mailboxes). Tests: `apps/email-worker/src/focused-inbox.sql.node.test.ts`
   (every signal, rules and spam first, switches, a failed lookup, the
   mirror) and `apps/web/src/lib/server/outbound-journal.failures.test.ts`.

@@ -10,21 +10,21 @@ related: [passkeys.md, m365-sync.md, credentials.md]
 
 # Staff portal sign-in contract
 
-A staff portal can link to `APP_URL` + `/mail`. An existing, valid cmail
+A staff portal can link to `APP_URL` + `/mail`. An existing, valid Stanchion
 session opens the user's assigned mailboxes. A signed-out browser with a
-remembered cmail provider starts fresh OAuth; otherwise it reaches the normal
+remembered Stanchion provider starts fresh OAuth; otherwise it reaches the normal
 sign-in page. The portal sends no identity headers, credentials,
-email address, role, or mailbox identifier. cmail owns its session cookie,
+email address, role, or mailbox identifier. Stanchion owns its session cookie,
 policy acceptance, account status, and mailbox authorization.
 The portal may show this link to all authenticated staff when a mail origin
 is configured, without maintaining a duplicate mailbox-enabled flag. Link
-visibility grants no cmail account, role, or mailbox access.
+visibility grants no Stanchion account, role, or mailbox access.
 
 For a portal that explicitly offers a configured provider, optional shortcuts
 are `APP_URL` + `/auth/login/google?sso=1` and
 `APP_URL` + `/auth/login/microsoft?sso=1`. These are browser navigation URLs,
 not token-exchange APIs. A portal may choose one from its actual authenticated
-staff-session provider, but this grants no cmail eligibility: cmail still
+staff-session provider, but this grants no Stanchion eligibility: Stanchion still
 requires its own exact provider-subject binding. Never infer the provider from
 email or treat Access admission as that binding. Keep `/mail` as the neutral
 mailbox card destination; signed-out `/` deliberately remains the chooser.
@@ -35,7 +35,7 @@ client credentials; a Microsoft tenant setting alone does not enable Microsoft.
 The existing email-code sign-in link and its eligibility checks remain available
 and unchanged. Email-code sign-in does not save an OAuth provider preference.
 
-The shortcut reuses a validated cmail session when present. Otherwise it
+The shortcut reuses a validated Stanchion session when present. Otherwise it
 starts the ordinary authorization-code flow, with fresh state and S256 PKCE,
 but omits the forced account chooser. The provider may still require login,
 consent, MFA, or account selection. This does not promise silent sign-in.
@@ -44,7 +44,7 @@ retain `prompt=select_account`. No query-string redirect or identity hint is
 forwarded. Errors return to the normal sign-in page; there is no automatic
 retry loop. To choose another account, use its normal sign-in button.
 
-After a successful returning-account OAuth callback over HTTPS, cmail saves
+After a successful returning-account OAuth callback over HTTPS, Stanchion saves
 only `google` or `microsoft` in `__Host-cmail_last_provider` for 30 days. It is
 host-only, HttpOnly, Secure, SameSite=Lax, and contains no account identifier.
 First enrollment and bootstrap do not set it. A direct signed-out `GET /mail`
@@ -52,7 +52,7 @@ may use this untrusted preference to start the configured provider's `?sso=1`
 flow with fresh state/PKCE. It never establishes a session itself. Invalid,
 absent, or disabled preferences, enrollment/bootstrap intent, background page
 data requests, and deep links retain the chooser path. Explicit logout clears
-the preference even when the cmail session has already expired. OAuth failure
+the preference even when the Stanchion session has already expired. OAuth failure
 returns to `/`, where the preference cannot trigger an automatic retry.
 
 ## Identity and Access boundary
@@ -68,7 +68,7 @@ Do not change the OAuth client registration as a shortcut to federation.
 One exception reads the Microsoft ID token: while the Microsoft 365 sync is
 on, a first Microsoft sign-in with no bound identity and no invitation may
 bind to the account the sync created for that person. That decision uses only
-the ID token from the token endpoint, verified by cmail (RS256 signature from
+the ID token from the token endpoint, verified by Stanchion (RS256 signature from
 the configured tenant's keys, exact issuer, audience, time, `tid`, and the
 Entra object id `oid` the sync stored), never the email or UPN. Returning
 sign-in still uses provider + `sub` only. See
@@ -78,7 +78,7 @@ Cloudflare Access can be an extra edge gate in front of any of these flows.
 With the optional Access bridge below turned on, it can also sign people in.
 Access `sub` is an Access user identifier; Microsoft's `sub` is
 application-specific, so neither an Access subject nor a subject from another
-Microsoft application is ever substituted for cmail's existing provider
+Microsoft application is ever substituted for Stanchion's existing provider
 subject. The bridge stores the Access subject as its own identity,
 `user_identities('access', sub)`. See the [Access application-token reference](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/)
 and [Microsoft claim reference](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference).
@@ -93,7 +93,7 @@ assignments remain in force.
 Optional, off by default. Set `ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`)
 and `ACCESS_AUD` (the Access application's AUD tag) to turn it on.
 
-**Token check.** On every request cmail reads `Cf-Access-Jwt-Assertion` and
+**Token check.** On every request Stanchion reads `Cf-Access-Jwt-Assertion` and
 accepts it only if all of these hold:
 
 - the header names `alg` `RS256` (no `none`, no HMAC, no other algorithm)
@@ -112,7 +112,7 @@ cache or a failing endpoint). If it is down, cached keys keep working for up
 to 24 hours; with no usable key, every token is refused.
 
 **Fail closed.** With the bridge on, a request without a valid token gets no
-session, even with a valid cmail cookie. A cookie session is used only when
+session, even with a valid Stanchion cookie. A cookie session is used only when
 its account is bound to the token's `sub`. If the account has no Access
 binding yet and its email matches the token, the binding is made then (this is
 how a manager or an existing Google/Microsoft user links). Otherwise the
@@ -136,7 +136,7 @@ endpoints) as follows:
    offboarded, already has a different Access `sub`, is a manager, or already
    signs in with Google, Microsoft or an email code. Those people, managers
    included, link by signing in once the normal way while behind Access: the
-   request then carries both their cmail session and a matching Access token,
+   request then carries both their Stanchion session and a matching Access token,
    and the binding is made.
 3. With `ACCESS_AUTO_PROVISION=true`, an email on `MAIL_DOMAIN` with no account
    gets a standard account and a personal mailbox at that address. Emails on
@@ -152,7 +152,7 @@ one Access binding and one Access `sub` belongs to one account (migration
 Repeated denials (`auth.sign_in_denied`) and email-change notes are audited
 once per person and reason every 10 minutes.
 
-A session and cookie are minted only when the request has no valid cmail
+A session and cookie are minted only when the request has no valid Stanchion
 cookie, so each browser or device signs in once and then reuses its own
 cookie. Minting follows the normal sign-in rules: one `auth.sign_in` row,
 and the oldest sessions beyond `MAX_SESSIONS_PER_USER` are signed out,
@@ -176,12 +176,12 @@ that already has a binding.
 **Rollout.**
 
 1. Apply migration `0021` (`pnpm db:migrate`).
-2. Create a self-hosted Access application for the cmail hostname. Put the
+2. Create a self-hosted Access application for the Stanchion hostname. Put the
    direct `*.pages.dev` hostname behind the same application (or block it), so
-   no request reaches cmail without Access.
+   no request reaches Stanchion without Access.
 3. Add the policy: "emails ending in @domain" with your identity provider, or
-   an identity-provider group. cmail does not re-check groups: Access decides
-   who enters, cmail decides which mailbox they get.
+   an identity-provider group. Stanchion does not re-check groups: Access decides
+   who enters, Stanchion decides which mailbox they get.
 4. Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, and optionally
    `ACCESS_AUTO_PROVISION`, then redeploy.
 5. Session length: the Access application session and `SESSION_TTL_HOURS`
@@ -191,7 +191,7 @@ that already has a binding.
 **Bearer-token paths are outside the bridge.** AI app (MCP) connections
 (`/mcp`, `/oauth/token`, `/oauth/register`, `/oauth/revoke`,
 `/.well-known/*`) authenticate with their own OAuth bearer tokens, not with
-the Access token or a cmail cookie, and the bridge leaves them unchanged
+the Access token or a Stanchion cookie, and the bridge leaves them unchanged
 (a test covers this). They never get a session from Access. Choose one per
 deployment:
 
@@ -201,17 +201,17 @@ deployment:
   them), because AI clients cannot complete an interactive Access login.
 
 Turning a person off in Access does not revoke their AI app grants. When
-someone leaves, also pause or offboard them in cmail: both revoke every MCP
+someone leaves, also pause or offboard them in Stanchion: both revoke every MCP
 token and grant they hold. Remove them in Access too.
 
 ## Public help pages (Access bypass for /help/*)
 
-cmail serves a few pages without a cmail session, on purpose, so a person who
+Stanchion serves a few pages without a Stanchion session, on purpose, so a person who
 cannot sign in yet can read them: the help centre under `/help/*`, including
 `/help/first-sign-in`, the page the [Microsoft 365 welcome
-email](m365-welcome-emails.md) links to. "Public" only means cmail does not ask
+email](m365-welcome-emails.md) links to. "Public" only means Stanchion does not ask
 for a session. **When Cloudflare Access covers the whole hostname, Access shows
-its own login page before cmail**, so those pages are public only if you let
+its own login page before Stanchion**, so those pages are public only if you let
 them through: add an Access application or policy with the **Bypass** action
 for the path `/help/*` (the same pattern as for the AI app paths above). Without
 it, a person who has not signed in cannot open the link in the email. With
@@ -234,7 +234,7 @@ needs doing.
 - If Access protects mail, review its own application audience, issuer,
   allowed staff/IdP policy, MFA/session requirements, and protection of both
   custom and direct Pages origins. Keep preview isolated. Without the bridge
-  variables, Access admission alone does not establish cmail eligibility.
+  variables, Access admission alone does not establish Stanchion eligibility.
 - Rehearse browser behavior with the same provider session, multiple accounts,
   signed-out providers, rejected consent, revoked/paused accounts, and pending
   policy acceptance. Provider session reuse depends on browser and IdP policy.

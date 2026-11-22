@@ -1,6 +1,6 @@
 # Security policy
 
-cmail processes authentication data, message content, attachments, and administrative records. This pre-1.0 project has not been certified for any regulatory or assurance framework.
+Stanchion processes authentication data, message content, attachments, and administrative records. This pre-1.0 project has not been certified for any regulatory or assurance framework.
 
 ## Supported versions
 
@@ -40,8 +40,8 @@ Reports are especially useful for:
 - privilege escalation in user, mailbox, policy, audit, trace, or settings tools;
 - the MCP endpoint or its OAuth authorization server: consent bypass, token
   theft or replay, redirect or audience confusion, scope or mailbox escape,
-  and prompt-injection paths that lead cmail to act without the user's grant;
-- dependency vulnerabilities with a demonstrated path through cmail.
+  and prompt-injection paths that lead Stanchion to act without the user's grant;
+- dependency vulnerabilities with a demonstrated path through Stanchion.
 
 Provider outages, provider-account compromise, DNS misconfiguration, unsupported local changes, and social engineering without a product flaw are usually deployment concerns, not project vulnerabilities. Report privately if the boundary is unclear.
 

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A concise security and assurance summary for the cmail upstream project, including responsibilities, deployment evidence, and current limitations.">
-  <title>cmail security &amp; assurance</title>
+  <meta name="description" content="A concise security and assurance summary for the Stanchion upstream project, including responsibilities, deployment evidence, and current limitations.">
+  <title>Stanchion security &amp; assurance</title>
   <style>
     :root { color-scheme: light dark; --ink:#242424; --muted:#616161; --paper:#fff; --ground:#f5f5f5; --line:#d1d1d1; --blue:#0078d4; --soft:#edf6fc; --warn:#8a4b00; --warn-soft:#fff4ce; --font:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif; }
     @media (prefers-color-scheme: dark) { :root { --ink:#f0f0f0; --muted:#adadad; --paper:#1f1f1f; --ground:#141414; --line:#454545; --soft:#073b5b; --warn:#ffd28a; --warn-soft:#4b3300; } }
@@ -16,11 +16,11 @@
 </head>
 <body>
   <script defer src="/insights.js" data-app="cmail" data-component="marketing" data-endpoint="https://events.rmesolutions.com.au/collect"></script>
-  <header class="no-print"><div class="wrap bar"><a class="brand" href="/">cmail</a><a href="/">Back to product page</a></div></header>
+  <header class="no-print"><div class="wrap bar"><a class="brand" href="/">Stanchion</a><a href="/">Back to product page</a></div></header>
   <main class="wrap">
     <p class="meta">UPSTREAM ASSURANCE SUMMARY · VERSION 1.0 · 14 AUGUST 2026 · SOURCE REVISION: RECORD THE DEPLOYED COMMIT WITH THIS PAGE</p>
     <h1>Security &amp; assurance</h1>
-    <p class="lede">A practical, evidence-oriented summary of cmail’s upstream capabilities and the work that remains with each deployment. It is not a certification, audit report, or promise that a deployment meets a particular legal or regulatory obligation.</p>
+    <p class="lede">A practical, evidence-oriented summary of Stanchion’s upstream capabilities and the work that remains with each deployment. It is not a certification, audit report, or promise that a deployment meets a particular legal or regulatory obligation.</p>
     <div class="actions no-print"><button id="print-button" type="button">Print or save as PDF</button><a class="button secondary" href="https://github.com/RME-Solutions-Technology/cmail/blob/main/SECURITY.md">Upstream security policy</a></div>
     <aside class="notice warning"><strong>Pre-1.0 software.</strong> Assess the code and threat model for your environment; complete backup, recovery, provider, DNS, and access-control testing before handling sensitive or production mail.</aside>
 
@@ -52,12 +52,12 @@
       <li>Test inbound routing, internal and external delivery, failure paths, attachments, mail trace, and audit events using controlled accounts.</li>
       <li>Verify provider DNS records and controlled-message SPF, DKIM, and aligned DMARC results; monitor TLS-RPT and DMARC reports where enabled.</li>
       <li>Set and test retention, quota, rate-limit, spam-quarantine, notification, and outbound-provider settings appropriate to the organisation.</li>
-      <li>Document incident contacts, provider-account access, change control, recovery exercises, and the decision not to use cmail for bulk marketing.</li>
+      <li>Document incident contacts, provider-account access, change control, recovery exercises, and the decision not to use Stanchion for bulk marketing.</li>
     </ul>
 
     <h2>Explicit non-claims</h2>
     <div class="notice warning"><ul>
-      <li>cmail is not certified against any regulatory, security, privacy, or assurance framework.</li>
+      <li>Stanchion is not certified against any regulatory, security, privacy, or assurance framework.</li>
       <li>It is not a hosted email service, a managed backup service, or a replacement for operator monitoring and incident response.</li>
       <li>It is not a bulk-marketing or campaign platform and does not provide the related consent, unsubscribe, complaint, reputation, or deliverability controls.</li>
       <li>An in-product audit log is useful operational evidence, not tamper-proof external audit retention.</li>
@@ -69,7 +69,7 @@
     <p>The versioned technical source for this summary is <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/assurance.md">docs/assurance.md</a>. The companion <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/standards-alignment.md">ISO and ITIL alignment map</a>, <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/support-process.md">support and service-management model</a>, and <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/privacy-and-data-handling.md">privacy and data-handling guide</a> give operators and auditors the current responsibility and evidence baseline. Use them with the exact source revision deployed.</p>
     <p class="small">This page describes the named upstream revision only. Forks, local changes, provider configuration, and deployed versions require their own review and evidence.</p>
   </main>
-  <footer><div class="wrap">cmail is Apache-2.0 open source. <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/LICENSE" data-insight="github_click">Read the license</a>. This page measures anonymous page, route and action categories with a short-lived tab ID for up to 30 days. No message, email, URL or account content is collected. Do Not Track and Global Privacy Control are honoured.</div></footer>
+  <footer><div class="wrap">Stanchion is Apache-2.0 open source. <a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/LICENSE" data-insight="github_click">Read the license</a>. This page measures anonymous page, route and action categories with a short-lived tab ID for up to 30 days. No message, email, URL or account content is collected. Do Not Track and Global Privacy Control are honoured.</div></footer>
   <script src="/assurance/print.js" defer></script>
 </body>
 </html>

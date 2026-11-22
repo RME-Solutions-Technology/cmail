@@ -75,7 +75,7 @@ SvelteKit's cookie/devalue serialization and Cloudflare tooling's Undici
 remain on their patched upstream-compatible major lines. The narrowly scoped
 legacy nanoid security override remains narrow. In particular, cookie 2,
 devalue 6, Undici 8, and nanoid 6 are not globally substituted for dependencies
-whose consumers have not migrated. These are not direct cmail dependencies.
+whose consumers have not migrated. These are not direct Stanchion dependencies.
 
 The existing Sharp 0.35.4 exact override remains (also the latest stable
 release at review time); the PNG/AVIF and Miniflare Images runtime checks

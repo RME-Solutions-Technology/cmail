@@ -1,6 +1,6 @@
 ---
 title: "Developer guide"
-summary: "How to run cmail locally, test, add migrations and endpoints, and release, for contributors."
+summary: "How to run Stanchion locally, test, add migrations and endpoints, and release, for contributors."
 applies_to: both
 audience: [developer]
 switch: none

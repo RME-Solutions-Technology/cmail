@@ -1,4 +1,4 @@
-# AGENTS.md: cmail
+# AGENTS.md: Stanchion
 
 > **Code floor:** no secrets in code, stage by path, lint and tests pass, no swallowed errors, validate every input, check auth on the server, no personal data in logs or git, and a fresh-context review before merge. The rules below and `CONTRIBUTING.md` still apply.
 

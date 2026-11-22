@@ -11,7 +11,7 @@ related: [delivery-and-bounces.md, credentials.md, multi-domain.md]
 # How sending works
 
 This page follows one message from the compose page to the recipient. It is for
-developers and operators who need to know what cmail checks, what it stores,
+developers and operators who need to know what Stanchion checks, what it stores,
 and what each error means. For the security model behind it, see
 [Architecture and trust boundaries](architecture.md#outbound-mail). For the
 settings named here, see the [Configuration reference](configuration.md).
@@ -48,7 +48,7 @@ The compose page saves through its `?/save` action.
   first, the save fails with a conflict and the page offers to reload and
   compare. This stops two tabs from overwriting each other.
 - **Storage.** The body goes to R2; the row goes to `messages` with
-  `folder='drafts'`. Before writing, cmail reserves the extra bytes against the
+  `folder='drafts'`. Before writing, Stanchion reserves the extra bytes against the
   mailbox quota (`mailbox_reservations`, enforced by a D1 trigger). A full
   mailbox returns "Mailbox storage or draft limit reached".
 - **Limits.** Subject 500 characters, body 1 MiB, at most 200 addresses per
@@ -59,7 +59,7 @@ The compose page saves through its `?/save` action.
 ## Sending, step by step
 
 The `?/send` action runs these steps in order. Any failure stops the send
-before anything leaves cmail, unless the step says otherwise.
+before anything leaves Stanchion, unless the step says otherwise.
 
 1. **Size checks.** The whole request must be under 24 MiB and the body under
    1 MiB. Quoted HTML from a reply is cleaned and capped (512 KiB, 10,000
@@ -71,7 +71,7 @@ before anything leaves cmail, unless the step says otherwise.
    helps internal-only mail.
 3. **Idempotency.** Every send carries a compose token, and a draft send also
    carries its `draft_version`. Together they form an idempotency key. If a
-   send with that key already exists, cmail resumes or reports it instead of
+   send with that key already exists, Stanchion resumes or reports it instead of
    sending again.
 4. **Permission and From domain.** The user needs **Send as** or **Full
    access** on the sending mailbox. See [Shared mailboxes](shared-mailboxes.md).
@@ -83,21 +83,21 @@ before anything leaves cmail, unless the step says otherwise.
    provider's size limit in step 9). Executable and script
    types (for example `.exe`, `.js`, `.ps1`) are refused. File names are
    cleaned.
-6. **Internal or external.** If every recipient has a mailbox in this cmail
+6. **Internal or external.** If every recipient has a mailbox in this Stanchion
    instance, each gets a local copy straight into their Inbox, with their inbox
    rules applied, and nothing goes to a provider. For a mix of internal and
    external recipients:
-   - with the Cloudflare REST API credentials set, cmail sends to the external
+   - with the Cloudflare REST API credentials set, Stanchion sends to the external
      recipients only and still writes the internal copies itself;
    - otherwise (native Cloudflare or Postmark), the provider gets one
      submission to everyone, and the internal copies come back in through
      Email Routing like any inbound mail. That path needs inbound routing and
      mailbox quota to be working.
 
-   With the [Exchange mirror](exchange-mirror.md#mail-sent-from-cmail-to-colleagues)
+   With the [Exchange mirror](exchange-mirror.md#mail-sent-from-stanchion-to-colleagues)
    and its **Send colleague mail through Exchange** switch on (off by
    default), recipients on the organisation's mail domains count as external: they go through
-   the provider to Exchange (and Outlook), and the mirror files their cmail
+   the provider to Exchange (and Outlook), and the mirror files their Stanchion
    copy from the journal report, once.
 
    See [Architecture: outbound mail](architecture.md#outbound-mail).
@@ -109,9 +109,9 @@ before anything leaves cmail, unless the step says otherwise.
    `MAIL_DOMAIN`. Replies get
    `In-Reply-To` and `References` so threads stay together. Bcc is never
    written as a header; it travels only in the envelope.
-9. **Provider preflight.** cmail estimates the final message size before it
+9. **Provider preflight.** Stanchion estimates the final message size before it
    submits. Cloudflare Email Sending accepts up to 5 MiB per message and 32
-   attachments, and cmail keeps 256 KiB spare for headers, so the practical
+   attachments, and Stanchion keeps 256 KiB spare for headers, so the practical
    limit is about 4.75 MiB after encoding. Attachments grow by about a third
    when encoded, so roughly 3.5 MiB of attachments is the real ceiling on
    Cloudflare. Postmark allows 10 MiB in total.
@@ -120,21 +120,21 @@ before anything leaves cmail, unless the step says otherwise.
     default 600, where a message costs the largest of its recipients, stored
     objects and MiB). Over the limit, the user is told how many minutes to
     wait.
-11. **Quota.** cmail reserves space for the Sent copy and every internal copy.
+11. **Quota.** Stanchion reserves space for the Sent copy and every internal copy.
     If any mailbox is full, nothing is sent.
 12. **Stage.** The body and attachments are written to R2 under
     `outbound-journal/<id>/` with SHA-256 checksums, and the send is recorded
     in D1 (`outbound_send_journal`, `outbound_send_targets`,
     `outbound_send_attachments`). D1 triggers stop the staged payload from
     changing.
-13. **Dispatch.** The journal moves to `dispatching` and cmail calls the
-    provider. The provider's answer is saved to R2 before cmail acts on it, so
+13. **Dispatch.** The journal moves to `dispatching` and Stanchion calls the
+    provider. The provider's answer is saved to R2 before Stanchion acts on it, so
     a crash at this point can be reconciled later.
 14. **Trace.** A `mail_trace` row records the provider's message IDs, the
     envelope, the status and any failed recipients. This row is what later
-    delivery events are matched against, so cmail retries the write once if it
+    delivery events are matched against, so Stanchion retries the write once if it
     fails.
-15. **Materialise.** cmail writes the Sent copy and the internal Inbox copies,
+15. **Materialise.** Stanchion writes the Sent copy and the internal Inbox copies,
     merges any bounce that arrived in the meantime, deletes the draft and
     cleans up the staging area. The user lands on the Sent folder.
 
@@ -149,11 +149,11 @@ before anything leaves cmail, unless the step says otherwise.
   `env.EMAIL.send()` through its `[[send_email]]` binding. No API token is
   needed. Cloudflare returns a tracking ID, not the RFC Message-ID.
 - **Cloudflare REST API.** Used when there is no service binding but
-  `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_API_TOKEN` are set. cmail
+  `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_API_TOKEN` are set. Stanchion
   builds raw MIME itself. This route can split the envelope, so internal and
   external recipients see the same To and Cc lines while only external ones
   go to Cloudflare.
-- **Postmark.** Needs `POSTMARK_API_KEY`. cmail sets its own Message-ID.
+- **Postmark.** Needs `POSTMARK_API_KEY`. Stanchion sets its own Message-ID.
   Postmark can't split the envelope for mixed internal and external sends.
   Delivery events and blocked-address handling are not available on Postmark.
 
@@ -181,7 +181,7 @@ Setting up the sending domain is covered in
 | "Delivery status is unknown. Don't resend…" | `ambiguous`: the provider may or may not have sent it |
 | "The provider didn't accept this message. Your draft was kept" | `retryable_failure` |
 | List of addresses that can't receive mail | `permanent_failure`, or blocked recipients (see [Delivery and bounces](delivery-and-bounces.md#blocked-addresses)) |
-| "…Sent copy is still recovering. Retry this draft — cmail won't send it again." | The provider accepted it but writing the Sent copy failed. Retrying only finishes the copy |
+| "…Sent copy is still recovering. Retry this draft — Stanchion won't send it again." | The provider accepted it but writing the Sent copy failed. Retrying only finishes the copy |
 | "Cloudflare Email Service has a 5 MiB message limit" | Preflight size check |
 | "External email delivery is not configured" | No provider is set up |
 | A wait time in minutes | Rate limit |

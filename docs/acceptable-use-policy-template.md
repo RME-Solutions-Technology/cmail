@@ -1,6 +1,6 @@
 ---
 title: "Acceptable-use policy template"
-summary: "A starting point for an organisation usage policy that managers publish in cmail."
+summary: "A starting point for an organisation usage policy that managers publish in Stanchion."
 applies_to: both
 audience: [manager]
 switch: none

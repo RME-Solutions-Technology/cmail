@@ -1,6 +1,6 @@
 # Support
 
-cmail is a community-maintained, self-hosted project. The Apache 2.0 license includes
+Stanchion is a community-maintained, self-hosted project. The Apache 2.0 license includes
 no hosted-service or guaranteed-response support.
 
 For an organisation's operational support model — internal first-line triage
@@ -19,7 +19,7 @@ community-maintainer scope described above.
 4. Reduce the problem to a staging or local environment with non-sensitive test
    data.
 
-Use a bug report for a reproducible cmail defect and a feature request for a
+Use a bug report for a reproducible Stanchion defect and a feature request for a
 broadly useful product change. Include the affected commit, component,
 deployment shape, safe reproduction steps, expected result, and actual result.
 

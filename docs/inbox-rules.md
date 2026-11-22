@@ -11,7 +11,7 @@ related: [user-guide.md, spam-and-quarantine.md]
 # Inbox rules
 
 Rules act on new mail as it arrives in a mailbox's Inbox, like rules in
-Outlook (**Settings > Mail > Rules**). In cmail they live under
+Outlook (**Settings > Mail > Rules**). In Stanchion they live under
 **Mail > Settings > Rules** (`/mail/rules`).
 
 **In this article**
@@ -21,7 +21,7 @@ Outlook (**Settings > Mail > Rules**). In cmail they live under
 - [How rules run](#how-rules-run)
 - [Starting a rule](#starting-a-rule)
 - [Run rule now](#run-rule-now)
-- [What cmail rules don't do](#what-cmail-rules-dont-do)
+- [What Stanchion rules don't do](#what-stanchion-rules-dont-do)
 - [For operators](#for-operators)
 - [How the rules engine works (developers)](#how-the-rules-engine-works-developers)
 
@@ -58,7 +58,7 @@ and edits the same rules. Every change is recorded in the audit log.
 | --- | --- |
 | Move to Archive, Junk or Deleted | |
 | Mark as read | |
-| Star it | cmail's equivalent of Outlook's flag |
+| Star it | Stanchion's equivalent of Outlook's flag |
 | Mark with importance | High, normal or low |
 
 ## How rules run
@@ -69,7 +69,7 @@ its folder, and the first that sets importance decides that. Marking read and
 starring add up. A message a rule moves out of the Inbox or marks read doesn't
 raise a new-mail alert.
 
-Rules run on mail from outside the organisation and on mail sent between cmail
+Rules run on mail from outside the organisation and on mail sent between Stanchion
 mailboxes. They run **after** the organisation's junk filtering and sender
 rules (see [Spam and quarantine](spam-and-quarantine.md)): mail the
 organisation files to Junk never reaches your rules, so a rule can't bring it
@@ -91,11 +91,11 @@ mail that has already arrived, tick **Run it now on the Inbox** when saving, or
 choose **Run now** on the Rules page. It looks at the 1,000 newest messages in
 the Inbox.
 
-Rules that look at the **message body** or **header** can't run now. cmail
+Rules that look at the **message body** or **header** can't run now. Stanchion
 keeps the readable copy of a message, not the original body text and header,
 so those rules only apply to new mail.
 
-## What cmail rules don't do
+## What Stanchion rules don't do
 
 Some Outlook actions are deliberately left out:
 
@@ -105,7 +105,7 @@ Some Outlook actions are deliberately left out:
   mailboxes or delegation instead.
 - **Permanently delete.** Use **Move to Deleted**: retention still applies,
   and the message can be restored if a rule was too broad.
-- **Move to a folder of your own, categorise, or pin.** cmail doesn't have
+- **Move to a folder of your own, categorise, or pin.** Stanchion doesn't have
   custom folders, categories or pinning yet.
 
 ## For operators
@@ -140,7 +140,7 @@ web app, so a rule behaves the same everywhere.
   1. On new mail in the email Worker, only for mail headed to the Inbox. Mail
      already sent to Spam by a sender rule or spam score skips rules. Body and
      headers are read only if a rule needs them.
-  2. On mail sent between mailboxes in this cmail instance, in the web app
+  2. On mail sent between mailboxes in this Stanchion instance, in the web app
      (`apps/web/src/lib/server/outbound-journal.ts`).
   3. On demand with **Run now**, on the newest 1,000 messages in the Inbox.
      Rules that look at the body or headers can't be run this way.

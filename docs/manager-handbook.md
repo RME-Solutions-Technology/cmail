@@ -1,6 +1,6 @@
 ---
 title: "Manager handbook"
-summary: "How to run cmail as a Manager: people, mailboxes, organisation, policy, mail trace, audit and settings."
+summary: "How to run Stanchion as a Manager: people, mailboxes, organisation, policy, mail trace, audit and settings."
 applies_to: both
 audience: [manager]
 switch: none
@@ -10,12 +10,12 @@ related: [user-guide.md, support-process.md]
 
 # Manager handbook
 
-This handbook covers cmail's management functions, for the **Manager** role.
+This handbook covers Stanchion's management functions, for the **Manager** role.
 Deployment bindings, secrets, DNS, identity-provider registration, backups,
 and Cloudflare operations are the operator's job — see the
 [deployment guide](deployment.md) for those.
 
-cmail's management centre uses concepts familiar from enterprise mail systems,
+Stanchion's management centre uses concepts familiar from enterprise mail systems,
 but it is not Microsoft Exchange, is not affiliated with Microsoft, and does
 not match it feature-for-feature.
 
@@ -43,7 +43,7 @@ Keep these models separate when granting access:
 
 | Model | Values | What it controls |
 |---|---|---|
-| Account role | Standard, Manager | Access to the cmail management centre |
+| Account role | Standard, Manager | Access to the Stanchion management centre |
 | Mailbox permission | Read, Send as, Full access | Actions in one assigned mailbox |
 | Organisation role definition | A reusable title such as Service manager | Structure and optional directory display only |
 
@@ -86,10 +86,10 @@ invitation.
 
 1. Select **Add a person**.
 2. Enter their work email address and a display name. You don't choose a
-   sign-in method yourself — cmail works out who hosts the address and
+   sign-in method yourself — Stanchion works out who hosts the address and
    routes the invitation accordingly.
 3. Create their personal mailbox address on your configured mail domain.
-   cmail creates it active, with Full access permanently linked to that
+   Stanchion creates it active, with Full access permanently linked to that
    person's account.
 4. Choose Standard or Manager. Choose Manager only for a Google- or
    Microsoft-hosted address: an email-code identity can never actually sign
@@ -98,7 +98,7 @@ invitation.
 5. Send the invitation now if delivery is configured, or leave the person
    pending and use **Resend invitation** later.
 
-The account starts **Pending**, with no sign-in linked yet. cmail checks
+The account starts **Pending**, with no sign-in linked yet. Stanchion checks
 whether the address is hosted by Google, by Microsoft, or by neither. A
 Google or Microsoft address gets a single **Activate your mailbox** button
 that leads straight into that provider's sign-in; whichever the person uses
@@ -108,7 +108,7 @@ trusted only because it arrives through the invitation. An address hosted
 elsewhere gets the same **Activate your mailbox** button, but it leads to a
 one-time email code instead — the person requests a code and enters it,
 rather than picking a provider. See the [user guide](user-guide.md#before-you-sign-in)
-for what an invitee sees at each step. If cmail can't confirm who hosts the
+for what an invitee sees at each step. If Stanchion can't confirm who hosts the
 address at all, the invitation is refused up front with a plain error; try
 again shortly, or double-check the address. Either way, the link expires
 after 72 hours and
@@ -153,7 +153,7 @@ If a person had more than one valid candidate mailbox, only the oldest gets
 linked — the rest stay ownerless, disabled, and excluded from delegation,
 along with any mailbox that had extra or conflicting assignments. Before any
 retention, successor, or address-reuse decision, back up the database and
-inspect these records directly in D1 (cmail's database). There is no quick
+inspect these records directly in D1 (Stanchion's database). There is no quick
 fix built in for this: keep the disabled record and its mail, and follow a
 separately reviewed migration or retention process.
 
@@ -164,7 +164,7 @@ Before offboarding:
 - decide what happens to their personal mailbox and its data;
 - check organisation positions that name them, especially public ones;
 - tell the successor or contact owner how correspondence should be
-  redirected — cmail will not send a departure notice to future senders;
+  redirected — Stanchion will not send a departure notice to future senders;
 - offboard the account and review the Audit log; and
 - test the successor's access using their own session, not the former
   user's.
@@ -172,9 +172,9 @@ Before offboarding:
 ### Unavailable former addresses
 
 After offboarding, mail to the person's old address is rejected during
-delivery, with the same generic response cmail uses for any unknown or
+delivery, with the same generic response Stanchion uses for any unknown or
 disabled address, so senders cannot tell it was offboarded rather than never
-existing. cmail sends no bounce, auto-reply, or departure notice of its own;
+existing. Stanchion sends no bounce, auto-reply, or departure notice of its own;
 whether the original sender sees any notice at all depends on their own
 provider.
 
@@ -272,13 +272,13 @@ status, message size, authentication results, spam score, TLS version, source
 IP, and the provider's relay response where recorded.
 
 Trace shows metadata, not a copy of the message body. **Sent** or
-**Delivered** describes the stage cmail recorded — it is not proof someone
+**Delivered** describes the stage Stanchion recorded — it is not proof someone
 read the message. When investigating, record the trace ID and time, and copy
 only as much address or subject data as your support channel actually needs.
 
 ## Spam and quarantine
 
-**Management > Quarantine** lists messages cmail filed to Spam instead of
+**Management > Quarantine** lists messages Stanchion filed to Spam instead of
 Inbox, across every mailbox. For each one you can **Release** it back to
 Inbox, **Delete** it, or **Allow**/**Block** its sender for the whole
 organisation. Allow and block rules take effect on the next message from
@@ -334,7 +334,7 @@ deployment change process.
 
 ## Update notices
 
-The bottom of the Management sidebar shows the installed web build and whether a newer cmail is available. "Up to date" means you run the latest upstream source. "Update available" names the new version and commit and links to the changes. "Custom build" means your instance carries local or forked changes, so ask whoever maintains it before updating. "Update status unavailable" gives the reason and never affects mail.
+The bottom of the Management sidebar shows the installed web build and whether a newer Stanchion is available. "Up to date" means you run the latest upstream source. "Update available" names the new version and commit and links to the changes. "Custom build" means your instance carries local or forked changes, so ask whoever maintains it before updating. "Update status unavailable" gives the reason and never affects mail.
 
 The notice is information, not an automatic update. Follow **Update procedure** (or your support provider, via **Email support** where your deployment sets one) to plan the update, take a backup, and deploy. Your deployment team can point the check at a fork or turn it off; see [Updating an existing instance](deployment.md#updating-an-existing-instance).
 
@@ -361,7 +361,7 @@ Train designated internal people as your first support level (L1): own user
 communication, follow approved runbooks (step-by-step guides for common
 issues), use Mail trace and Audit log without copying message content, and
 apply your organisation's incident and privacy processes. Escalate a real,
-reproducible cmail product defect to RME Solutions Technology through your
+reproducible Stanchion product defect to RME Solutions Technology through your
 agreed channel, with a safe reproduction, the deployed version, impact, time
 window, and redacted trace or error IDs.
 

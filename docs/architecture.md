@@ -1,6 +1,6 @@
 ---
 title: "Architecture and trust boundaries"
-summary: "How cmail is built and where its trust boundaries are: sign-in, mailbox access, mail flow, public data and storage."
+summary: "How Stanchion is built and where its trust boundaries are: sign-in, mailbox access, mail flow, public data and storage."
 applies_to: both
 audience: [operator, developer, reviewer]
 switch: none
@@ -10,7 +10,7 @@ related: [cloudflare-platform.md, assurance.md]
 
 # Architecture and trust boundaries
 
-cmail separates authenticated web/admin traffic from inbound mail processing. Both runtimes share the same Cloudflare D1 database and R2 bucket.
+Stanchion separates authenticated web/admin traffic from inbound mail processing. Both runtimes share the same Cloudflare D1 database and R2 bucket.
 
 ```mermaid
 flowchart LR
@@ -41,10 +41,10 @@ flowchart LR
 | Email Worker | Validate routed recipients, parse and store inbound mail, run bounded retention, and submit Cloudflare outbound mail over a private binding | Authenticate users or decide mailbox send permission |
 | D1 | Users, immutable provider bindings, hashed enrolment tokens, mailboxes, assignments, message metadata, atomic reservations, sessions, policy, audit, trace, retention, and organisation records | Store deployment secrets or raw enrolment tokens |
 | R2 | Message bodies and attachment objects | Decide mailbox authorization |
-| Google or Microsoft | Authenticate identities selected by the operator | Auto-authorize or provision ordinary cmail users |
-| Cloudflare Email Service or Postmark | Deliver external outbound messages | Store cmail mailbox permissions |
+| Google or Microsoft | Authenticate identities selected by the operator | Auto-authorize or provision ordinary Stanchion users |
+| Cloudflare Email Service or Postmark | Deliver external outbound messages | Store Stanchion mailbox permissions |
 | AI app (MCP client) | Calls `/mcp` with a bearer token after the person approved it in the browser | Use cookies, reach mailboxes or scopes outside its grant, or act while the organisation switch is off |
-| Browser push service | Best-effort delivery of generic, user-enabled new-mail notices | Receive sender, subject, mailbox, body, or attachment data from cmail |
+| Browser push service | Best-effort delivery of generic, user-enabled new-mail notices | Receive sender, subject, mailbox, body, or attachment data from Stanchion |
 
 ## Primary flows
 
@@ -68,15 +68,15 @@ Only then does the Worker parse the raw message, enforce decoded byte/element/de
 
 ### Outbound mail
 
-The web application checks the signed-in user's mailbox assignment and send permission before accepting a compose request. Internal-only recipients go straight to cmail storage; external recipients use the configured Cloudflare Email Service or Postmark account. For Cloudflare, Pages sends a bounded request over its private `EMAIL_SERVICE` binding to the email Worker, which owns the outbound call and keeps `workers_dev=false`, `preview_urls=false`, explicit empty routes, and a private-hostname guard on its fetch handler. Its `send_email` result is an opaque tracking ID, not the wire RFC `Message-ID` — cmail stores the two separately.
+The web application checks the signed-in user's mailbox assignment and send permission before accepting a compose request. Internal-only recipients go straight to Stanchion storage; external recipients use the configured Cloudflare Email Service or Postmark account. For Cloudflare, Pages sends a bounded request over its private `EMAIL_SERVICE` binding to the email Worker, which owns the outbound call and keeps `workers_dev=false`, `preview_urls=false`, explicit empty routes, and a private-hostname guard on its fetch handler. Its `send_email` result is an opaque tracking ID, not the wire RFC `Message-ID` — Stanchion stores the two separately.
 
-Mixed local/external mail, when Cloudflare REST credentials are also configured, uses `send_raw` instead: the MIME copy keeps the full To/Cc lists, the SMTP envelope carries only external recipients, and local copies stay synchronous. Otherwise native Cloudflare or Postmark gets one all-recipient submission — every recipient sees identical headers, and local copies return asynchronously through Email Routing, so this path depends on inbound routing and quota working. cmail validates the REST API's RFC-style `result.message_id` when present; opaque tracking IDs never substitute for it.
+Mixed local/external mail, when Cloudflare REST credentials are also configured, uses `send_raw` instead: the MIME copy keeps the full To/Cc lists, the SMTP envelope carries only external recipients, and local copies stay synchronous. Otherwise native Cloudflare or Postmark gets one all-recipient submission — every recipient sees identical headers, and local copies return asynchronously through Email Routing, so this path depends on inbound routing and quota working. Stanchion validates the REST API's RFC-style `result.message_id` when present; opaque tracking IDs never substitute for it.
 
 Per-send ceilings and per-user rate/work limits bound recipient count, payload size, and R2 amplification. D1 reserves bytes for every copy before any provider call or R2 write; local copies returned via the inbound path use its own reservation on arrival, though the compose workload cap still budgets their expected storage. A denial releases the whole reservation group.
 
-Before dispatch, cmail stages immutable HTML, plain text, and attachment bytes under a private R2 outbound-journal prefix, commits a D1 manifest (fixed Sent/local message and attachment IDs, durable quota reservations), and verifies D1 SHA-256 digests against the staged bytes before both dispatch and local materialisation. The journal then moves atomically from `pending` to `dispatching` before cmail calls the provider.
+Before dispatch, Stanchion stages immutable HTML, plain text, and attachment bytes under a private R2 outbound-journal prefix, commits a D1 manifest (fixed Sent/local message and attachment IDs, durable quota reservations), and verifies D1 SHA-256 digests against the staged bytes before both dispatch and local materialisation. The journal then moves atomically from `pending` to `dispatching` before Stanchion calls the provider.
 
-Provider success moves it to `accepted`; targets materialise idempotently, the journal becomes `materialized`, and the source draft disappears — so an accepted send can recover its Sent/internal copies without calling the provider again. A timeout, lost response, or stale `dispatching` record counts as unknown and is never auto-retried; only proof of non-acceptance frees the attempt for a new send. Cloudflare and Postmark aren't assumed to honour cmail's idempotency key.
+Provider success moves it to `accepted`; targets materialise idempotently, the journal becomes `materialized`, and the source draft disappears — so an accepted send can recover its Sent/internal copies without calling the provider again. A timeout, lost response, or stale `dispatching` record counts as unknown and is never auto-retried; only proof of non-acceptance frees the attempt for a new send. Cloudflare and Postmark aren't assumed to honour Stanchion's idempotency key.
 
 The manager Mail trace view surfaces unresolved journals: staged content and quota reservations stay until the state resolves safely, untouched by routine session, rate-limit, or legacy-send cleanup.
 
@@ -91,7 +91,7 @@ Administration records are manager-only. `GET /api/organization` is the one publ
 When a Manager enables it, `/mcp` serves the Model Context Protocol over
 Streamable HTTP, and the same Pages app acts as the OAuth 2.1 authorization
 server: discovery metadata, client registration (Client ID Metadata
-Documents or dynamic registration), `/oauth/authorize` with the normal cmail
+Documents or dynamic registration), `/oauth/authorize` with the normal Stanchion
 sign-in plus a consent screen, and `/oauth/token` / `/oauth/revoke`.
 Codes and tokens are opaque, hashed in D1, audience-bound to `APP_URL/mcp`,
 and refresh tokens rotate with reuse detection. Every tool call re-reads the
@@ -124,7 +124,7 @@ The shared storage control uses D1 `messages.size_bytes` plus active reservation
 
 ## Deployment assumptions
 
-cmail targets Cloudflare Pages, Workers, D1, R2, and Email Routing. It is not a general SMTP or IMAP server, and not a drop-in Exchange replacement. The repository doesn't create identity-provider registrations, mail-provider accounts, DNS records, backups, alerts, or legal policies for you.
+Stanchion targets Cloudflare Pages, Workers, D1, R2, and Email Routing. It is not a general SMTP or IMAP server, and not a drop-in Exchange replacement. The repository doesn't create identity-provider registrations, mail-provider accounts, DNS records, backups, alerts, or legal policies for you.
 
 Review the [configuration reference](configuration.md), [deployment guide](deployment.md), and [security checklist](security-checklist.md) before changing these boundaries.
 

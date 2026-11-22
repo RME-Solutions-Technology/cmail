@@ -10,9 +10,9 @@ related: [credentials.md, m365-sync.md, exchange-mirror.md, standby-switch.md]
 
 # Onboarding an organisation that uses Microsoft 365
 
-This guide takes a new cmail instance from nothing to "staff sign in with
+This guide takes a new Stanchion instance from nothing to "staff sign in with
 their Microsoft account", for an organisation whose mail stays in Exchange
-Online. Optional steps then make cmail a warm standby: a standby subdomain,
+Online. Optional steps then make Stanchion a warm standby: a standby subdomain,
 the Exchange mirror, shared mailbox permissions, and the standby switch.
 
 It is the order that worked in the first production onboarding of a
@@ -278,7 +278,7 @@ redeploy, and start again with a new token.
 
 ## 5. Microsoft 365 sync
 
-**Purpose.** cmail creates an account and mailbox for each licensed person
+**Purpose.** Stanchion creates an account and mailbox for each licensed person
 on the mail domain, pauses leavers, and (optionally) finds shared mailboxes.
 It reads Microsoft 365 and never writes to it.
 
@@ -331,12 +331,12 @@ remove the vars, `az ad app delete --id <app id>`.
 
 ## 6. Staff sign-in
 
-**Purpose.** Synced people sign in with **Sign in with Microsoft** on cmail's
+**Purpose.** Synced people sign in with **Sign in with Microsoft** on Stanchion's
 own page, with no invitation.
 
 **Run.** Nothing extra: it works once steps 3 and 5 are done and the web
 app knows the tenant (`MICROSOFT_TENANT_ID` set to the tenant GUID, or
-`M365_TENANT_ID` on the web app). cmail binds the person by the ID token's
+`M365_TENANT_ID` on the web app). Stanchion binds the person by the ID token's
 `oid` and `tid`, never by email or UPN
 ([how it works](m365-sync.md#first-sign-in)).
 
@@ -386,7 +386,7 @@ message trace shows it delivered.
 
 ## 9. Standby subdomain (optional)
 
-**Purpose.** Give cmail its own way to receive mail while the domain's MX
+**Purpose.** Give Stanchion its own way to receive mail while the domain's MX
 stays with Exchange Online. Steps 10 and 12 build on it.
 
 **Run (dashboard).** Email Service > Email Routing > the apex domain >
@@ -432,7 +432,7 @@ check the apex records are unchanged.
 
 ## 10. Exchange mirror (optional)
 
-**Purpose.** cmail keeps a live copy of the tenant's mail from one Exchange
+**Purpose.** Stanchion keeps a live copy of the tenant's mail from one Exchange
 journal rule, so a standby has recent mail. Read
 [Exchange mirror](exchange-mirror.md) first, including how a report is
 trusted and the privacy section.
@@ -456,11 +456,11 @@ pwsh -File scripts/onboarding/exchange-mirror.ps1 @m -Enable
 Between a and b:
 1. Worker `[vars]`: `M365_TENANT_ID`, `M365_JOURNAL_NDR_DOMAIN = "standby.example.com"`,
    `INBOUND_AUTHSERV_ID = "mx.cloudflare.net"` and the rest of
-   [Exchange mirror setup](exchange-mirror.md#1-cmail); migration `0027`;
+   [Exchange mirror setup](exchange-mirror.md#1-stanchion); migration `0027`;
    deploy the Worker, then the web app.
 2. Email Routing on `standby.example.com`: one rule for the literal journal
-   address (from the file) -> **Send to a Worker** -> the cmail email Worker.
-   A second rule for the NDR address to a mailbox a person reads (a cmail
+   address (from the file) -> **Send to a Worker** -> the Stanchion email Worker.
+   A second rule for the NDR address to a mailbox a person reads (a Stanchion
    mailbox through its standby address, or "Send to an email" to a verified
    address outside Exchange Online).
 3. Add `include:spf.protection.outlook.com` to the SPF TXT record of
@@ -492,8 +492,8 @@ Admin > Microsoft 365 > Mail feed > Journal source (legacy) > Turn off; optional
   domain, which passes only once `include:spf.protection.outlook.com` is in
   that domain's SPF.
 - Cloudflare's `Authentication-Results` carries a bare `spf=pass` before the
-  `spf=pass smtp.mailfrom=<NDR domain>` result. cmail before PR 123 read the
-  first one, so every report failed `auth_failed`; run a cmail version that
+  `spf=pass smtp.mailfrom=<NDR domain>` result. Stanchion before PR 123 read the
+  first one, so every report failed `auth_failed`; run a Stanchion version that
   includes that fix (it uses the SPF result that names `smtp.mailfrom`).
 - Without that SPF include, and with `M365_JOURNAL_REQUIRE_AUTH = "true"`,
   every report is refused, Exchange sends one NDR per report to the NDR
@@ -512,8 +512,8 @@ Admin > Microsoft 365 > Mail feed > Journal source (legacy) > Turn off; optional
 ## 11. Shared mailbox permissions (optional)
 
 **Purpose.** Copy who has Full Access and Send As on shared mailboxes from
-Exchange into cmail daily. Graph cannot read these permissions, and the
-Exchange Online Admin API (preview) does not cover them, so cmail runs the
+Exchange into Stanchion daily. Graph cannot read these permissions, and the
+Exchange Online Admin API (preview) does not cover them, so Stanchion runs the
 Exchange PowerShell module in a Cloudflare Container, read-only. Read
 [Shared mailbox access from Exchange Online](m365-mailbox-permissions.md) first.
 
@@ -581,10 +581,10 @@ after steps 9 and 10.
 - [Standby test address and daily probe](standby-probe.md): every mailbox
   also answers at `name@standby.example.com` (one routing rule per address),
   with a daily probe.
-- [Switch mail to the cmail standby, and back](standby-switch.md): move the
+- [Switch mail to the Stanchion standby, and back](standby-switch.md): move the
   domain's MX to Cloudflare in one DNS change, and back. Dry run first.
 - [Copy standby mail back into Exchange](copy-back.md): after an outage,
-  copy what cmail received into each person's Exchange mailbox.
+  copy what Stanchion received into each person's Exchange mailbox.
 
 ## Lessons from the first onboarding
 

@@ -1,6 +1,6 @@
 ---
 title: "Credentials and permissions"
-summary: "Every token, app registration and secret cmail uses, with the exact permissions, where each is stored, who holds it and how to rotate it."
+summary: "Every token, app registration and secret Stanchion uses, with the exact permissions, where each is stored, who holds it and how to rotate it."
 applies_to: both
 audience: [operator, reviewer]
 switch: none
@@ -10,7 +10,7 @@ related: [configuration.md, operations.md, onboarding-microsoft-365.md, glossary
 
 # Credentials and permissions
 
-This is the one list of every credential cmail uses. Each feature page has
+This is the one list of every credential Stanchion uses. Each feature page has
 the setup steps; this page says what to create, with which permissions,
 and where it goes. Give each credential the least access in its row and
 nothing more.
@@ -27,7 +27,7 @@ nothing more.
 - [Troubleshoot credential errors](#troubleshoot-credential-errors)
 - [Sources](#sources)
 
-**Who holds what.** The *operator* runs the cmail instance: the Cloudflare
+**Who holds what.** The *operator* runs the Stanchion instance: the Cloudflare
 account, Wrangler and the Worker and Pages secrets. The *client admin* runs
 the organisation's Microsoft 365 tenant and creates or consents to the
 Entra apps. One person can be both. No credential is ever stored in the
@@ -71,7 +71,7 @@ the email Worker, the [standby test address](standby-probe.md) rules on the
 subdomain, the [Exchange mirror](exchange-mirror.md) journal address rule),
 Email Sending domain onboarding, the Pages custom domain and the
 [Cloudflare Access](staff-sign-in.md#cloudflare-access-bridge) application
-are set up by a person in the dashboard. cmail never needs Email Routing or
+are set up by a person in the dashboard. Stanchion never needs Email Routing or
 Access permissions at run time.
 
 **Not verified.** Cloudflare's docs do not name the permission that
@@ -112,7 +112,7 @@ first](onboarding-microsoft-365.md#0-what-you-need-first).
 **Expiry.** Client secrets and the certificate expire. Record each expiry
 in your secrets register and renew before it. An expired sync secret stops
 the sync (`unauthorized`); an expired reader certificate stops the
-collector (`credentials_rejected`); access already in cmail stays as it is.
+collector (`credentials_rejected`); access already in Stanchion stays as it is.
 
 ## Other providers
 
@@ -176,7 +176,7 @@ $env:CLOUDFLARE_API_TOKEN = Read-Host -MaskInput 'Cloudflare token'
 4. Then delete the old value at the provider.
 
 What each rotation breaks, secret by secret, is in
-[Running cmail: Rotate secrets](operations.md#rotate-secrets).
+[Running Stanchion: Rotate secrets](operations.md#rotate-secrets).
 
 ## Troubleshoot credential errors
 

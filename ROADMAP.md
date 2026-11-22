@@ -1,6 +1,6 @@
 # Roadmap
 
-cmail is pre-1.0. This roadmap shows direction, not a delivery promise or
+Stanchion is pre-1.0. This roadmap shows direction, not a delivery promise or
 compatibility guarantee. Priorities shift based on real deployment evidence,
 security reports, and focused community proposals.
 

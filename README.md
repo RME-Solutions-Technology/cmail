@@ -2,7 +2,7 @@
   <img src="apps/web/static/icon.svg" width="96" alt="">
 </p>
 
-<h1 align="center">cmail</h1>
+<h1 align="center">Stanchion</h1>
 
 <p align="center"><strong>Self-hosted organisational email on Cloudflare.</strong></p>
 
@@ -30,7 +30,7 @@
 
 > [!IMPORTANT]
 > **The button starts a guided import, not a one-click production deployment.**
-> cmail is a Cloudflare Pages application plus a separate email Worker in one
+> Stanchion is a Cloudflare Pages application plus a separate email Worker in one
 > pnpm monorepo, and Cloudflare's button only supports single-Worker apps. Use
 > it to import the repository, then complete the resource, secret, DNS,
 > routing, and bootstrap steps in [Deployment and
@@ -39,14 +39,16 @@
 > value with their own repository — otherwise it always imports
 > `RME-Solutions-Technology/cmail`.
 
-cmail is open-source email for organisations that want personal and shared
+Stanchion is open-source email for organisations that want personal and shared
 mailboxes on a domain they control. It combines a SvelteKit web application
 with Cloudflare Email Routing, Workers, D1 (Cloudflare's hosted database), and
 R2 (Cloudflare's object storage). Outbound mail uses Cloudflare Email Service
 by default, with Postmark as an alternative.
 
+Stanchion was formerly called cMail. Some internal names (cookies, environment variables, existing Cloudflare resource names and the package scope) still say `cmail` on purpose, so that existing deployments keep working.
+
 > [!IMPORTANT]
-> cmail is beta software (0.9, before 1.0). Review the code and threat model for your environment, test recovery procedures, and complete the [security checklist](docs/security-checklist.md) before handling sensitive or production mail.
+> Stanchion is beta software (0.9, before 1.0). Review the code and threat model for your environment, test recovery procedures, and complete the [security checklist](docs/security-checklist.md) before handling sensitive or production mail.
 
 ## Key features
 
@@ -62,7 +64,7 @@ by default, with Postmark as an alternative.
   restrict sign-in to approved countries, with a manager approval flow for
   legitimate exceptions.
 - **Personal and shared mailboxes** — read, send-as, and full delegation, plus
-  internal delivery between cmail mailboxes.
+  internal delivery between Stanchion mailboxes.
 - **Full mail flow** — inbound via Cloudflare Email Routing; external outbound
   via Cloudflare Email Service or Postmark; To/Cc/Bcc, autosaved drafts,
   attachments, reply/reply all/forward, message importance,
@@ -104,12 +106,12 @@ by default, with Postmark as an alternative.
   new-mail copy only.
 - **Responsive, installable PWA** — works on desktop and mobile browsers.
 
-cmail is an application, not a hosted service: your organisation owns its
+Stanchion is an application, not a hosted service: your organisation owns its
 Cloudflare account, identity-provider configuration, outbound provider, DNS,
 backups, monitoring, privacy obligations, and provider charges. Check each
 provider's current terms before deploying.
 
-cmail is not a bulk-marketing or campaign platform — it has no consent, list,
+Stanchion is not a bulk-marketing or campaign platform — it has no consent, list,
 RFC 8058 one-click unsubscribe, complaint, or deliverability controls for that
 use. See [Email authentication and sender requirements](docs/email-authentication.md)
 before enabling external mail flow.
@@ -174,7 +176,7 @@ scripts in [`scripts/onboarding/`](scripts/onboarding/README.md).
 
 ## Standards and assurance
 
-cmail maps to ISO 27001, ISO 20000-1, ISO 27701, and related standards, and to
+Stanchion maps to ISO 27001, ISO 20000-1, ISO 27701, and related standards, and to
 ITIL service-management practices. See the [ISO and ITIL alignment
 map](docs/standards-alignment.md) for the detail, and [Security, privacy, and
 assurance](docs/assurance.md) for the control matrix, limitations, and a
@@ -195,6 +197,6 @@ opinion — your organisation still owns compliance for its own deployment.
 
 ## License
 
-cmail is available under the [Apache License 2.0](LICENSE). If you use or redistribute cMail, the license requires you to keep the [NOTICE](NOTICE) and give credit to RME Solutions Technology. If it helps your
+Stanchion is available under the [Apache License 2.0](LICENSE). If you use or redistribute Stanchion, the license requires you to keep the [NOTICE](NOTICE) and give credit to RME Solutions Technology. If it helps your
 organisation, consider contributing fixes, documentation, testing, or support
 back to the community.

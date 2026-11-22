@@ -1,6 +1,6 @@
 ---
-title: "cmail documentation"
-summary: "The index of every cmail guide, with where to start for primary mail or a Microsoft 365 standby."
+title: "Stanchion documentation"
+summary: "The index of every Stanchion guide, with where to start for primary mail or a Microsoft 365 standby."
 applies_to: both
 audience: [operator, manager, user]
 switch: none
@@ -8,9 +8,9 @@ last_reviewed: 2026-11-16
 related: [credentials.md, glossary.md, getting-started.md, onboarding-microsoft-365.md]
 ---
 
-# cmail documentation
+# Stanchion documentation
 
-cmail is beta software (0.9, before 1.0). Operators should read the deployment and security
+Stanchion is beta software (0.9, before 1.0). Operators should read the deployment and security
 guides before sending real mail through it. Words like *switch*, *dry run*
 and *standby* are defined in the [Glossary](glossary.md).
 
@@ -23,7 +23,7 @@ and *standby* are defined in the [Glossary](glossary.md).
 - **Either way:** [Credentials and permissions](credentials.md) lists every
   token, app and secret, with exact permissions.
 
-## Use cmail
+## Use Stanchion
 
 - [User guide](user-guide.md): first sign-in, reading, composing, folders, safety.
 - [Calendar](calendar.md): meeting invitations.
@@ -36,14 +36,14 @@ and *standby* are defined in the [Glossary](glossary.md).
 - [AI agents and MCP](mcp.md): connect Claude or another AI app.
 - [Mail client connectivity](mail-client-connectivity.md): why there is no IMAP yet, and the plan.
 
-## Manage cmail
+## Manage Stanchion
 
 - [Manager handbook](manager-handbook.md): people, mailboxes, organisation, policy, mail trace, audit.
 - [Travel approvals](travel-approvals.md): limit sign-in to approved countries.
 - [Support process](support-process.md): triage, evidence, escalation.
 - [Acceptable-use policy template](acceptable-use-policy-template.md).
 
-## Deploy and run cmail
+## Deploy and run Stanchion
 
 1. [Getting started](getting-started.md): local setup and Cloudflare storage.
 2. [Configuration reference](configuration.md): every setting.
@@ -52,7 +52,7 @@ and *standby* are defined in the [Glossary](glossary.md).
 5. [Architecture and trust boundaries](architecture.md).
 6. [Deployment and verification](deployment.md): the production sequence.
 7. [Security checklist](security-checklist.md) and [Operations checklist](operations-checklist.md).
-8. [Running cmail](operations.md): upgrade, back up, restore, roll back, monitor, rotate secrets.
+8. [Running Stanchion](operations.md): upgrade, back up, restore, roll back, monitor, rotate secrets.
 9. [Upgrading and keeping your settings](upgrading.md).
 
 ## Sign-in
@@ -72,12 +72,12 @@ with scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
 - [Shared mailbox access from Exchange Online](m365-mailbox-permissions.md): copy Full Access and Send As daily.
 - [Exchange mirror](exchange-mirror.md): a live copy of every mailbox from one journal rule.
 - [Standby test address and daily probe](standby-probe.md): prove the standby path every day.
-- [Standby switch](standby-switch.md): move incoming mail to cmail and back, one DNS change each.
+- [Standby switch](standby-switch.md): move incoming mail to Stanchion and back, one DNS change each.
 - [Copy-back](copy-back.md): copy standby mail into Exchange after an outage.
 
-## How cmail works
+## How Stanchion works
 
-- [How cmail runs on Cloudflare](cloudflare-platform.md): the deployables, bindings, schedules and migrations.
+- [How Stanchion runs on Cloudflare](cloudflare-platform.md): the deployables, bindings, schedules and migrations.
 - [How sending works](sending.md).
 - [Delivery status and bounces](delivery-and-bounces.md).
 - [How receiving works](receiving.md).
@@ -97,6 +97,7 @@ with scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
 ## Contributors and maintainers
 
 - [Developer guide](development.md).
+- [Local gate and deploys in WSL](wsl-gate.md).
 - [Maintainer release guide](maintainer-guide.md).
 - Reviews: [security review, September 2026](security-review-2026-09-13.md), [dependency review, 22 September 2026](dependency-review-2026-09-22.md), [dependency review, 9 September 2026](dependency-review-2026-09-09.md).
 - [Contributing](../CONTRIBUTING.md), [Support](../SUPPORT.md), [Security policy](../SECURITY.md), [Code of Conduct](../CODE_OF_CONDUCT.md).

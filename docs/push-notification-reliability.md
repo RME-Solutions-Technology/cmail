@@ -10,11 +10,11 @@ related: [mobile-pwa.md]
 
 # Push notification reliability blueprint
 
-> Design blueprint only — this is not implemented in cmail today.
+> Design blueprint only — this is not implemented in Stanchion today.
 
 ## Current boundary
 
-cmail currently stores inbound mail first, then directly attempts generic Web
+Stanchion currently stores inbound mail first, then directly attempts generic Web
 Push delivery to active assigned subscribers. That fan-out is best-effort: it
 has no durable per-attempt record, retry queue, dead-letter queue, or proof that
 a device displayed an alert. A push-service `accepted` response only confirms

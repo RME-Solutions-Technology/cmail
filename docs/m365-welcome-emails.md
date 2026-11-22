@@ -14,8 +14,8 @@ related: [m365-sync.md, staff-sign-in.md]
 real DNS or a real Exchange Online inbox. Tested with every real migration
 on `node:sqlite` and a mocked Cloudflare Email Sending binding.
 
-When the [Microsoft 365 sync](m365-sync.md) creates a person in cmail (or
-links an existing account that is still pending), cmail can email them once
+When the [Microsoft 365 sync](m365-sync.md) creates a person in Stanchion (or
+links an existing account that is still pending), Stanchion can email them once
 with plain first sign-in steps. A manager turns it on in **Admin >
 Microsoft 365 > Welcome emails**. Off, it changes nothing: the cron reads
 one settings row and returns, and no mail is sent.
@@ -37,7 +37,7 @@ one settings row and returns, and no mail is sent.
 
 - [Who gets one](#who-gets-one)
 - [How they sign in (no link token)](#how-they-sign-in-no-link-token)
-- [Which address it is sent to](#which-address-it-is-sent-to)
+- [Which address it is sent to](#which-address-it-is-sent-to-and-which-account-they-sign-in-with)
 - [The switch (Admin > Microsoft 365 > Welcome emails)](#the-switch-admin--microsoft-365--welcome-emails)
 - [Exactly once, retries and limits](#exactly-once-retries-and-limits)
 - [The email](#the-email)
@@ -52,7 +52,7 @@ is queued and again just before it is sent:
 
 1. the sync linked them (`m365_sync_links`, kind `person`) and they are still
    in scope in Microsoft 365;
-2. their cmail account is a standard account, **pending**, has never signed in
+2. their Stanchion account is a standard account, **pending**, has never signed in
    (`last_sign_in` empty) and has no sign-in identity of any kind (Google,
    Microsoft, email code or Access);
 3. their address is not a shared mailbox's address;
@@ -79,13 +79,13 @@ out-of-scope people, and accounts the sync did not create, never match.
 
 A synced account is pending with **no sign-in identity**. While the sync is
 on, the person signs in for the first time with **Sign in with Microsoft** on
-cmail's own sign-in page: cmail verifies the Microsoft ID token and binds the
+Stanchion's own sign-in page: Stanchion verifies the Microsoft ID token and binds the
 person's Microsoft identity to the account the sync created for them, by the
 token's tenant (`tid`) and Entra object id (`oid`), never by email. Details
 and rules: [Microsoft 365 sync: First sign-in](m365-sync.md#first-sign-in).
 The [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge), if
 used, also adopts such accounts. Either way the email carries **no token or
-magic link**: only the address of cmail.
+magic link**: only the address of Stanchion.
 
 So the switch needs one of: Microsoft sign-in configured on the web app with
 the sync's tenant known (`M365_TENANT_ID` on the web app, or a tenant GUID in
@@ -112,12 +112,12 @@ The person's account email, which the sync keeps equal to their Microsoft 365
   domain's MX like any outside sender (Cloudflare's
   [Postmaster reference](https://developers.cloudflare.com/email-service/reference/postmaster/)
   describes delivery to the recipient's MX hosts), so the email lands in the
-  person's **Exchange inbox**: the inbox they read today. Their cmail mailbox
+  person's **Exchange inbox**: the inbox they read today. Their Stanchion mailbox
   has the same address but receives nothing while Exchange holds the MX.
   That is the right inbox for a standby or mirror deployment: people learn
   about the standby while their normal mail works.
 - After a [switch to the standby](standby-switch.md) (MX at Cloudflare Email
-  Routing), the same address delivers into cmail itself, which the person can
+  Routing), the same address delivers into Stanchion itself, which the person can
   only read after signing in. Send welcome emails **before** you need the
   standby.
 
@@ -154,7 +154,7 @@ Requirements, checked or shown in Admin:
   `E_SENDER_DOMAIN_NOT_AVAILABLE`), Admin shows **"Sending is not set up"**
   in red with the code; the emails stay queued and are retried hourly.
 
-cmail cannot read your DNS or Cloudflare account, so it cannot prove DMARC
+Stanchion cannot read your DNS or Cloudflare account, so it cannot prove DMARC
 passes before the first send: check the first welcome email's headers
 (`Authentication-Results: dmarc=pass`) in Exchange.
 
@@ -282,7 +282,7 @@ Example Org
 
 Hello Alex,
 
-You now have a mail account at Example Org in cmail. Example Org uses cmail as a standby for email emergencies. Nothing changes day to day.
+You now have a mail account at Example Org in Stanchion. Example Org uses Stanchion as a standby for email emergencies. Nothing changes day to day.
 
 To sign in for the first time:
 
@@ -298,13 +298,13 @@ Questions? Contact desk@example.com.
 Example Org will never ask for your password by email.
 
 --
-Sent by Example Org with cmail.
+Sent by Example Org with Stanchion.
 ```
 
 - **Step 2** follows the deployment: with Microsoft first sign-in it is
   "Choose Sign in with Microsoft and use your work account (…)". With the
-  Cloudflare Access bridge on (its login page appears before cmail, with no
-  cmail button) it is "Sign in with your work account (…) when asked.".
+  Cloudflare Access bridge on (its login page appears before Stanchion, with no
+  Stanchion button) it is "Sign in with your work account (…) when asked.".
 - **Step 4** appears only while [passkey sign-in](passkeys.md) is switched on
   (checked at send time). "Soon after you sign in" matters: adding a passkey
   needs a session opened in the last 15 minutes.
@@ -321,7 +321,7 @@ Sent by Example Org with cmail.
 
 ## The help page
 
-`https://<APP_URL>/help/first-sign-in` is a page cmail serves without a cmail
+`https://<APP_URL>/help/first-sign-in` is a page Stanchion serves without a Stanchion
 session, on the instance's own address, with the same steps (Sign in with Microsoft, accept the
 IT policy, Settings > Passkeys > Add passkey), what a passkey is and who to
 contact (the support email). **If Cloudflare Access covers the whole hostname,

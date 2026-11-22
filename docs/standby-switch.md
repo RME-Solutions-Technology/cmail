@@ -1,6 +1,6 @@
 ---
-title: "Switch mail to the cmail standby, and back"
-summary: "How to move a domain's incoming mail to cmail and back, one DNS change each, with scripts."
+title: "Switch mail to the Stanchion standby, and back"
+summary: "How to move a domain's incoming mail to Stanchion and back, one DNS change each, with scripts."
 applies_to: standby
 audience: [operator]
 switch: none
@@ -8,7 +8,7 @@ last_reviewed: 2026-11-16
 related: [standby-probe.md, copy-back.md, credentials.md]
 ---
 
-# Switch mail to the cmail standby, and back
+# Switch mail to the Stanchion standby, and back
 
 **In this article**
 
@@ -30,7 +30,7 @@ related: [standby-probe.md, copy-back.md, credentials.md]
 | You see | Mail goes to | Do this next |
 |---|---|---|
 | `dig +short MX <domain> @1.1.1.1` lists the old provider (for example `*.mail.protection.outlook.com`) | The old provider | Provider down? [Pre-flight](#pre-flight-checklist-before-every-switch), then [How to switch over](#how-to-switch-over). Not down? Nothing. |
-| It lists `*.mx.cloudflare.net` | cmail | Provider back? [How to switch back](#how-to-switch-back) with the **apply** snapshot. Not back? Watch [Verify](#how-to-verify-mail-is-arriving). |
+| It lists `*.mx.cloudflare.net` | Stanchion | Provider back? [How to switch back](#how-to-switch-back) with the **apply** snapshot. Not back? Watch [Verify](#how-to-verify-mail-is-arriving). |
 | A mix of both | Either, unpredictably | Run the switch-back **dry run** with the apply snapshot and follow what it says; it never changes anything without `--apply`. |
 | A script ended with exit code 2, 3 or 4 | Unknown until checked | Read its last lines: they print the snapshot path and the exact command. See [Exit codes](#exit-codes). |
 
@@ -46,9 +46,9 @@ snapshot saved and checked" (`standby-snapshots/<domain>-<time>-switch-apply.jso
 
 ---
 
-When Exchange Online (or another mail provider) stops receiving, cmail can
+When Exchange Online (or another mail provider) stops receiving, Stanchion can
 take the domain's incoming mail: the domain's MX records are pointed at
-Cloudflare Email Routing, whose catch-all hands every message to the cmail
+Cloudflare Email Routing, whose catch-all hands every message to the Stanchion
 email Worker. When the provider is back, the MX records are restored and the
 mail that arrived meanwhile can be copied back
 ([Copy standby mail back into Exchange](copy-back.md)).
@@ -82,7 +82,7 @@ Two scripts do the DNS part, each in one change:
 | Subdomain routing (the [standby address](standby-probe.md) `name@standby.<domain>`) is added from the **apex domain's** Email Routing Settings, with literal rules only; the catch-all exists only on the apex. | [Subdomains](https://developers.cloudflare.com/email-service/configuration/subdomains/) | Documented |
 | A DNS batch (`POST /zones/{id}/dns_records/batch`) runs deletes, patches, puts, posts in **one database transaction: all or nothing**. Propagation to Cloudflare's edge is per record, not atomic. | [Batch record changes](https://developers.cloudflare.com/dns/manage-dns-records/how-to/batch-record-changes/) | Documented |
 | `GET /zones/{id}/email/routing` gives `enabled` and `status` (`ready`, `unconfigured`, `misconfigured`, `misconfigured/locked`, `unlocked`); `GET .../email/routing/dns` lists the DNS records Email Routing needs; `PATCH .../email/routing/dns` unlocks them; `GET .../email/routing/rules/catch_all` reads the catch-all. Zones and routing rules list at most 50 per page. | [Email Routing API](https://developers.cloudflare.com/api/resources/email_routing/), [Zones](https://developers.cloudflare.com/api/resources/zones/methods/list/) | Documented |
-| **The prepared state: Email Routing enabled on the zone, root MX unlocked and pointing at Exchange, the standby subdomain still routing to cmail.** | none | **Not proven until the drill passes** (drill step 9). Cloudflare documents unlocking only as a step on the way out. |
+| **The prepared state: Email Routing enabled on the zone, root MX unlocked and pointing at Exchange, the standby subdomain still routing to Stanchion.** | none | **Not proven until the drill passes** (drill step 9). Cloudflare documents unlocking only as a step on the way out. |
 | **That MX records the switch creates through the DNS API** (the `*.mx.cloudflare.net` hosts and priorities Cloudflare lists) **make Email Routing accept apex mail again**, without calling Cloudflare's Enable. | none | **Not proven until the drill passes** (drill step 11). |
 | What `GET .../email/routing/dns` returns while the apex points elsewhere. If it lists no MX, the switch stops and asks for `--cloudflare-mx` (copied from Email Routing > Settings). | none | Not proven; the drill shows which |
 | What `PATCH .../email/routing/dns` answers when nothing is locked. The switch-back tolerates a refusal and goes on (a still-locked record makes the batch refuse cleanly). | none | Not proven |
@@ -104,8 +104,8 @@ Email Routing.
 ```mermaid
 stateDiagram-v2
   direction LR
-  Normal: Normal\napex MX = Exchange\nEmail Routing on, root records unlocked\ncatch-all = cmail Worker\nstandby subdomain + daily probe
-  Standby: Standby\napex MX = Cloudflare\nall mail to cmail
+  Normal: Normal\napex MX = Exchange\nEmail Routing on, root records unlocked\ncatch-all = Stanchion Worker\nstandby subdomain + daily probe
+  Standby: Standby\napex MX = Cloudflare\nall mail to Stanchion
   Normal --> Standby: switch.mjs --apply\n(one DNS batch)
   Standby --> Normal: switch-back.mjs --apply\n(unlock if locked, one DNS batch)
 ```
@@ -174,7 +174,7 @@ is reported and it goes on, because a record that is still locked only makes
 the batch refuse cleanly. `--skip-unlock` skips the call (after unlocking by
 hand in the dashboard). Then one DNS batch, then it re-reads and compares. It
 never touches routing rules, the catch-all, the standby subdomain, or Email
-Routing itself: the catch-all keeps sending to cmail, so senders that cached
+Routing itself: the catch-all keeps sending to Stanchion, so senders that cached
 Cloudflare's MX are still delivered.
 
 ### Exit codes
@@ -207,7 +207,7 @@ the MX records. It relies on SPF, DKIM and DMARC, which the switch leaves
 exactly as they are unless you ask for `--spf-include` (which only adds a
 term). So people can still send from Outlook if Exchange itself is up. The
 switch warns if the SPF record does not include `spf.protection.outlook.com`.
-cmail's own sending goes through Cloudflare Email Sending on the `cf-bounce`
+Stanchion's own sending goes through Cloudflare Email Sending on the `cf-bounce`
 subdomain ([sending](sending.md)) and is not affected by the switch.
 
 ### Snapshots
@@ -246,7 +246,7 @@ scoped to the one zone (and the one account for D1):
 | Zone > Zone Settings > Edit | switch-back `--apply` when records must be unlocked |
 
 The dashboard calls the write level **Edit**; the API reference calls it
-Write. All of cmail's credentials are listed in
+Write. All of Stanchion's credentials are listed in
 [Credentials and permissions](credentials.md).
 
 A read-only token is enough for every dry run. Give the write permissions
@@ -268,7 +268,7 @@ Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](o
 
 Once per domain, before the standby can be relied on. It sets up Email
 Routing, then runs a **full cycle with the scripts**: switch-back, switch
-`--apply`, an outside test message into cmail, switch-back `--apply`. **Needs
+`--apply`, an outside test message into Stanchion, switch-back `--apply`. **Needs
 the owner's yes and a quiet window** (the quietest hour of the week; allow
 one hour). Two people: one runs it, one sends test mail and watches. If any
 step fails, stop and switch back.
@@ -279,7 +279,7 @@ step fails, stop and switch back.
 |---|---|---|
 | Steps 4 to 5: no MX at the apex | Most senders defer and retry later. RFC 5321 lets a sender fall back to the apex A/AAAA record (often the website), which normally refuses SMTP: also a deferral. Resolvers that cached "no MX" may take up to 30 minutes to see the new records (Cloudflare's guidance). | Seconds, if step 5 follows at once |
 | Steps 5 to 6: Cloudflare MX, no catch-all yet | **Rejected permanently** ("Address does not exist"); the sender gets a bounce and does not retry. | Aim for under 30 seconds |
-| Steps 5 to 10: Cloudflare MX with the catch-all | Delivered into cmail (for people who have a mailbox; others get cmail's neutral reject). Copy-back can move it to Exchange. | Minutes |
+| Steps 5 to 10: Cloudflare MX with the catch-all | Delivered into Stanchion (for people who have a mailbox; others get Stanchion's neutral reject). Copy-back can move it to Exchange. | Minutes |
 
 Before the window, find the domain's typical inbound rate in Exchange
 (Exchange admin center > Mail flow > Message trace, the same hour last week).
@@ -293,8 +293,8 @@ note whether it did.
 
 ### Before the window
 
-1. The domain's DNS is on Cloudflare (full setup). cmail is deployed for
-   `MAIL_DOMAIN`, every person has a cmail mailbox
+1. The domain's DNS is on Cloudflare (full setup). Stanchion is deployed for
+   `MAIL_DOMAIN`, every person has a Stanchion mailbox
    ([Microsoft 365 mailbox sync](m365-sync.md)) and can sign in
    ([staff sign-in](staff-sign-in.md)). The [standby probe](standby-probe.md)
    is deployed and switched on.
@@ -320,12 +320,12 @@ Following Cloudflare's
 5. At once: Compute > Email Service > Email Routing > Onboard Domain: choose
    the domain. Cloudflare adds its MX (locked) and the `cf2024-1` DKIM record.
    Leave SPF alone unless you chose `--spf-include` in step 3.
-6. At once: Routing rules > Catch-all address > Send to a Worker > the cmail
+6. At once: Routing rules > Catch-all address > Send to a Worker > the Stanchion
    email Worker, enabled.
 7. Settings > Subdomains: add `standby.<domain>` and the probe's literal rule
    ([standby probe](standby-probe.md)).
 8. Send a test from an outside mailbox (another provider) to a real person;
-   it should appear in cmail.
+   it should appear in Stanchion.
 
 ### In the window: back to the old provider, then the full scripted cycle
 
@@ -345,12 +345,12 @@ Following Cloudflare's
     TTL, probe GREEN). Note the Email Routing status it shows.
 11. **Switch for real**, exactly as in an outage ([How to switch over](#how-to-switch-over), steps 2
     and 4), then [How to verify mail is arriving](#how-to-verify-mail-is-arriving): an
-    outside test message must appear in cmail and in Email Routing >
+    outside test message must appear in Stanchion and in Email Routing >
     Activity as delivered to the Worker. This proves the apply path.
 12. **Switch back for real** with the apply snapshot from step 11
     ([How to switch back](#how-to-switch-back)), and verify an outside test reaches
     Exchange.
-13. Copy back any real mail that arrived in cmail during the window
+13. Copy back any real mail that arrived in Stanchion during the window
     ([copy-back](copy-back.md)).
 
 After the window, record what you saw (this is the evidence the design
@@ -373,7 +373,7 @@ DNS, and at least twice a year.
       at least the old TTL ago.
 - [ ] **Probe green:** Admin > Standby test is green and the dry run with
       `--probe-d1` says GREEN.
-- [ ] **Sign-in tested:** someone signed in to cmail today the way staff will
+- [ ] **Sign-in tested:** someone signed in to Stanchion today the way staff will
       (Access, and passkeys if Entra is down). If Entra is down, check that
       the people who need mail have a working session or passkey.
 - [ ] **Mailboxes exist:** Admin > Microsoft 365 > Directory sync ran recently without a
@@ -381,7 +381,7 @@ DNS, and at least twice a year.
 - [ ] **Routing ready:** the dry run shows the catch-all sending to the
       Worker and no warnings about literal rules or the standby subdomain.
 - [ ] The snapshot folder is private and has room.
-- [ ] People know to read mail in cmail for now (a message from a channel
+- [ ] People know to read mail in Stanchion for now (a message from a channel
       that does not depend on the failed mail system).
 
 ## How to switch over
@@ -400,8 +400,8 @@ DNS, and at least twice a year.
    checked". You need both to switch back and to copy mail back. Check the
    exit code against [Exit codes](#exit-codes).
 6. In **Admin > Microsoft 365 > Mail feed**, turn **Send colleague mail through
-   Exchange** off, then the **Exchange mirror** off. With cmail holding the
-   mail, colleagues must be delivered straight into cmail, and no journal
+   Exchange** off, then the **Exchange mirror** off. With Stanchion holding the
+   mail, colleagues must be delivered straight into Stanchion, and no journal
    reports come while Exchange is down. Note which were on.
 
 ## How to verify mail is arriving
@@ -409,7 +409,7 @@ DNS, and at least twice a year.
 1. `dig +short MX example.com @1.1.1.1` and `@8.8.8.8` list the Cloudflare
    hosts. Other resolvers may give the old answer until the old TTL passes.
 2. Send from an outside mailbox (another provider) to a real person: the
-   message appears in cmail within a minute or two and in Admin > Mail trace.
+   message appears in Stanchion within a minute or two and in Admin > Mail trace.
 3. Cloudflare dashboard > Email Routing > Activity shows the message
    delivered to the Worker ("Handled"), not dropped or rejected.
 4. Admin > Standby test: Run test now stays green.
@@ -433,11 +433,11 @@ switch back.
 3. Verify: `dig +short MX example.com @1.1.1.1` shows the original hosts; an
    outside test message reaches Exchange (Outlook); Admin > Standby test is
    still green (the standby address keeps working for next time).
-4. Mail that arrived in cmail meanwhile:
-   - It stays in cmail; nothing is moved or deleted, and people can keep
+4. Mail that arrived in Stanchion meanwhile:
+   - It stays in Stanchion; nothing is moved or deleted, and people can keep
      reading it there.
    - Senders with the Cloudflare MX cached, and retries, keep arriving in
-     cmail for a while (up to the MX TTL, longer for retries). The catch-all
+     Stanchion for a while (up to the MX TTL, longer for retries). The catch-all
      still sends to the Worker, so these are not lost.
    - Copy it into Exchange with Admin > Copy back to Exchange
      ([copy-back](copy-back.md)). Use the window the script prints: from the
@@ -449,14 +449,14 @@ switch back.
 
 - **Mail Microsoft already accepted stays with Microsoft.** Messages
   Exchange Online Protection accepted or queued before the switch are
-  delivered by Microsoft when Exchange recovers; they never reach cmail.
+  delivered by Microsoft when Exchange recovers; they never reach Stanchion.
 - **Internal mail does not use MX.** Mail between people in the same
   Microsoft 365 tenant is delivered inside Exchange and is not redirected.
 - **Cloudflare filters differently from Exchange, so some mail Exchange
   would accept bounces while switched.** Email Routing rejects mail that
   passes neither SPF nor DKIM, mail that fails the sender's DMARC policy
   (`p=reject`), mail from IPs on its real-time block lists, and messages over
-  its inbound size limit (25 MiB); cmail then applies its own limits
+  its inbound size limit (25 MiB); Stanchion then applies its own limits
   ([receiving](receiving.md), 10 MiB by default). Senders get a bounce;
   these messages are not queued anywhere
   ([Postmaster](https://developers.cloudflare.com/email-service/reference/postmaster/),
@@ -464,7 +464,7 @@ switch back.
   [Limits](https://developers.cloudflare.com/email-service/platform/limits/)).
 - **Senders that cached the MX.** Until the old TTL passes (300 s if you
   lowered it; some resolvers keep answers longer), some senders still deliver
-  to the old provider after the switch, and to cmail after the switch-back.
+  to the old provider after the switch, and to Stanchion after the switch-back.
 - **Timing is not instant.** Cloudflare applies the batch in one
   transaction, but its edge picks the records up one by one, and senders
   retry deferred mail on their own schedules (minutes to days).

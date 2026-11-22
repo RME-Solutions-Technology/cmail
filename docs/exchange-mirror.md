@@ -1,6 +1,6 @@
 ---
 title: "Exchange mirror (warm standby of Exchange Online)"
-summary: "How to keep cmail a live copy of every Exchange Online mailbox, from Microsoft Graph (recommended) or a journal rule, with no setup per address."
+summary: "How to keep Stanchion a live copy of every Exchange Online mailbox, from Microsoft Graph (recommended) or a journal rule, with no setup per address."
 applies_to: standby
 audience: [operator, manager]
 switch: "Admin > Microsoft 365 > Mail feed"
@@ -25,26 +25,26 @@ What a live report carries is in
 what is still unproven is in [What is not verified](#what-is-not-verified).
 The code paths are covered by tests (see [How to test](#how-to-test)).
 
-cmail's main use is primary email for your organisation. This feature is
+Stanchion's main use is primary email for your organisation. This feature is
 for the other case: an organisation that stays on Exchange Online and wants
-cmail as a live copy ("warm standby") of every mailbox, so that if Exchange
-fails, people already have their recent mail in cmail. It needs **no setup
+Stanchion as a live copy ("warm standby") of every mailbox, so that if Exchange
+fails, people already have their recent mail in Stanchion. It needs **no setup
 per address**. The Graph source needs one Exchange role assignment and one
-cmail switch; the journal source one Exchange journal rule, one Cloudflare
-Email Routing rule and two cmail switches. Both cover a tenant of any size
+Stanchion switch; the journal source one Exchange journal rule, one Cloudflare
+Email Routing rule and two Stanchion switches. Both cover a tenant of any size
 (built for 200+ seats and 500+ addresses).
 
 > **If Exchange is down, switch as soon as you can:** until you switch, new
 > mail is not received here either (the mirror reads from Microsoft 365).
 > Mail sent to you during an Exchange outage is held and retried by the
 > sender's server for a few days, so it arrives once the switch is done.
-> See [Switch mail to the cmail standby](standby-switch.md).
+> See [Switch mail to the Stanchion standby](standby-switch.md).
 
 The diagram shows the journal source; the Graph source has
 [its own](#how-it-works).
 
 ```
- Exchange Online                     Cloudflare Email Routing       cmail email Worker
+ Exchange Online                     Cloudflare Email Routing       Stanchion email Worker
  ───────────────                     ────────────────────────       ──────────────────────────────────
  journal rule: all messages  ──►     journal-<token>@<domain>  ──►  exact address? switch on?
  (envelope journaling: one           one literal rule → Worker      trusted report? (header, tenant,
@@ -86,7 +86,7 @@ paths are covered by tests against a fake Microsoft Graph (see
 > mail is not received here either (the mirror reads from Microsoft 365).
 > Mail sent to you during an Exchange outage is held and retried by the
 > sender's server for a few days, so it arrives once the switch is done.
-> See [Switch mail to the cmail standby](standby-switch.md).
+> See [Switch mail to the Stanchion standby](standby-switch.md).
 
 ### Why not journaling over Cloudflare Email Routing
 
@@ -98,15 +98,15 @@ receives and refuses mail whose domain publishes `p=reject` and fails
 this is not configurable. A journal report is sent by Exchange, not by the
 original sender, so it always fails that sender's DMARC. Every message from a
 sender with `p=reject` (large mail providers, social networks, banks, many
-ISPs) is therefore refused before cmail sees it, and the refusals show up in
+ISPs) is therefore refused before Stanchion sees it, and the refusals show up in
 those senders' DMARC aggregate reports. In practice that is a large share of
-inbound mail. The journal source stays in cmail for other routes, but is
+inbound mail. The journal source stays in Stanchion for other routes, but is
 **not recommended with Cloudflare Email Routing**.
 
 ### How it works
 
 ```
- Microsoft 365 (Exchange Online)          cmail email Worker (cron, every 5 minutes)
+ Microsoft 365 (Exchange Online)          Stanchion email Worker (cron, every 5 minutes)
  ───────────────────────────────          ─────────────────────────────────────────────
  each linked mailbox:                ◄──  switch on? lease, round robin over mailboxes
    Inbox, Sent Items, Archive             GET .../mailFolders/{folder}/messages/delta
@@ -115,7 +115,7 @@ inbound mail. The journal source stays in cmail for other routes, but is
                                           file through the mirror's own filing code
 ```
 
-- **Which mailboxes:** every active cmail mailbox the
+- **Which mailboxes:** every active Stanchion mailbox the
   [Microsoft 365 sync](m365-sync.md) linked to a Microsoft 365 object: each
   person's own mailbox and each linked shared mailbox, on any of the
   organisation's domains ([Multiple mail domains](multi-domain.md)). Nothing
@@ -136,7 +136,7 @@ inbound mail. The journal source stays in cmail for other routes, but is
   up in the mailbox. An Inbox copy has the same id the normal inbound path
   and the journal source give it (mailbox + Message-ID), and a Sent copy the
   same id as the journal source's Sent copy; a Sent copy is also skipped when
-  the mailbox already has a Sent message with that Message-ID (mail cmail sent
+  the mailbox already has a Sent message with that Message-ID (mail Stanchion sent
   itself, or [copied back](copy-back.md) into Exchange). So the Graph and
   journal sources can be on together during a change-over: each message is
   filed once, and a replayed delta page files nothing new.
@@ -151,9 +151,9 @@ inbound mail. The journal source stays in cmail for other routes, but is
 - **Colleagues and Focused Inbox:** mail a user of this tenant sent carries
   Exchange's `X-MS-Exchange-CrossTenant-AuthAs: Internal` and this tenant's
   id, as on the journal path, so Focused Inbox treats the sender as a
-  colleague. Internet mail does not. cmail's own colleague mail sent through
+  colleague. Internet mail does not. Stanchion's own colleague mail sent through
   Exchange is matched as on the journal path
-  ([Mail sent from cmail to colleagues](#mail-sent-from-cmail-to-colleagues)).
+  ([Mail sent from Stanchion to colleagues](#mail-sent-from-stanchion-to-colleagues)).
 - **First pull and cap:** a folder seen for the first time is read from now
   minus `M365_GRAPH_MIRROR_LOOKBACK_HOURS` (default 24), newest first, using
   the one filter and the one order message delta supports
@@ -211,7 +211,7 @@ app's IDs from **Entra > Enterprise applications** (not App registrations):
 
 ```powershell
 # Pointer to the sync app's service principal.
-New-ServicePrincipal -AppId <sync-app-application-id> -ObjectId <sync-app-service-principal-object-id> -DisplayName "cmail Microsoft 365 sync"
+New-ServicePrincipal -AppId <sync-app-application-id> -ObjectId <sync-app-service-principal-object-id> -DisplayName "Stanchion Microsoft 365 sync"
 
 # Scope, option A (recommended; the setup in use on a live tenant): every user and shared mailbox, rooms and equipment left out.
 New-ManagementScope -Name "cmail mirror mailboxes" -RecipientRestrictionFilter "RecipientTypeDetails -eq 'UserMailbox' -or RecipientTypeDetails -eq 'SharedMailbox'"
@@ -325,10 +325,10 @@ the moment the import starts), and three steps.
      million, 1 million free) are small next to storage and are not included.
    - **Time**, "about": the import files at most 250 messages per scheduled
      run, one run every 5 minutes (3,000 an hour), so 100,000 messages is about
-     33 hours. Messages already in cmail are counted faster than that.
+     33 hours. Messages already in Stanchion are counted faster than that.
 2. **Warning and confirmation.** Before Start the page says plainly that a big
    import uses storage that costs money on Cloudflare, can take hours or days,
-   runs in the background and can be stopped, and that nothing already in cmail
+   runs in the background and can be stopped, and that nothing already in Stanchion
    is changed or duplicated. Start needs the tick box and the exact numbers of
    the estimate on the page; it is refused for an estimate that is still
    running, for numbers that are not the current estimate, and when the storage
@@ -362,7 +362,7 @@ How it behaves:
   live mirror's delta links.
 - **Nothing duplicated.** Each message's Message-ID is looked up in the
   mailbox before anything is downloaded, exactly as for the live pull: mail
-  already in cmail (from the live mirror, the journal source, normal delivery
+  already in Stanchion (from the live mirror, the journal source, normal delivery
   or an earlier import) is counted as "already here", never downloaded or
   filed twice. Stopping and starting again is safe.
 - **Filed like the mirror.** Copies are filed as read, with the time Exchange
@@ -393,7 +393,7 @@ How it behaves:
   the database meanwhile.
 - **Mailboxes linked while an import runs** with an id sorting before the one
   being worked are not part of that import; run another import for them
-  (mail already in cmail is not filed twice).
+  (mail already in Stanchion is not filed twice).
 
 ## Journal source (not recommended with Cloudflare Email Routing)
 
@@ -435,26 +435,26 @@ Alternatives Microsoft offers, and why they were not used:
 
 | Option | Why not |
 |---|---|
-| Mail flow rule "Bcc the message to" | In Exchange Online it cannot target a distribution group ([mail flow rule actions](https://learn.microsoft.com/en-us/exchange/security-and-compliance/mail-flow-rules/mail-flow-rule-actions)). The copy is a normal outbound message with the headers of a delivery, not an envelope: it does not say who got the message by Bcc or through a group, so cmail could not file it per recipient. It also goes through outbound spam policy and sending limits like any mail. |
+| Mail flow rule "Bcc the message to" | In Exchange Online it cannot target a distribution group ([mail flow rule actions](https://learn.microsoft.com/en-us/exchange/security-and-compliance/mail-flow-rules/mail-flow-rule-actions)). The copy is a normal outbound message with the headers of a delivery, not an envelope: it does not say who got the message by Bcc or through a group, so Stanchion could not file it per recipient. It also goes through outbound spam policy and sending limits like any mail. |
 | Forwarding per mailbox | Setup per address (the opposite of the goal), and automatic external forwarding is blocked by Exchange Online's default outbound spam policy. |
 | Microsoft 365 retention (Purview) | Keeps data inside Microsoft 365. Microsoft recommends it where possible ([Journaling](https://learn.microsoft.com/en-us/exchange/security-and-compliance/journaling/journaling)), but it does not help when Exchange Online itself is down. |
-| Graph mailbox copy (cmail's copy-back in reverse) | Needs `Mail.Read` on every mailbox, polling per mailbox and much more API traffic; journaling pushes each message once. **Since built as the [Graph source](#graph-source-recommended)**, because journal reports over Cloudflare Email Routing lose mail from `p=reject` senders. |
+| Graph mailbox copy (Stanchion's copy-back in reverse) | Needs `Mail.Read` on every mailbox, polling per mailbox and much more API traffic; journaling pushes each message once. **Since built as the [Graph source](#graph-source-recommended)**, because journal reports over Cloudflare Email Routing lose mail from `p=reject` senders. |
 
 Microsoft calls journaling "an older feature from Exchange". It is still
 documented and supported for exactly this use: a copy outside Exchange.
 
 ## What is and is not mirrored
 
-Mirrored, for every mailbox cmail knows (by primary address or imported
+Mirrored, for every mailbox Stanchion knows (by primary address or imported
 alias):
 
 - Mail received from the internet and from inside the organisation, into
   each recipient's Inbox. Bcc recipients and members of expanded
   distribution groups get their copy.
-- Mail to shared mailboxes that cmail has (for example from the Microsoft
+- Mail to shared mailboxes that Stanchion has (for example from the Microsoft
   365 sync), as for people.
 - Optionally (off by default), the sender's copy into the sender's **Sent**
-  folder, when the sender is a cmail user who sent through Exchange (see
+  folder, when the sender is a Stanchion user who sent through Exchange (see
   [How mail is filed](#how-mail-is-filed)).
 
 Not mirrored:
@@ -463,15 +463,15 @@ Not mirrored:
   is released, per Microsoft).
 - Folders, read state, flags, deletions and moves people make in Outlook:
   a journal report is sent once, when the message passes through Exchange.
-  Mirrored copies are filed as **read**, so a switch to cmail does not show
+  Mirrored copies are filed as **read**, so a switch to Stanchion does not show
   months of mail as unread.
 - Calendar items as calendar entries (an invitation is filed as a message
   only), contacts and drafts.
-- Recipients with no active cmail mailbox: they are counted as "unmatched"
+- Recipients with no active Stanchion mailbox: they are counted as "unmatched"
   and ignored. So is a mailbox left on a domain that is no longer one of the
   organisation's domains ([Multiple mail domains](multi-domain.md)); the
   day's latest problem then reads `unmatched_domain`.
-- Exchange's own spam verdict. A cmail organisation-wide sender **block**
+- Exchange's own spam verdict. A Stanchion organisation-wide sender **block**
   rule still files the copy to Spam, as on the normal path.
 - Messages larger than the limits in [Size limits](#size-limits).
 - Mail sent with encryption from outside the organisation stays encrypted.
@@ -481,15 +481,15 @@ Not mirrored:
 
 Nothing a mirrored copy does can send mail: no inbox rules run on it, no
 forwarding, no auto-reply, no bounce, no read receipt, and no new-mail
-notification (people are still reading in Outlook), except for cmail's own
+notification (people are still reading in Outlook), except for Stanchion's own
 colleague mail coming back through Exchange
-([below](#mail-sent-from-cmail-to-colleagues)). The only SMTP answer
-cmail ever gives is Cloudflare's own refusal of a report that fails the
+([below](#mail-sent-from-stanchion-to-colleagues)). The only SMTP answer
+Stanchion ever gives is Cloudflare's own refusal of a report that fails the
 checks below.
 
-### Mail sent from cmail to colleagues
+### Mail sent from Stanchion to colleagues
 
-By default, mail from cmail to a colleague who also has a cmail mailbox is
+By default, mail from Stanchion to a colleague who also has a Stanchion mailbox is
 filed straight into that mailbox, as on any instance. While Exchange holds
 the organisation's mail domains ([Multiple mail domains](multi-domain.md)),
 that copy never reaches Exchange, so the colleague does not see it in Outlook.
@@ -498,9 +498,9 @@ that copy never reaches Exchange, so the colleague does not see it in Outlook.
 default**, acts only while the mirror is on) changes that: recipients on any
 of the organisation's mail domains are sent through the outbound provider like any external
 address. Exchange delivers the message to Outlook, the journal report comes
-back, and the mirror files the cmail copy once (the copy's id comes from the
+back, and the mirror files the Stanchion copy once (the copy's id comes from the
 Message-ID, so a repeated report or a second delivery path files nothing
-new). The sender's own Sent copy is stored by cmail as usual; the mirror adds
+new). The sender's own Sent copy is stored by Stanchion as usual; the mirror adds
 no second one, because a message from the provider reaches Exchange as
 internet mail and so never carries the internal-submission proof a mirrored
 Sent copy needs.
@@ -508,14 +508,14 @@ Sent copy needs.
 When the colleague's copy matches a message this instance sent, the mirror
 treats it as proven internal mail: it is filed **unread** with a new-mail
 notification, and Focused Inbox treats the sender as a colleague. It matches
-when the sender's Sent copy in cmail, from the last 2 days, has the same
+when the sender's Sent copy in Stanchion, from the last 2 days, has the same
 Message-ID (as the provider reported it: the Cloudflare REST route and
 Postmark do), the same subject, and the colleague in To or Cc, and Exchange
 did not record a DMARC or composite-authentication failure on it. Anything
 else (a Bcc'd colleague, a provider that does not report the Message-ID, an
 older or altered message) is filed like any mirrored copy, as read with no
 notification. A forged copy would need the Message-ID and subject and to
-reach the journal before the real one, which arrives within minutes. cmail
+reach the journal before the real one, which arrives within minutes. Stanchion
 inbox rules never run on mirrored copies.
 
 With the switch on:
@@ -549,15 +549,15 @@ mail claiming to be from inside. Check, with Exchange Online PowerShell:
 Before relying on it, on the live tenant:
 
 1. Turn **Send colleague mail through Exchange** on.
-2. From cmail, send one message from a cmail user to one colleague on the
+2. From Stanchion, send one message from a Stanchion user to one colleague on the
    mail domain (both with Exchange mailboxes).
 3. In the colleague's Outlook: it arrives in the Inbox (not Junk or
    quarantine) within a few minutes, and shows as you expect (sender name,
    any External tag). Open the message headers and check the
    authentication results above.
-4. In cmail: Admin > Mail trace shows it accepted by the provider and no
+4. In Stanchion: Admin > Mail trace shows it accepted by the provider and no
    bounce within an hour; Admin > Microsoft 365 > Mail feed counts one more filed copy
-   and no duplicate in the colleague's cmail Inbox.
+   and no duplicate in the colleague's Stanchion Inbox.
 5. If any step fails, turn the switch off. Nothing else changes.
 ## How a report is trusted
 
@@ -590,7 +590,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
    Cloudflare's 25 MiB). Larger reports are refused (`too_large`) unread.
 1. **The exact journal address.** It arrived at `M365_JOURNAL_ADDRESS`,
    whose local part is `journal-` followed by a random token of 32 to 64
-   lower-case letters and digits. Only Exchange and the cmail settings know
+   lower-case letters and digits. Only Exchange and the Stanchion settings know
    it. Generate the token with `openssl rand -hex 16` (32 characters).
 2. **The manager switch is on** (Admin > Microsoft 365 > Mail feed). Off: the address
    is treated like any unknown address (refused), nothing is parsed.
@@ -625,9 +625,9 @@ a day, the daily count is always exact). It never reaches a mailbox.
      limit:** a DKIM pass proves the domain signed *some* message, not this
      report; anyone with the token can resend any message that domain signed
      (a newsletter, a reply) to the journal address. **Do not leave the
-     default (`MAIL_DOMAIN`)** once you know what reports carry: cmail's own
+     default (`MAIL_DOMAIN`)** once you know what reports carry: Stanchion's own
      Cloudflare Email Sending also signs as `MAIL_DOMAIN`, so every message
-     cmail sends would pass. Or
+     Stanchion sends would pass. Or
    - **b.** an **SPF pass** that Cloudflare's record says was checked for the
      envelope MAIL FROM (`smtp.mailfrom`; the SMTP envelope must agree; no
      fallback to the envelope alone) whose domain is `M365_JOURNAL_NDR_DOMAIN`,
@@ -671,7 +671,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
 - Each recipient line (`To`, `Cc`, `Bcc`, `Recipient`, any case, quoted
   display names allowed; `Expanded:` and `Forwarded:` annotations are read
   and the line's own address is the mailbox that got the message) is mapped
-  to an active cmail mailbox by primary address, then by imported alias
+  to an active Stanchion mailbox by primary address, then by imported alias
   (only while the alias import is on and fresh, see [Aliases](#aliases)).
   Each mailbox gets the message once, even if it appears on several lines or
   through several addresses.
@@ -684,7 +684,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
 - **Sent copies (off by default).** With `M365_JOURNAL_MIRROR_SENT =
   "true"` (which needs `M365_TENANT_ID`), a copy goes into the sender's Sent
   folder (as read, with the Bcc list from the envelope, which only the
-  sender's copy shows) only when **all** hold: the envelope sender is a cmail
+  sender's copy shows) only when **all** hold: the envelope sender is a Stanchion
   mailbox; Exchange knew the addressing (`To`/`Cc`/`Bcc` lines, which
   Exchange writes for authenticated submissions; internet mail gets
   `Recipient` lines); the sender is the original's From or Sender; and the
@@ -697,7 +697,7 @@ a day, the daily count is always exact). It never reaches a mailbox.
   folder. Why mirror Sent at all: after a switch, people need their recent
   sent mail to follow up and to keep reply threads together. It stays off
   until the first live test shows real originals carry those headers.
-- Mail between two cmail users gives both copies: Inbox for the recipient,
+- Mail between two Stanchion users gives both copies: Inbox for the recipient,
   Sent for the sender.
 - Each copy is stored separately (its own body and attachment objects), so
   deleting it in one mailbox never touches another.
@@ -732,7 +732,7 @@ off by default) adds them:
 - Only `smtp:` addresses on the organisation's mail domains (`MAIL_DOMAIN`,
   plus the tenant's verified domains the sync discovered:
   [Multiple mail domains](multi-domain.md)), of objects the sync has linked
-  to a cmail mailbox (a person's own mailbox, or a shared mailbox), are kept.
+  to a Stanchion mailbox (a person's own mailbox, or a shared mailbox), are kept.
   `*.onmicrosoft.com` addresses are never kept.
 - An alias is **never** another mailbox's own address: such an address is
   refused and counted. An address claimed by two objects is refused for
@@ -756,8 +756,8 @@ off by default) adds them:
   says so, and the day's latest problem reads `aliases_stale`.
 - Only the Exchange mirror reads aliases. Normal inbound mail to an alias is
   still refused as an unknown address, so turning this on changes nothing for
-  cmail's own mail. (Accepting aliases on the normal path, for after a switch
-  to cmail, is a separate change.)
+  Stanchion's own mail. (Accepting aliases on the normal path, for after a switch
+  to Stanchion, is a separate change.)
 - Turning the import off stops the mirror using aliases at once; the rows
   stay until the import runs again.
 
@@ -765,10 +765,10 @@ off by default) adds them:
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#10-exchange-mirror-optional), step 10, with `scripts/onboarding/exchange-mirror.ps1` for the Exchange side.
 
-Order matters: cmail first, then Cloudflare, then Exchange. Every step that
+Order matters: Stanchion first, then Cloudflare, then Exchange. Every step that
 changes a live system needs the owner's yes.
 
-### 1. cmail
+### 1. Stanchion
 
 1. Apply migration `0027` (`pnpm db:migrate`). It adds three tables and
    four triggers and changes no existing row. Two triggers guard
@@ -790,7 +790,7 @@ changes a live system needs the owner's yes.
    |---|---|
    | `M365_JOURNAL_ADDRESS` | `journal-<32+ random lower-case hex>@<journal domain>`. Store it as a secret: `wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml` |
    | `M365_TENANT_ID` | The directory (tenant) ID (shared with the sync). Turns on the tenant check. |
-   | `M365_JOURNAL_SENDER_DOMAINS` | Domains whose DKIM signature on a report is accepted (check 5a). Set it to exactly what the diagnostic shows real reports are signed with, typically `<tenant>.onmicrosoft.com`. The default, `MAIL_DOMAIN`, also matches cmail's own outgoing DKIM: replace it once you know. |
+   | `M365_JOURNAL_SENDER_DOMAINS` | Domains whose DKIM signature on a report is accepted (check 5a). Set it to exactly what the diagnostic shows real reports are signed with, typically `<tenant>.onmicrosoft.com`. The default, `MAIL_DOMAIN`, also matches Stanchion's own outgoing DKIM: replace it once you know. |
    | `M365_JOURNAL_NDR_DOMAIN` | The domain of the "undeliverable journal reports" address (check 5b). Use a **dedicated** domain or subdomain used for nothing else (for example `journal-ndr.example.com`), whose SPF record lists only `include:spf.protection.outlook.com` plus the include Cloudflare Email Routing needs to receive its NDRs (`include:_spf.mx.cloudflare.net`), so no other system can pass SPF for it. Optional. |
    | `INBOUND_AUTHSERV_ID` | `mx.cloudflare.net` |
    | `MAIL_DOMAIN` | As for the web app. |
@@ -805,7 +805,7 @@ changes a live system needs the owner's yes.
 
 In the Cloudflare dashboard, on the journal domain: **Compute > Email Service
 > Email Routing**, add a routing rule for the custom address
-`journal-<token>` with the action **Send to a Worker** and the cmail email
+`journal-<token>` with the action **Send to a Worker** and the Stanchion email
 Worker. One rule; nothing per mailbox
 ([Email Routing addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/)).
 
@@ -815,7 +815,7 @@ Needs the Exchange Online "Journaling" permission
 ([feature permissions](https://learn.microsoft.com/en-us/exchange/permissions-exo/feature-permissions)).
 
 1. **Undeliverable journal reports.** Choose a mailbox **outside Exchange
-   Online** that a person reads, for example a cmail shared mailbox reached
+   Online** that a person reads, for example a Stanchion shared mailbox reached
    at its standby address, or another provider. Microsoft requires it ("the
    alternate journaling mailbox can't be an Exchange Online mailbox") and
    sends it every report that cannot be delivered, with the report attached
@@ -833,14 +833,14 @@ Needs the Exchange Online "Journaling" permission
    reports to** (this location comes from archiving vendors' guides; Microsoft
    documents only the PowerShell above).
 
-2. **Keep the original as MIME, not TNEF.** cmail reads the original only as
+2. **Keep the original as MIME, not TNEF.** Stanchion reads the original only as
    an attached `message/rfc822`. Make sure Exchange never sends TNEF
    (`winmail.dat`) to the journal domain
    ([New-RemoteDomain](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/new-remotedomain)):
 
    ```powershell
-   New-RemoteDomain -Name "cmail journal" -DomainName journal.example.net
-   Set-RemoteDomain -Identity "cmail journal" -TNEFEnabled $false
+   New-RemoteDomain -Name "Stanchion journal" -DomainName journal.example.net
+   Set-RemoteDomain -Identity "Stanchion journal" -TNEFEnabled $false
    ```
 
    A report that arrives as TNEF is refused with reason `tnef`.
@@ -869,7 +869,7 @@ Needs the Exchange Online "Journaling" permission
    New-JournalRule -Name "cmail mirror" -JournalEmailAddress journal-<token>@journal.example.net -Scope Global -Enabled $false
    ```
 
-   Create it **disabled**, turn the mirror on in cmail (step 4), then enable
+   Create it **disabled**, turn the mirror on in Stanchion (step 4), then enable
    it: `Enable-JournalRule -Identity "cmail mirror"`.
 
 ### 4. Turn it on and check
@@ -940,7 +940,7 @@ Turning either switch on or off is audited (`org.exchange_mirror_toggled`,
   journal report is the original plus a small envelope, so originals close to
   25 MiB are refused by Cloudflare and Exchange sends the report to the
   undeliverable-reports mailbox.
-- **cmail:** the original must fit `MAX_INBOUND_BYTES` (default 10 MiB, at
+- **Stanchion:** the original must fit `MAX_INBOUND_BYTES` (default 10 MiB, at
   most 25 MiB), attachments together at most 15 MiB, and the normal
   attachment count and decoded body limits. Bigger messages are skipped and
   counted.
@@ -950,8 +950,8 @@ Turning either switch on or off is audited (`org.exchange_mirror_toggled`,
 
 ## Privacy
 
-The mirror copies every message of every journaled user into cmail. That is
-its purpose, and it means cmail holds the same mail as Exchange: apply the
+The mirror copies every message of every journaled user into Stanchion. That is
+its purpose, and it means Stanchion holds the same mail as Exchange: apply the
 same access rules, retention and data-handling notices to it
 ([privacy-and-data-handling.md](privacy-and-data-handling.md)). Tell staff the
 standby holds a copy of their mail. Admin, the audit log, the trace and logs
@@ -969,7 +969,7 @@ the old address refuses them, and retries.
 
 1. Generate a new token: `openssl rand -hex 16`. The new address is
    `journal-<new token>@<journal domain>`.
-2. Cloudflare: add a routing rule for the new address (Send to the cmail
+2. Cloudflare: add a routing rule for the new address (Send to the Stanchion
    email Worker). Keep the old rule for now.
 3. Worker: `wrangler secret put M365_JOURNAL_ADDRESS --config apps/email-worker/wrangler.toml`
    with the new address. From now on the old address is refused like any
@@ -989,12 +989,12 @@ the old address refuses them, and retries.
 1. Exchange: `Disable-JournalRule -Identity "cmail mirror"` (or Purview >
    Journal rules > Disable). Reports stop. Remove it later with
    `Remove-JournalRule -Identity "cmail mirror"`.
-2. cmail: Admin > Microsoft 365 > Mail feed > Journal source (legacy) > **Turn Exchange mirror off**. Any report
+2. Stanchion: Admin > Microsoft 365 > Mail feed > Journal source (legacy) > **Turn Exchange mirror off**. Any report
    still in flight is refused like an unknown address (Exchange sends it to
    the undeliverable-reports mailbox).
 3. Optional: Cloudflare: delete the `journal-<token>` routing rule; unset
    `M365_JOURNAL_ADDRESS`.
-4. Mirrored mail stays in cmail; nothing is deleted automatically. A manager
+4. Mirrored mail stays in Stanchion; nothing is deleted automatically. A manager
    can remove it like any other mail.
 5. The alias import: turn it off. To remove imported aliases, delete the rows
    in `mailbox_aliases` (they are used only by the mirror).
@@ -1045,7 +1045,7 @@ real tenant:
   neither SPF nor DKIM
   ([postmaster](https://developers.cloudflare.com/email-service/reference/postmaster/#mail-authentication-requirement)).
   An unsigned report with an empty envelope sender might be refused before
-  cmail sees it.
+  Stanchion sees it.
 - **Report layout.** The field-level format is documented only for
   Exchange 2007; the attachment type (`message/rfc822`), the order Sender,
   Subject, Message-Id, then recipients, and the `Expanded:` line format are
@@ -1092,7 +1092,7 @@ run the real filing code on a real SQLite database with every migration,
 against a fake Microsoft Graph: Inbox, Archive and Sent copies per linked
 mailbox; replays and read-state changes counted without a download; a
 message filed once whichever source brings it first; no second Sent copy of
-cmail's own mail; Focused Inbox colleague proof; size, Message-ID and
+Stanchion's own mail; Focused Inbox colleague proof; size, Message-ID and
 attachment limits; the first-pull window and cap; 429 per
 mailbox and while reading a message; 410 from the watermark; permission
 missing and a mailbox outside the scope; rejected credentials; the budget

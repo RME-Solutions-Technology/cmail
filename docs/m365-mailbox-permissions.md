@@ -1,6 +1,6 @@
 ---
 title: "Shared mailbox access from Exchange Online"
-summary: "How to copy Full Access and Send As on shared mailboxes from Exchange Online into cmail each day."
+summary: "How to copy Full Access and Send As on shared mailboxes from Exchange Online into Stanchion each day."
 applies_to: standby
 audience: [operator, manager]
 switch: "Admin > Microsoft 365 > Shared mailbox access"
@@ -11,7 +11,7 @@ related: [m365-sync.md, credentials.md, onboarding-microsoft-365.md]
 # Shared mailbox access from Exchange Online
 
 Copies **Full Access** and **Send As** on Exchange Online shared mailboxes into
-cmail's shared mailbox assignments, automatically, once a day.
+Stanchion's shared mailbox assignments, automatically, once a day.
 
 **Status: built, off by default. On one live tenant the collector (in a
 deployed Cloudflare Container) and a dry run are verified; live mode has not
@@ -19,7 +19,7 @@ yet run.** Everything below that says "unverified" must
 be checked in a test tenant (never a client's) before the first live use.
 
 It is an optional add-on to the [Microsoft 365 mailbox sync](m365-sync.md):
-that sync creates the cmail accounts and shared mailboxes; this feature then
+that sync creates the Stanchion accounts and shared mailboxes; this feature then
 gives people access to those shared mailboxes the way Exchange does.
 
 **In this article**
@@ -27,7 +27,7 @@ gives people access to those shared mailboxes the way Exchange does.
 - [In short](#in-short)
 - [Why a container](#why-a-container)
 - [Architecture](#architecture)
-- [Mapping: Exchange to cmail](#mapping-exchange-to-cmail)
+- [Mapping: Exchange to Stanchion](#mapping-exchange-to-stanchion)
 - [Safety rules](#safety-rules)
 - [Manager accounts](#manager-accounts)
 - [Troubleshoot shared mailbox access](#troubleshoot-shared-mailbox-access)
@@ -98,7 +98,7 @@ email Worker, cron */15
   │             → store the snapshot in Durable Object storage, destroy the container
   ├─ next tick: GET /result → strict validation (snapshot.ts)
   ├─ groups: expand group trustees with Graph transitiveMembers (groups.ts)
-  ├─ diff: Exchange rights vs cmail assignments and the ledger (diff.ts)
+  ├─ diff: Exchange rights vs Stanchion assignments and the ledger (diff.ts)
   ├─ brake check → apply in bounded chunks with audit rows (apply.ts)
   └─ status row m365_perm_state → Admin > Microsoft 365 > Shared mailbox access
 ```
@@ -123,25 +123,25 @@ above); one that needs more fails safely (`pass_too_long`, nothing changed).
 Passes start at most every `M365_PERMS_INTERVAL_HOURS` (6 to 24), so at most
 4 scheduled passes a day, and **Sync access now** starts one at most once an
 hour.
-## Mapping: Exchange to cmail
+## Mapping: Exchange to Stanchion
 
 Exchange rights are independent: Full Access does not allow sending, Send As
 does not allow reading
 ([Manage permissions for recipients](https://learn.microsoft.com/en-us/exchange/recipients-in-exchange-online/manage-permissions-for-recipients)).
-cmail levels include each other: Read < Send as (read + send) < Full (send +
+Stanchion levels include each other: Read < Send as (read + send) < Full (send +
 folders, archive, delete). The rule is **never more than Exchange grants**.
 
-| Exchange (direct and group grants combined) | cmail level | Shown as |
+| Exchange (direct and group grants combined) | Stanchion level | Shown as |
 |---|---|---|
 | Full Access + Send As | Full | `add`, `upgrade` |
 | Full Access only | Read (or Full with `M365_PERMS_FULLACCESS_IMPLIES_SEND = "true"`) | `add` |
-| Send As only | nothing (cmail Send as would add reading) | `not_representable` |
-| Send on Behalf | not read (cmail has no on-behalf sending) | — |
+| Send As only | nothing (Stanchion Send as would add reading) | `not_representable` |
+| Send on Behalf | not read (Stanchion has no on-behalf sending) | — |
 | Inherited, `NT AUTHORITY\…`, bare SIDs (deleted accounts) | skipped | snapshot `skipped` counts |
-| Any Deny entry on the mailbox (Full Access or Send As) | the whole mailbox is left as it is: no additions, no removals (Exchange applies Deny over group grants; cmail cannot model that) | `deny_entries`, `mailboxNotCovered` |
+| Any Deny entry on the mailbox (Full Access or Send As) | the whole mailbox is left as it is: no additions, no removals (Exchange applies Deny over group grants; Stanchion cannot model that) | `deny_entries`, `mailboxNotCovered` |
 | An address the Worker would refuse (for example non-ASCII) | that mailbox is left out of the snapshot and left as it is | `mailbox_address_unsupported` |
 | A room, equipment or shared mailbox as trustee, a contact | skipped | `otherKind` |
-| A trustee not linked to a cmail person by the Microsoft 365 sync | skipped | `trusteeNotLinked` |
+| A trustee not linked to a Stanchion person by the Microsoft 365 sync | skipped | `trusteeNotLinked` |
 | A manager account (never linked by the Microsoft 365 sync) | skipped, unless **Include manager accounts** is on: see [Manager accounts](#manager-accounts) | `trusteeNotLinked` or `managerMatched` |
 | A paused, offboarded or out-of-scope person | no new or raised access (existing sync-made access can still be lowered or removed when Exchange takes it away) | `account_not_active` |
 | A person whose Microsoft 365 link is gone | nothing removed (a lost link is not Exchange taking access away) | `unlinkedKept` (`account_not_linked`) |
@@ -234,16 +234,16 @@ time, so a removed assignment takes effect on the next request.
 ## Manager accounts
 
 The Microsoft 365 sync never adopts or links a manager account (it reports
-`manager_not_adopted`), so the person who bootstrapped cmail has no link, and
+`manager_not_adopted`), so the person who bootstrapped Stanchion has no link, and
 every Exchange grant to them is skipped as `trusteeNotLinked`: they can have
-Full Access to every shared mailbox in Exchange and see none in cmail.
+Full Access to every shared mailbox in Exchange and see none in Stanchion.
 
 **Include manager accounts** (Admin > Microsoft 365 > Shared mailbox access, org setting
 `m365_perms_include_managers`) closes that gap. It is **off by default**; off,
 no manager is looked up (no Graph call, no extra write). On, once per round,
 before the diff:
 
-1. cmail lists active manager accounts with no Microsoft 365 link and looks
+1. Stanchion lists active manager accounts with no Microsoft 365 link and looks
    up at most 20 a round. With more, each round starts after the last one
    looked up, so every manager is reached in turn; the rest are reported as
    `too_many_managers`. Lookups also stop when the run's time or database
@@ -256,10 +256,10 @@ before the diff:
    bound to this tenant, so any answer is a user of this tenant. A throttled,
    refused or failed lookup stops the lookups for this round.
 3. The manager is matched only when **exactly one** user comes back, its
-   `mail` equals the manager's cmail address exactly (case aside), its
+   `mail` equals the manager's Stanchion address exactly (case aside), its
    `proxyAddresses` hold that address as the **primary** entry
    (`SMTP:<address>`, capital `SMTP`), it is a `Member` (not a guest), its
-   account is enabled, no cmail account or shared mailbox is already linked
+   account is enabled, no Stanchion account or shared mailbox is already linked
    to that user, and no other manager has the same address or matched the
    same user. Anything else leaves the manager unmatched this round, with a
    reason code.
@@ -290,7 +290,7 @@ same rule as for a person whose link is gone, reported as
 matched manager is found again, the normal rules for matched managers apply.
 An active manager that a rotating round did not look up is not reported.
 
-**Why the primary SMTP address and not the UPN.** cmail's account address is a
+**Why the primary SMTP address and not the UPN.** Stanchion's account address is a
 mailbox address on `MAIL_DOMAIN`, and the Microsoft 365 sync already
 identifies people by Graph `mail`. The UPN is a sign-in name: it is often on
 another domain (for example `<name>.onmicrosoft.com`) or differs from the
@@ -407,7 +407,7 @@ Image storage in Cloudflare's registry was not found priced separately
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#11-shared-mailbox-permissions-optional), step 11, with `scripts/onboarding/perms-setup.ps1` for steps 1 to 5 below.
 
 Do this in a **test tenant first**. Steps 1 to 4 are in Microsoft 365, 5 to
-8 in Cloudflare and cmail.
+8 in Cloudflare and Stanchion.
 
 ### 1. Entra app (separate from the directory sync app)
 
@@ -470,7 +470,7 @@ $roles = foreach ($parent in $parents.Keys) {
 $roles | ForEach-Object { Get-ManagementRoleEntry "$_\*" } | Select-Object Role, Name
 # c. A role group with only that role.
 New-RoleGroup -Name "cmail Mailbox Access Readers" -Roles $roles `
-  -Description "Read-only: Full Access and Send As on shared mailboxes for cmail"
+  -Description "Read-only: Full Access and Send As on shared mailboxes for Stanchion"
 
 # d. The app's service principal in Exchange, added to the group.
 #    ObjectId = the Enterprise application's Object ID (not the app registration's).
@@ -614,7 +614,7 @@ report), read the report. When it matches Exchange **and step 4 was a go**,
 - **Image build** (no tenant): `docker build apps/email-worker/container/m365-perms`.
 - **Test tenant dress rehearsal** before any client: steps 1 to 8, dry run,
   then live with one shared mailbox; add and remove Full Access and Send As in
-  Exchange and check each cmail change and its audit row; change a row in
+  Exchange and check each Stanchion change and its audit row; change a row in
   Admin > Mailboxes and check the sync leaves it alone; break the certificate
   and check nothing changes and the alert appears after 3 runs.
 

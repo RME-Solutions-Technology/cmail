@@ -10,9 +10,9 @@ related: [sending.md, credentials.md]
 
 # Delivery status and bounces
 
-After a message leaves cmail, Cloudflare reports what happened to it:
+After a message leaves Stanchion, Cloudflare reports what happened to it:
 delivered, delayed, bounced, rejected or marked as spam. This page explains how
-cmail receives those reports, what users see, and how blocked addresses work.
+Stanchion receives those reports, what users see, and how blocked addresses work.
 How the message got to Cloudflare is covered in [How sending works](sending.md).
 
 Delivery status needs native Cloudflare Email Sending. Postmark sends get no
@@ -30,14 +30,14 @@ delivery events and no blocked-address checks.
 
 ## Where delivery events come from
 
-cmail does not read bounce emails. It uses Cloudflare Email Sending **event
+Stanchion does not read bounce emails. It uses Cloudflare Email Sending **event
 subscriptions**:
 
 1. Cloudflare publishes an event for each recipient to a Cloudflare Queue.
 2. The email Worker consumes the queue in its `queue()` handler
    (`apps/email-worker/src/delivery-events.ts`).
 3. Each event is parsed. Only `email.sending` events of type `delivered`,
-   `deferred`, `bounced`, `failed`, `rejected` or `complained` are used. cmail
+   `deferred`, `bounced`, `failed`, `rejected` or `complained` are used. Stanchion
    keeps the SMTP status and reply, the bounce type (hard or soft), the reason
    and who rejected it.
 4. The event is matched to the `mail_trace` row of the send by the provider's
@@ -55,10 +55,10 @@ turn it on there.
 
 ### Timing and retries
 
-An event can arrive before cmail has written the Sent copy. When an event
+An event can arrive before Stanchion has written the Sent copy. When an event
 can't be matched yet, the Worker asks the queue to retry it, up to 3 times, a
 minute apart, and then drops it. Other errors back off from 30 seconds up to 5
-minutes. If the Sent copy is written after the event arrived, cmail merges the
+minutes. If the Sent copy is written after the event arrived, Stanchion merges the
 failure in at that point, so a fast bounce still shows on the Sent copy.
 
 ## What users see
@@ -94,13 +94,13 @@ sender's Inbox, like Outlook's non-delivery reports:
 ## Blocked addresses
 
 When an address hard-bounces or someone marks your mail as spam, Cloudflare
-adds the address to a **suppression list** and refuses later sends to it. cmail
+adds the address to a **suppression list** and refuses later sends to it. Stanchion
 handles this in `apps/web/src/lib/server/suppressions.ts`.
 
 ### How a block is detected
 
 The email Worker gets error `E_RECIPIENT_SUPPRESSED` back from Cloudflare.
-cmail cancels the send, keeps the draft, and shows which addresses are blocked
+Stanchion cancels the send, keeps the draft, and shows which addresses are blocked
 and why. With a suppressions API token it asks Cloudflare for the details of up
 to 10 addresses. Without one it uses its own delivery events instead.
 
@@ -117,7 +117,7 @@ Unblocking needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_SUPPRESSIONS_API_TOKEN`
 address from this mailbox in the last day. It is limited to 10 addresses an hour per user
 and recorded in the audit log as `email.suppression_lifted`.
 
-cmail **never** lifts:
+Stanchion **never** lifts:
 
 - spam complaints;
 - manual and policy blocks;
