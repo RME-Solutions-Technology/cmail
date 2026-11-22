@@ -45,7 +45,7 @@ sits on the mark, so the symbol and the word read as one family.
 > is degenerate — those glyphs disappear entirely.
 
 In the app the lockup is a component (`#lib/ui/Brand.svelte`), which draws the
-wordmark when `APP_NAME` is still `Stanchion` and falls back to the display face
+wordmark when `APP_NAME` is still the legacy name `cmail` and falls back to the display face
 with matching tracking for whitelabel deployments.
 
 ## Palette

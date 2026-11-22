@@ -114,8 +114,12 @@ are legacy names, kept on purpose:
   `cmail-exo-permissions`, `cmail-standby-probe` and the rate-limit namespaces;
 - identity names that tenants already hold: the `cmail mirror` journal rule,
   `cmail Mailbox Access Readers` role group, `cmail Exchange permission reader`
-  app, the `cmail standby copy` Outlook category and the `cmail standby test`
-  probe subject;
+  app, the `cmail standby copy` Outlook category, the `cmail standby test`
+  probe subject, the `cmail standby` remote domain, the `cmail journal` remote
+  domain, the `cmail Microsoft 365 sync` and `cmail directory sync` apps, the
+  `cmail standby copy-back` app and the `cmail copy-back mailboxes` and
+  `cmail mirror mailboxes` groups and management scopes (docs and scripts quote
+  these exactly, so copied commands match what customers already have);
 - the `@cmail/*` package scope, type and CSS variable names, and the GitHub
   repository URL, until each is renamed in its own change.
 

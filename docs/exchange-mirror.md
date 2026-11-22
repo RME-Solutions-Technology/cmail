@@ -211,7 +211,7 @@ app's IDs from **Entra > Enterprise applications** (not App registrations):
 
 ```powershell
 # Pointer to the sync app's service principal.
-New-ServicePrincipal -AppId <sync-app-application-id> -ObjectId <sync-app-service-principal-object-id> -DisplayName "Stanchion Microsoft 365 sync"
+New-ServicePrincipal -AppId <sync-app-application-id> -ObjectId <sync-app-service-principal-object-id> -DisplayName "cmail Microsoft 365 sync"
 
 # Scope, option A (recommended; the setup in use on a live tenant): every user and shared mailbox, rooms and equipment left out.
 New-ManagementScope -Name "cmail mirror mailboxes" -RecipientRestrictionFilter "RecipientTypeDetails -eq 'UserMailbox' -or RecipientTypeDetails -eq 'SharedMailbox'"
@@ -839,8 +839,8 @@ Needs the Exchange Online "Journaling" permission
    ([New-RemoteDomain](https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/new-remotedomain)):
 
    ```powershell
-   New-RemoteDomain -Name "Stanchion journal" -DomainName journal.example.net
-   Set-RemoteDomain -Identity "Stanchion journal" -TNEFEnabled $false
+   New-RemoteDomain -Name "cmail journal" -DomainName journal.example.net
+   Set-RemoteDomain -Identity "cmail journal" -TNEFEnabled $false
    ```
 
    A report that arrives as TNEF is refused with reason `tnef`.

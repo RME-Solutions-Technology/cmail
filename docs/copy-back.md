@@ -262,7 +262,7 @@ sync's read-only secret can never write mail.
 ### 2. A mail-enabled security group
 
 Create a mail-enabled security group (Exchange admin center > Groups, or
-`New-DistributionGroup -Type Security`), for example "Stanchion copy-back
+`New-DistributionGroup -Type Security`), for example "cmail copy-back
 mailboxes", and add the people (and shared mailboxes) whose mail may be
 copied: normally the same people as the sync's scope. **Only direct members
 count**: nested groups are out of scope for this filter. Get its
@@ -270,7 +270,7 @@ distinguished name:
 
 ```powershell
 Connect-ExchangeOnline
-(Get-Group "Stanchion copy-back mailboxes").DistinguishedName
+(Get-Group "cmail copy-back mailboxes").DistinguishedName
 ```
 
 ### Which permission
@@ -335,10 +335,10 @@ Connect-ExchangeOnline
 New-ServicePrincipal -AppId <application-id> -ObjectId <service-principal-object-id> -DisplayName "cmail standby copy-back"
 
 # Scope: direct members of the group from step 2.
-New-ManagementScope -Name "Stanchion copy-back mailboxes" -RecipientRestrictionFilter "MemberOfGroup -eq '<group distinguished name>'"
+New-ManagementScope -Name "cmail copy-back mailboxes" -RecipientRestrictionFilter "MemberOfGroup -eq '<group distinguished name>'"
 
 # Mail.ReadWrite on those mailboxes only. It does not include sending mail.
-New-ManagementRoleAssignment -App <service-principal-object-id> -Role "Application Mail.ReadWrite" -CustomResourceScope "Stanchion copy-back mailboxes"
+New-ManagementRoleAssignment -App <service-principal-object-id> -Role "Application Mail.ReadWrite" -CustomResourceScope "cmail copy-back mailboxes"
 
 # Check: InScope True for a member, False for anyone else.
 Test-ServicePrincipalAuthorization -Identity <service-principal-object-id> -Resource member@example.com
