@@ -101,9 +101,9 @@ function standbyMailAdvice(out, snapshot, now) {
   const start = snapshot.takenAt;
   const end = new Date(now.getTime() + COPY_BACK_MARGIN_MS).toISOString();
   out('');
-  out('Mail that arrived in cmail while switched:');
-  out('  - It stays in cmail; nothing is moved or deleted. People can keep reading it there.');
-  out('  - Senders that cached the Cloudflare MX, and retries, can keep arriving in cmail for a while');
+  out('Mail that arrived in Stanchion while switched:');
+  out('  - It stays in Stanchion; nothing is moved or deleted. People can keep reading it there.');
+  out('  - Senders that cached the Cloudflare MX, and retries, can keep arriving in Stanchion for a while');
   out('    (up to the MX TTL, longer for retries). The catch-all is left sending to the Worker so they are not lost.');
   out('  - To get it into Outlook, use Admin > Copy back to Exchange (docs/copy-back.md):');
   out(`    window ${start} to ${end} (UTC). Start it after the end time; messages Exchange`);
@@ -131,7 +131,7 @@ export async function runSwitchBack(argv, deps) {
     redact = client.redact;
     const now = deps.now();
 
-    out(`cmail standby switch-back: ${opts.apply ? 'APPLY (will change live DNS after you confirm)' : 'DRY RUN (nothing will change)'}`);
+    out(`Stanchion standby switch-back: ${opts.apply ? 'APPLY (will change live DNS after you confirm)' : 'DRY RUN (nothing will change)'}`);
     out(`Domain: ${opts.domain}`);
 
     const read = await readSnapshot(opts.snapshot);

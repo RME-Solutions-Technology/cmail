@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Deploy the static product page in landing/ to a Cloudflare Pages project.
 // The project name is required, so a stray wrangler.toml in the checkout can never
-// redirect the deploy to another project (for example a live cmail web app).
+// redirect the deploy to another project (for example a live Stanchion web app).
 //
 //   pnpm deploy:landing --project-name <PAGES_PROJECT> [--branch <PRODUCTION_BRANCH>]
 import { spawnSync } from 'node:child_process';

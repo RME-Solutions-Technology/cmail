@@ -61,14 +61,14 @@ rollback_worker() {
   else log "ROLLBACK FAILED: worker is still $(latest); roll back by hand to $prevWorker"; fi
 }
 # A Docker-backed worker can come back half-applied; wrangler says to run the same deploy again, once.
-(cd apps/email-worker && $W deploy --message "cmail $SHA" >/tmp/cmail-$INST-worker.out 2>&1) \
-  || { grep -q "not fully applied" /tmp/cmail-$INST-worker.out && (cd apps/email-worker && $W deploy --message "cmail $SHA (retry)" >/tmp/cmail-$INST-worker.out 2>&1); } \
+(cd apps/email-worker && $W deploy --message "Stanchion $SHA" >/tmp/cmail-$INST-worker.out 2>&1) \
+  || { grep -q "not fully applied" /tmp/cmail-$INST-worker.out && (cd apps/email-worker && $W deploy --message "Stanchion $SHA (retry)" >/tmp/cmail-$INST-worker.out 2>&1); } \
   || { tail -5 /tmp/cmail-$INST-worker.out; die "worker deploy failed; live is $(latest)"; }
 newWorker=$(latest); [ "$newWorker" != "$prevWorker" ] || die "worker version did not change"
 log "worker live $newWorker"
 smoke || { rollback_worker; die "smoke failed after worker deploy"; }
 (cd apps/web && pnpm build >/tmp/cmail-$INST-build.out 2>&1) || { rollback_worker; die "web build failed"; }
-(cd apps/web && $W pages deploy .svelte-kit/cloudflare --project-name "$PROJ" --branch main --commit-hash "$(git rev-parse HEAD)" --commit-message "cmail $SHA" >/tmp/cmail-$INST-pages.out 2>&1) \
+(cd apps/web && $W pages deploy .svelte-kit/cloudflare --project-name "$PROJ" --branch main --commit-hash "$(git rev-parse HEAD)" --commit-message "Stanchion $SHA" >/tmp/cmail-$INST-pages.out 2>&1) \
   || { tail -5 /tmp/cmail-$INST-pages.out; rollback_worker; die "pages deploy failed; pages stays $prevPages"; }
 sleep 8
 newPages=$($W pages deployment list --project-name "$PROJ" --environment production --json 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['Id'])")
