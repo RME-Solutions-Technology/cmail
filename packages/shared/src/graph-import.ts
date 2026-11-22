@@ -59,7 +59,7 @@ export const D1_MAX_DATABASE_BYTES = 10_000_000_000;
 export const D1_NEAR_FRACTION = 0.8;
 /**
  * D1 bytes one filed message adds: the messages row (about 30 columns,
- * participants as JSON, a 200 character snippet) and its indexes. cmail keeps
+ * participants as JSON, a 200 character snippet) and its indexes. Stanchion keeps
  * the body and attachments in R2, not D1. An assumption from the row shape,
  * not a measurement; check it with the first real import (docs say how).
  */
@@ -380,7 +380,7 @@ export function graphImportCountChanged(confirmed: number, recount: number): boo
 /** Plain words for the import's own codes. */
 export const GRAPH_IMPORT_ERROR_TEXT: Readonly<Record<string, string>> = {
   d1_limit: 'The import stopped itself: the database reached 90% of its size limit.',
-  throttled: 'Microsoft Graph asked cmail to slow down; the import waits and continues.',
+  throttled: 'Microsoft Graph asked Stanchion to slow down; the import waits and continues.',
   network: 'Microsoft Graph could not be reached; the next run continues.',
   store_failed: 'A message could not be stored; the next run tries again.',
   credentials_rejected: 'Microsoft refused the app\'s credentials.',

@@ -36,7 +36,7 @@
   <section id="people">
     <h2>Onboard a person</h2>
     <ol>
-      <li>Create the person with their work email. cmail works out whether it's hosted by Google, Microsoft, or somewhere else, and invites them accordingly — you don't choose a method yourself.</li>
+      <li>Create the person with their work email. Stanchion works out whether it's hosted by Google, Microsoft, or somewhere else, and invites them accordingly — you don't choose a method yourself.</li>
       <li>Use Standard unless management access is needed, and add their personal mailbox. Only choose Manager for a Google- or Microsoft-hosted address: an email-code identity can never sign in as Manager.</li>
       <li>Select <strong>Send invitation</strong> now, or send it later. The single-use link expires after 72 hours.</li>
       <li>Grant shared mailbox access separately, using the least access that meets the role.</li>
@@ -72,8 +72,8 @@
   <section id="support">
     <h2>Support and escalation</h2>
     <p>Trained L1 people handle first reports: check approved runbooks, Mail trace, and Audit log, communicate with the user, and follow the organisation's incident and privacy processes. Keep case notes free of message bodies, attachments, credentials, and session values.</p>
-    <p>Escalate a real, reproducible cmail product defect to RME Solutions Technology through the organisation's agreed channel, with the deployed version, safe steps, expected and observed result, impact, and time window. Work outside that — design, configuration, provider or DNS changes — is separately scoped or quoted.</p>
-    <div class="callout"><strong>Security and privacy take a separate path.</strong><p>Contain suspected compromise, unauthorised access, or data exposure and follow the organisation's incident process immediately. Suspected cmail vulnerabilities use the private security process, not ordinary support. <a href="/help/support">Read the full support process</a>.</p></div>
+    <p>Escalate a real, reproducible Stanchion product defect to RME Solutions Technology through the organisation's agreed channel, with the deployed version, safe steps, expected and observed result, impact, and time window. Work outside that — design, configuration, provider or DNS changes — is separately scoped or quoted.</p>
+    <div class="callout"><strong>Security and privacy take a separate path.</strong><p>Contain suspected compromise, unauthorised access, or data exposure and follow the organisation's incident process immediately. Suspected Stanchion vulnerabilities use the private security process, not ordinary support. <a href="/help/support">Read the full support process</a>.</p></div>
   </section>
 
   <section id="evidence">
@@ -107,9 +107,9 @@
       <li>Offboarding makes public positions internal; replace published occupant details only after appointing a successor.</li>
       <li>Preserve mail per policy and legal requirements; do not delete storage ad hoc.</li>
       <li>Offboard the account once the transition is complete, then review Audit log.</li>
-      <li>Later mail gets the same generic SMTP rejection as any unavailable address; the sender may see a cmail-labelled delivery failure. cmail sends no auto-reply, protecting outbound quota and preventing backscatter.</li>
+      <li>Later mail gets the same generic SMTP rejection as any unavailable address; the sender may see a Stanchion-labelled delivery failure. Stanchion sends no auto-reply, protecting outbound quota and preventing backscatter.</li>
     </ol>
-    <p>Review unavailable-recipient patterns in Cloudflare Email Routing and Worker metrics. cmail keeps no per-attempt trace here by design, since this path is attacker-controlled.</p>
+    <p>Review unavailable-recipient patterns in Cloudflare Email Routing and Worker metrics. Stanchion keeps no per-attempt trace here by design, since this path is attacker-controlled.</p>
   </section>
 </article>
 

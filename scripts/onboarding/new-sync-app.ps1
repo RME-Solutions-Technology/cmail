@@ -36,7 +36,7 @@
 .PARAMETER TenantId
   Directory (tenant) ID, a GUID.
 .PARAMETER MailDomain
-  The cmail MAIL_DOMAIN (example.com). Only shown in the settings to copy; the sync only touches users on it.
+  The Stanchion MAIL_DOMAIN (example.com). Only shown in the settings to copy; the sync only touches users on it.
 .PARAMETER WranglerConfig
   Path to the email Worker's wrangler.toml (the instance's own, not the example).
 .PARAMETER DisplayName
@@ -54,7 +54,7 @@
 .PARAMETER SkipSecret
   Create and consent the app only; store nothing on Cloudflare.
 .PARAMETER RepoRoot
-  The cmail checkout that has Wrangler installed. Defaults to this repository.
+  The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
   pwsh -File scripts/onboarding/new-sync-app.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -MailDomain example.com -WranglerConfig apps/email-worker/wrangler.toml -DetectSharedMailboxes -WhatIf

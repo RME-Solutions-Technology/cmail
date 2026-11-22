@@ -42,13 +42,13 @@
   }
 </script>
 
-<svelte:head><title>Standby test · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Standby test · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="standby-page" aria-labelledby="standby-heading">
   <header class="page-heading">
     <p class="eyebrow">Mail</p>
     <h1 id="standby-heading">Standby test</h1>
-    <p>Each person's address also works on the standby subdomain, for example <code>name@standby.your-domain</code>, and delivers to the same mailbox. Once a day cmail sends itself a test message to that address through Cloudflare and checks it arrives. A green light means mail sent to the standby address reached cmail; it does not mean your main mail domain points here.</p>
+    <p>Each person's address also works on the standby subdomain, for example <code>name@standby.your-domain</code>, and delivers to the same mailbox. Once a day Stanchion sends itself a test message to that address through Cloudflare and checks it arrives. A green light means mail sent to the standby address reached Stanchion; it does not mean your main mail domain points here.</p>
   </header>
 
   <div class="notice notice-warning" role="note" data-testid="standby-sooner-note"><strong>Switching to the standby:</strong> {STANDBY_SWITCH_SOONER_NOTE}</div>

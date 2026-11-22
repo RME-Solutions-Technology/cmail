@@ -1,6 +1,6 @@
 ---
 title: "User guide"
-summary: "How to sign in, read, write and organise mail in cmail."
+summary: "How to sign in, read, write and organise mail in Stanchion."
 applies_to: both
 audience: [user]
 switch: none
@@ -10,9 +10,9 @@ related: [mobile-pwa.md, shared-mailboxes.md]
 
 # User guide
 
-This guide is for anyone who reads and sends mail in cmail. If you manage the
+This guide is for anyone who reads and sends mail in Stanchion. If you manage the
 service, start with the [manager handbook](manager-handbook.md) instead. For
-installing cmail on a phone or tablet, see the [mobile app guide](mobile-pwa.md).
+installing Stanchion on a phone or tablet, see the [mobile app guide](mobile-pwa.md).
 
 **In this article**
 
@@ -43,14 +43,14 @@ Use one of the sign-in options shown on the page:
 - **Email code** — for mailboxes hosted somewhere other than Google or
   Microsoft. Your invitation tells you which method applies to you; you don't
   choose it yourself. Select **Sign in with an email code**, request a code,
-  and enter the 8-digit code cmail emails you within 5 minutes. This option
+  and enter the 8-digit code Stanchion emails you within 5 minutes. This option
   never appears for the Manager role, which always needs a Google or
   Microsoft identity.
 
 Sign in with the matching button and the exact address that received the
-invitation. cmail then links your account to that sign-in permanently, and the
+invitation. Stanchion then links your account to that sign-in permanently, and the
 invitation stops working. Use the same method on other browsers and devices —
-once enrolled, just open the organisation's normal cmail URL.
+once enrolled, just open the organisation's normal Stanchion URL.
 
 If you pick the wrong method, use a different email, let the link expire, or
 see an "identity already bound" message: stop and contact your manager. Do not
@@ -60,10 +60,10 @@ restricts sign-in to specific countries and you're travelling, an unrecognised
 country pauses your sign-in with a plain explanation and notifies your
 managers automatically — try again once one of them approves it.
 
-cmail only requests basic profile information (OpenID) to identify you, never
+Stanchion only requests basic profile information (OpenID) to identify you, never
 access to your personal inbox, files, contacts, or search history. Signing in
 again uses your provider's permanent account ID, not just your email, so
-nobody can hijack your cmail account by reusing an old or matching address.
+nobody can hijack your Stanchion account by reusing an old or matching address.
 
 If your organisation has published a usage policy, you must read and accept
 the current version before you can open Mail. If a new version is published
@@ -86,7 +86,7 @@ with the menu button.
   mailboxes.
 
 The Inbox checks for new mail while it's open. Use **Refresh** any time you
-want an immediate update. cmail needs a network connection — it does not store
+want an immediate update. Stanchion needs a network connection — it does not store
 mail for offline access.
 
 ## Read mail safely
@@ -94,16 +94,16 @@ mail for offline access.
 Opening an unread message marks it as read. In a shared mailbox, everyone with
 access sees that same read state — it is not private to you.
 
-cmail protects you in a few ways:
+Stanchion protects you in a few ways:
 
 - Images hosted elsewhere are blocked by default, since loading them can tell
   the sender you opened the message. Select **Load images** only if you trust
   the sender.
 - Message content is cleaned before it's shown. If a link's visible text names
   one site but actually points somewhere else, or its address uses
-  look-alike international characters, cmail sends you to a warning page
+  look-alike international characters, Stanchion sends you to a warning page
   first instead of straight to the link — read it before you continue.
-- When you click any other web link, cmail checks the site against a public
+- When you click any other web link, Stanchion checks the site against a public
   list of known phishing sites (the CERT Polska Warning List). If it's on the
   list, you see a warning instead of the site. This list mostly covers scams
   aimed at people in Poland, so it catches some well-known phishing sites but
@@ -111,7 +111,7 @@ cmail protects you in a few ways:
 - A banner marks the first message you've ever received from a sender, so you
   can give a request for payment, credentials, or urgency extra scrutiny
   before acting on it.
-- Attachments always download as files. cmail does not scan them for malware,
+- Attachments always download as files. Stanchion does not scan them for malware,
   so open only files you trust and follow your organisation's security
   process. The label under each attachment tells you what kind of file it is.
   On an Android phone, opening a Word, Excel, or PowerPoint file links you to
@@ -150,27 +150,27 @@ separate, non-editable preview with remote images removed, so an old
 tracking pixel cannot notify its sender when your recipient opens the
 conversation. Provider or organisation rate limits can still reject a send.
 
-As you type in **To** or **Cc**, cmail suggests addresses — first from
+As you type in **To** or **Cc**, Stanchion suggests addresses — first from
 everyone the selected **From** mailbox has actually written to or heard from,
 then from the organisation directory. Switching **From** switches the
 suggestions, since each mailbox keeps its own history.
 
 Only use **Importance** when the recipient genuinely needs the High or Low
-signal (a red exclamation mark or downward arrow in cmail, Outlook, and other
+signal (a red exclamation mark or downward arrow in Stanchion, Outlook, and other
 compatible apps). It's saved with the draft, but does not speed up delivery,
 bypass spam filters, or guarantee anyone notices. A new reply or forward
 always starts at Normal, even if the original was High or Low.
 
-cmail saves your draft shortly after you stop typing, or you can save it
+Stanchion saves your draft shortly after you stop typing, or you can save it
 manually; edits made during a save are queued for the next one. **Back to
 message** waits for the latest save, then returns you to the message with a
 **Draft saved** confirmation. A local recovery copy protects unsaved text if
 you reload, and is removed once the save succeeds. If another tab saved a
-different version, cmail keeps your local copy and asks you to restore or
+different version, Stanchion keeps your local copy and asks you to restore or
 discard it before you continue — it never silently overwrites either one.
 
 Attachments stay only in the current browser tab until you send — they are
-not saved with the draft, and cmail warns you before you leave a composer
+not saved with the draft, and Stanchion warns you before you leave a composer
 that still has them. Forwarding does not automatically re-attach original
 files or embedded images, since forwarding drops the references that showed
 them inline; instead, the Forward screen gives you a download link for each
@@ -226,21 +226,21 @@ font and size set on the whole body, so it looks the same in the recipient's
 Outlook, Gmail or Apple Mail.
 
 Prefer plain text? Select **Plain text** above the message box. Switching
-from rich text to plain text removes the formatting (cmail asks first if
+from rich text to plain text removes the formatting (Stanchion asks first if
 there is any text), and switching back turns your paragraphs and line breaks
-into rich text. cmail remembers your choice for new messages on that device,
+into rich text. Stanchion remembers your choice for new messages on that device,
 and a saved draft always reopens in the mode it was written in.
 
 Every message is sent with both a formatted (HTML) version and a plain-text
 version, so recipients whose email app shows only plain text still see your
-lists, quotes and link addresses. cmail cleans the formatting on the server
+lists, quotes and link addresses. Stanchion cleans the formatting on the server
 before saving or sending: anything beyond the toolbar's options, including
 scripts, images and any other styling, is removed.
 
 ### Email signatures
 
 Open **Mail > Settings > Font and signature** to set your personal sign-off.
-cmail adds it below your new text and above any quoted history, in every
+Stanchion adds it below your new text and above any quoted history, in every
 message, reply, or forward — below an organisation signature too, if one is
 enabled. The toolbar supports basic formatting. Pasted content becomes plain
 text, and any unsafe markup is stripped before saving.
@@ -250,7 +250,7 @@ can preview it but not change it. Clearing it removes only your layer, not any
 organisation-wide footer. See [Email signatures](signatures.md) for the full
 rules.
 
-After sending, cmail stores a Sent copy in the mailbox you sent from. If a
+After sending, Stanchion stores a Sent copy in the mailbox you sent from. If a
 message is accepted by the provider but the Sent copy fails to save, do not
 resend it — ask a manager to check Mail trace.
 
@@ -295,7 +295,7 @@ for every browser, installed app, and device.
 
 The lock-screen text is deliberately minimal — it just says new mail arrived,
 with no sender, subject, mailbox, or message content. Treat alerts as a
-convenience, not a guarantee. Open cmail to check your actual mail.
+convenience, not a guarantee. Open Stanchion to check your actual mail.
 
 For installation, permissions, and troubleshooting, see the
 [iOS, iPadOS, and Android guide](mobile-pwa.md).
@@ -303,7 +303,7 @@ For installation, permissions, and troubleshooting, see the
 ## Connect an AI assistant
 
 If your organisation allows it, you can connect an AI assistant such as Claude
-to your mail. The assistant opens a cmail window; you sign in and choose what
+to your mail. The assistant opens a Stanchion window; you sign in and choose what
 it may do and which mailboxes it may use. Reading and drafting are offered by
 default; sending is off unless you turn it on. See and disconnect your apps in
 **Settings > Connected AI apps**. Remember that email is written by other
@@ -315,7 +315,7 @@ people: don't let an assistant act on instructions it finds in a message. See
 Use **Sign out** in the account area when you finish, especially on a shared
 or unmanaged device. Closing the browser alone does not sign you out.
 
-Contact the support address shown in cmail if:
+Contact the support address shown in Stanchion if:
 
 - your account is not registered, is paused, or uses a different sign-in
   provider;

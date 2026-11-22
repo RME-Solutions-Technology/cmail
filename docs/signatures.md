@@ -10,18 +10,18 @@ related: [manager-handbook.md]
 
 # Email signatures
 
-cmail can add two signatures to your outgoing mail:
+Stanchion can add two signatures to your outgoing mail:
 
 1. Your **personal signature**.
 2. An optional **organisation signature** — a company-wide footer or disclaimer that a Manager controls. It is **off by default** on new installs.
 
-If both are on, cmail puts your personal signature first, then the organisation signature. Both sit below your new text and above any quoted message history, in new messages, replies, and forwards. They also appear in the plain-text version of your message.
+If both are on, Stanchion puts your personal signature first, then the organisation signature. Both sit below your new text and above any quoted message history, in new messages, replies, and forwards. They also appear in the plain-text version of your message.
 
 ## Your signature
 
 Go to **Mail > Settings > Font and signature** to add or change your personal sign-off. Keep it short — it goes on every message you send.
 
-The editor supports simple formatting: bold/italic, lists, tables, inline styling, images, and links (`https`, `http`, or `mailto`). If you paste from a webpage or Word, cmail keeps the formatting but strips anything unsafe, such as scripts or hidden styling.
+The editor supports simple formatting: bold/italic, lists, tables, inline styling, images, and links (`https`, `http`, or `mailto`). If you paste from a webpage or Word, Stanchion keeps the formatting but strips anything unsafe, such as scripts or hidden styling.
 
 Clearing your signature removes only your personal layer — it does not turn off the organisation signature. If the page says **Admin managed**, a Manager has locked your signature. You can preview it but not change it; ask that Manager to update it. You can preview both layers on the settings page, but the final version is assembled when you actually send the message.
 
@@ -38,7 +38,7 @@ Treat signature text as public-facing content: use an approved template, include
 
 ## Safety and limits
 
-cmail cleans signature HTML twice — once when you save it, and again before it's used — removing scripts, forms, frames, unsafe links, external style loads, and other unsupported markup.
+Stanchion cleans signature HTML twice — once when you save it, and again before it's used — removing scripts, forms, frames, unsafe links, external style loads, and other unsupported markup.
 
 Images are allowed from `https` links, files attached to the message, or embedded image data. Links with a username or password built into the URL are blocked. Every image loads lazily with no referrer sent, so it can't be used as a tracking pixel.
 

@@ -51,7 +51,7 @@ function logAdminFailure(action: string, error: unknown): void {
   });
 }
 
-// Managers can invite any address cmail can actually authenticate: a Google
+// Managers can invite any address Stanchion can actually authenticate: a Google
 // or Microsoft identity, resolved by well-known consumer domains then an MX
 // lookup for custom/business domains — or, when neither hosts the address
 // and email one-time-code sign-in is enabled on this deployment, the

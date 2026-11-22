@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-  Exchange Online side of the cmail Exchange mirror (journaling): undeliverable
+  Exchange Online side of the Stanchion Exchange mirror (journaling): undeliverable
   report address, a TNEF-off remote domain and one journal rule, created
   DISABLED. -Enable turns the rule on; -Rollback undoes all three.
 
@@ -14,7 +14,7 @@
      to -JournalAddressFile (refuses to overwrite) and pipes it into the email
      Worker secret M365_JOURNAL_ADDRESS. The address is the security boundary
      of the mirror: keep the file private. Then add ONE Cloudflare Email
-     Routing rule for that literal address -> the cmail email Worker.
+     Routing rule for that literal address -> the Stanchion email Worker.
   2. (no switch): signs in to Exchange Online and
      - saves the current JournalingReportNdrTo to -StateFile (once: a rerun
        never overwrites the saved value), then sets it to -NdrAddress, which
@@ -23,7 +23,7 @@
        TNEFEnabled $false, so originals arrive as MIME;
      - creates journal rule -RuleName (Scope Global, all users) to the journal
        address, DISABLED.
-  3. -Enable: after Admin > Exchange mirror is switched on in cmail, enables
+  3. -Enable: after Admin > Exchange mirror is switched on in Stanchion, enables
      the rule. Journaling then copies ALL mail from that moment.
   -Rollback: disables and removes the rule, removes the remote domain and
   restores the saved JournalingReportNdrTo.
@@ -48,14 +48,14 @@
   Setup mode only (required there). Where Exchange sends undeliverable journal
   reports; it must not be an Exchange Online mailbox. Use an address on
   StandbySubdomain with its own Email Routing rule that reaches a person (for
-  example a cmail mailbox through its standby address, or Email Routing's
+  example a Stanchion mailbox through its standby address, or Email Routing's
   "Send to an email" to a verified address outside Exchange Online).
 .PARAMETER StateFile
   Where the previous JournalingReportNdrTo is saved for -Rollback. Default: <JournalAddressFile>.ndr-before.txt
 .PARAMETER NewJournalAddress
   Mode 1: create the journal address file and the Worker secret M365_JOURNAL_ADDRESS. No Exchange sign-in.
 .PARAMETER Enable
-  Mode 3: enable the journal rule (after the mirror is on in cmail Admin).
+  Mode 3: enable the journal rule (after the mirror is on in Stanchion Admin).
 .PARAMETER Rollback
   Remove the journal rule and remote domain and restore the saved undeliverable-report address.
 .PARAMETER WranglerConfig
@@ -71,7 +71,7 @@
 .PARAMETER SkipDnsCheck
   Do not check the standby subdomain's SPF record before -Enable.
 .PARAMETER RepoRoot
-  The cmail checkout that has Wrangler installed. Defaults to this repository.
+  The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
   pwsh -File scripts/onboarding/exchange-mirror.ps1 -StandbySubdomain standby.example.com -JournalAddressFile ~/cmail-private/journal-address.txt -NewJournalAddress -WranglerConfig apps/email-worker/wrangler.toml
@@ -130,7 +130,7 @@ if ($NewJournalAddress) {
   }
   Write-Step 'Next'
   Write-Note "1. Worker [vars]: M365_JOURNAL_NDR_DOMAIN = `"$StandbySubdomain`" (plus the other settings in docs/exchange-mirror.md); deploy the Worker."
-  Write-Note "2. Cloudflare Email Routing on $StandbySubdomain`: one custom address rule for the address in $JournalAddressFile -> Send to a Worker -> the cmail email Worker."
+  Write-Note "2. Cloudflare Email Routing on $StandbySubdomain`: one custom address rule for the address in $JournalAddressFile -> Send to a Worker -> the Stanchion email Worker."
   Write-Note "3. Add include:spf.protection.outlook.com to the SPF TXT record of $StandbySubdomain."
   Write-Note '4. Run this script without -NewJournalAddress.'
   return
@@ -189,7 +189,7 @@ try {
       }
       Write-Note 'Undeliverable journal report address restored.'
     }
-    Write-Step 'Next: Admin > Exchange mirror > Turn off in cmail; optionally delete the Cloudflare routing rule and M365_JOURNAL_ADDRESS.'
+    Write-Step 'Next: Admin > Exchange mirror > Turn off in Stanchion; optionally delete the Cloudflare routing rule and M365_JOURNAL_ADDRESS.'
     return
   }
 
@@ -234,7 +234,7 @@ try {
     }
     Write-Note (Get-JournalRule -Identity $RuleName -ErrorAction Stop | Select-Object Name, Enabled, Scope | Format-List | Out-String).Trim()
   }
-  Write-Step 'Next: Admin > Exchange mirror > Turn on in cmail, then run this script with -Enable.'
+  Write-Step 'Next: Admin > Exchange mirror > Turn on in Stanchion, then run this script with -Enable.'
 } finally {
   if (-not $dryRun) { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue }
 }

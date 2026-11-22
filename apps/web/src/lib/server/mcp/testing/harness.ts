@@ -175,7 +175,7 @@ export function createFixture(extraEnv: Record<string, unknown> = {}): Fixture {
     DB: db.d1,
     STORAGE: bucket,
     APP_URL,
-    APP_NAME: 'cmail',
+    APP_NAME: 'Stanchion',
     MAIL_DOMAIN: 'example.test',
     SESSION_SECRET: 'test-only-session-secret-0123456789abcdef',
     OUTBOUND_PROVIDER: 'none',

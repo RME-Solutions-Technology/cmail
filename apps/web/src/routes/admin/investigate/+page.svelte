@@ -67,7 +67,7 @@
   }
 </script>
 
-<svelte:head><title>Investigate · Management · {page.data?.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Investigate · Management · {page.data?.appName || 'Stanchion'}</title></svelte:head>
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape' && selected) selected = null; }} />
 
 <section class="investigate" aria-labelledby="investigate-heading">

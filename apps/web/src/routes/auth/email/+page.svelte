@@ -14,7 +14,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.enroll ? 'Activate your mailbox' : 'Sign in with an email code'} · cmail</title>
+  <title>{data.enroll ? 'Activate your mailbox' : 'Sign in with an email code'} · Stanchion</title>
   <meta name="referrer" content="strict-origin" />
   {#if data.turnstileEnabled}
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>

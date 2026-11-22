@@ -8,7 +8,7 @@ export const load: LayoutServerLoad = async ({ locals, platform }) => {
   if (!env) {
     return {
       user: locals.user,
-      appName: 'cmail',
+      appName: 'Stanchion',
       appUrl: '',
       authProviders: [],
       otpEnabled: false,

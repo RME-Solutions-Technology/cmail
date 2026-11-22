@@ -2,7 +2,7 @@
 
 ## Our commitment
 
-We are committed to making participation in cmail welcoming and free from harassment for everyone, regardless of age, body size, disability, ethnicity, sex characteristics, gender identity or expression, experience, education, socioeconomic status, nationality, appearance, race, religion, or sexual identity and orientation.
+We are committed to making participation in Stanchion welcoming and free from harassment for everyone, regardless of age, body size, disability, ethnicity, sex characteristics, gender identity or expression, experience, education, socioeconomic status, nationality, appearance, race, religion, or sexual identity and orientation.
 
 We will act in ways that contribute to an open, constructive, and healthy community.
 

@@ -1,5 +1,5 @@
 ---
-title: "Running cmail"
+title: "Running Stanchion"
 summary: "How to upgrade, back up, restore, roll back, monitor and rotate secrets on a live instance."
 applies_to: both
 audience: [operator]
@@ -8,7 +8,7 @@ last_reviewed: 2026-11-16
 related: [credentials.md, upgrading.md, deployment.md]
 ---
 
-# Running cmail
+# Running Stanchion
 
 The repeatable jobs for a live deployment, in one place: upgrading, backing up, restoring, rolling back, watching for trouble, and rotating secrets. Most procedures already live in [Deployment and verification](deployment.md); this page gives the order and links to them, and adds monitoring and secret rotation. Tick off the [Operations checklist](operations-checklist.md) as you go.
 
@@ -62,7 +62,7 @@ A bad code release is the most likely incident. Roll Pages back first, then the 
 
 ## Monitor
 
-cmail has no built-in alerting. These are the places to look, and what should make you act.
+Stanchion has no built-in alerting. These are the places to look, and what should make you act.
 
 **Uptime.** An external check every few minutes:
 
@@ -84,7 +84,7 @@ cmail has no built-in alerting. These are the places to look, and what should ma
 **Mail flow.**
 
 - **Management → Mail trace**: accepted and rejected deliveries. **Delivery recovery** lists sends stuck in `dispatching` or `ambiguous`; reconcile them as the [Operations checklist](operations-checklist.md#routine-operations) describes.
-- **Email Routing** analytics for the domain: dropped or rejected inbound mail. Rejections at SMTP time leave no cmail trace record.
+- **Email Routing** analytics for the domain: dropped or rejected inbound mail. Rejections at SMTP time leave no Stanchion trace record.
 - **Email Worker logs**: live with `wrangler tail` or the dashboard's log stream. To keep them for later review, add `[observability]` with `enabled = true` to the email Worker's `wrangler.toml` (the template doesn't enable it; the backup Worker's does) and use Workers Logs. Watch for `Inbound native rate-limit threshold observed`, `Inbox rules were skipped`, `Failed to clean up an inbound R2 object`, `Mail trace logging failed`, and calendar or contact errors. One-off warnings are normal; a sustained run of any of them needs a look.
 - Outbound provider dashboards for bounces and complaints, and DMARC aggregate reports (see [Email authentication](email-authentication.md)).
 
@@ -99,16 +99,16 @@ Rotate on a schedule your organisation sets, and immediately if a value is print
 | Secret | Where | What rotating it does | How |
 |---|---|---|---|
 | `SESSION_SECRET` | Pages | Signs everyone out. Also ends sign-ins in progress, unused email sign-in codes and bootstrap proofs; message links signed earlier show the "link not verified" page until the message is opened again. MCP connections are unaffected | Plan it as a sign-out event: tell users, set the new value, redeploy Pages |
-| `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_SECRET` | Pages | None for signed-in users; sign-in breaks if the provider and cmail disagree | Add a new secret at the provider, set it in cmail, redeploy, test a sign-in, then delete the old secret at the provider |
+| `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_SECRET` | Pages | None for signed-in users; sign-in breaks if the provider and Stanchion disagree | Add a new secret at the provider, set it in Stanchion, redeploy, test a sign-in, then delete the old secret at the provider |
 | `TURNSTILE_SECRET_KEY` | Pages | Code-request bot checks fail until both match | Rotate in the Turnstile dashboard, set the new value, redeploy |
 | `INBOUND_SENDER_HASH_KEY` | Email Worker | Resets per-sender rate-limit buckets (a one-hour limit reset) | Generate 32 random bytes as unpadded base64url, `wrangler secret put` on the Worker |
-| `VAPID_PRIVATE_KEY` with `VAPID_PUBLIC_KEY` | Pages and Email Worker (private); both `[vars]` (public) | Existing browser subscriptions stop working. Each browser re-subscribes the next time someone opens cmail with alerts on | Rotate the pair together in both runtimes, deploy the Worker then Pages |
-| `POSTMARK_API_KEY`, `CLOUDFLARE_EMAIL_API_TOKEN` | Pages | Outbound fails while the provider and cmail disagree | Create the new key, set it, redeploy, send a test, then revoke the old key |
+| `VAPID_PRIVATE_KEY` with `VAPID_PUBLIC_KEY` | Pages and Email Worker (private); both `[vars]` (public) | Existing browser subscriptions stop working. Each browser re-subscribes the next time someone opens Stanchion with alerts on | Rotate the pair together in both runtimes, deploy the Worker then Pages |
+| `POSTMARK_API_KEY`, `CLOUDFLARE_EMAIL_API_TOKEN` | Pages | Outbound fails while the provider and Stanchion disagree | Create the new key, set it, redeploy, send a test, then revoke the old key |
 | `CLOUDFLARE_SUPPRESSIONS_API_TOKEN` | Pages | Unblock and send again is unavailable until the new token is set | Create a new account-owned token with **Email Sending: Edit** only, set it, redeploy, then delete the old token |
 | `BOOTSTRAP_ADMIN_TOKEN`, `BOOTSTRAP_ADMIN_EMAIL` | Pages | Should not exist after the first manager is set up | If still present, delete both (see [Bootstrap](deployment.md#9-bootstrap-and-lock-down-administration)) |
 | `M365_CLIENT_SECRET` (sync app) | Email Worker | The sync stops with `unauthorized` while the secret and Entra disagree | Add a new client secret in Entra, `wrangler secret put` it, press **Sync now** in Admin > Microsoft 365 > Directory sync, then delete the old secret in Entra |
 | `M365_COPYBACK_CLIENT_SECRET` (copy-back app) | Email Worker | Copy-back jobs fail while the secret and Entra disagree | Same as the sync secret; check with a copy-back dry run |
-| `M365_EXO_CERT_PFX_B64`, `M365_EXO_CERT_PASSWORD` (permission reader) | Email Worker | The collector fails with `credentials_rejected`; access already in cmail stays | Make a new certificate, upload its `.cer` to the app, set both secrets, run the collector in dry run, then remove the old certificate |
+| `M365_EXO_CERT_PFX_B64`, `M365_EXO_CERT_PASSWORD` (permission reader) | Email Worker | The collector fails with `credentials_rejected`; access already in Stanchion stays | Make a new certificate, upload its `.cer` to the app, set both secrets, run the collector in dry run, then remove the old certificate |
 | `M365_JOURNAL_ADDRESS` | Email Worker | Reports to the old address are refused | Follow [Rotating the journal token](exchange-mirror.md#how-to-rotate-the-journal-token) |
 | Cloudflare deploy and standby switch tokens | Operator's session only | None at run time | Create the new token with the same permissions ([Credentials](credentials.md#cloudflare-api-tokens)), test, then delete the old one |
 

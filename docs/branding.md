@@ -10,7 +10,7 @@ related: [configuration.md]
 
 # Branding and first customisation
 
-cmail ships neutral fallback assets so a new deployment is usable immediately. Override branding through environment variables rather than editing application code:
+Stanchion ships neutral fallback assets so a new deployment is usable immediately. Override branding through environment variables rather than editing application code:
 
 | Variable | Purpose |
 |---|---|

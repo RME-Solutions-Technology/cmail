@@ -54,7 +54,7 @@ export const load: PageServerLoad = async ({ locals, url, setHeaders, platform }
   // A host the check can't read is never opened silently.
   if (verdict === 'uncheckable') return { ...page, risk: 'unverified' };
 
-  // Only a link cmail itself signed is opened without a warning, so this page
+  // Only a link Stanchion itself signed is opened without a warning, so this page
   // can never be used as an open redirect. A list that can't be read fails open.
   const signature = url.searchParams.get('s');
   if (env?.SESSION_SECRET && verifyLinkSignature(env.SESSION_SECRET, locals.user.id, target, signature)) {

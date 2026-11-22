@@ -1,4 +1,4 @@
--- Initial cmail schema for Cloudflare D1.
+-- Initial Stanchion schema for Cloudflare D1.
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,

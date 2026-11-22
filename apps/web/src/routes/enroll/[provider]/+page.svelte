@@ -23,7 +23,7 @@
 </script>
 
 <svelte:head>
-  <title>Prepare secure sign-in · {data.appName || 'cmail'}</title>
+  <title>Prepare secure sign-in · {data.appName || 'Stanchion'}</title>
   <meta name="referrer" content="strict-origin" />
 </svelte:head>
 

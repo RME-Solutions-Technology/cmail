@@ -1,6 +1,6 @@
 <!--
   Manager-only mailbox assignee picker. Suggestions are fetched on demand and
-  the form receives only the immutable cmail user id after an explicit pick.
+  the form receives only the immutable Stanchion user id after an explicit pick.
 -->
 <script lang="ts">
   import { onDestroy } from 'svelte';

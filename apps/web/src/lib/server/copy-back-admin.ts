@@ -53,7 +53,7 @@ export interface CopyBackOverview {
   config: CopyBackConfigStatus;
   /** False until migrations 0022 and 0024 are applied. */
   installed: boolean;
-  /** Linked mailboxes for the scope list: Entra object id and cmail address only. */
+  /** Linked mailboxes for the scope list: Entra object id and Stanchion address only. */
   mailboxes: Array<{ objectId: string; address: string }>;
   lastDryRun: CopyBackDryRunRecord | null;
   job: CopyBackJobView | null;

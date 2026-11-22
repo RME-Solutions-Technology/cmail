@@ -1,6 +1,6 @@
 /**
  * Focused Inbox (docs/focused-inbox.md): Outlook-style Focused and Other tabs
- * over the Inbox, for any cmail mailbox.
+ * over the Inbox, for any Stanchion mailbox.
  *
  * Off by default. With the organisation switch off nothing here touches a
  * message: decideFocusAtDelivery returns null after one settings read and the
@@ -274,7 +274,7 @@ export interface FocusFacts {
   /**
    * The From address is proven: a DMARC pass recorded by the trusted boundary
    * (INBOUND_AUTHSERV_ID), an Exchange-authenticated internal submission on
-   * the mirror, or a cmail mailbox sending internally. Only then may the
+   * the mirror, or a Stanchion mailbox sending internally. Only then may the
    * sender count as a correspondent or as internal: a forged From must not
    * buy a place in Focused.
    */

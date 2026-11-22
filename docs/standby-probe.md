@@ -27,9 +27,9 @@ Email Sending binding and a simulated Email Routing delivery (see
 > real test account before anyone turns this on. If it cannot be done, the
 > standby address does not work on that domain, whatever the code does.
 
-When cmail is kept as a standby for another mail system (for example Exchange
+When Stanchion is kept as a standby for another mail system (for example Exchange
 Online), the main domain's MX records point at the other system, so nothing
-proves day to day that cmail would receive mail if you switched. This feature
+proves day to day that Stanchion would receive mail if you switched. This feature
 gives every mailbox a second address on a subdomain whose MX already points at
 Cloudflare, and sends a test message through it once a day.
 
@@ -85,7 +85,7 @@ unknown address on the primary domain, and nothing is written to D1 for it.
 
 What this means for safety:
 
-- **No open relay.** The alias only stores mail into existing cmail
+- **No open relay.** The alias only stores mail into existing Stanchion
   mailboxes. It never forwards, redirects or sends anything.
 - **No catch-all.** An unknown local part is refused; nothing is created.
 - **Paused and offboarded people.** The standby address behaves exactly
@@ -143,7 +143,7 @@ domain looks up exact addresses only.
 - **Send path.** The Worker's native `EMAIL` binding (Cloudflare Email
   Sending) sends from the probe mailbox's primary address to its standby
   address, and the test passes only when Email Routing hands it to this
-  Worker. cmail itself takes no shortcut, but whether Cloudflare delivers it
+  Worker. Stanchion itself takes no shortcut, but whether Cloudflare delivers it
   through the public MX or inside its own network is not documented and has
   not been checked. So the probe proves Cloudflare can deliver to the
   standby address; it may not prove that an outside server can.
@@ -209,7 +209,7 @@ R2 within the time limit.
 
 Green does **not** mean:
 
-- that the **main domain** would deliver to cmail. Its MX normally points at
+- that the **main domain** would deliver to Stanchion. Its MX normally points at
   the other mail system; switching it is a separate, manual DNS step.
 - that **every person** is reachable on the standby address. Each address on
   the subdomain needs its own Email Routing rule (see Setup); the probe only
@@ -241,7 +241,7 @@ own change process.
    - The `[[send_email]] name = "EMAIL"` binding (already in the example).
    - Add `"*/10 * * * *"` to `[triggers] crons`. Without it no daily probe
      runs and the light goes amber, then red.
-3. **Email Sending** must already be set up for `MAIL_DOMAIN` (cmail's normal
+3. **Email Sending** must already be set up for `MAIL_DOMAIN` (Stanchion's normal
    outbound mail). The probe is sent from an address on it. Once a sending
    domain is onboarded it can send to any recipient
    ([limits](https://developers.cloudflare.com/email-service/platform/limits/)).
@@ -251,7 +251,7 @@ own change process.
    subdomain ([subdomains](https://developers.cloudflare.com/email-service/configuration/subdomains/)).
 5. **Routing rules on the subdomain.** Catch-all rules are only available on
    the apex domain; a subdomain needs a **literal rule per address**, each
-   with the "Send to a Worker" action pointing at the cmail email Worker
+   with the "Send to a Worker" action pointing at the Stanchion email Worker
    ([routing rules](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/)).
    At minimum add `cmail-standby-probe@standby.<your domain>`, then one rule
    per person or shared mailbox that should have a standby address. Email
@@ -319,7 +319,7 @@ By hand, on a test domain first:
 3. Send from an outside mailbox to `<someone>@standby.<test domain>` (with a
    literal rule for it): the message appears in that person's mailbox, and
    Mail trace shows the standby address.
-4. Send to an address on the subdomain with no cmail mailbox (but a rule):
+4. Send to an address on the subdomain with no Stanchion mailbox (but a rule):
    the sender gets a refusal.
 5. Disable that person's mailbox in Admin > Mailboxes and send again to both
    addresses: both refused the same way.

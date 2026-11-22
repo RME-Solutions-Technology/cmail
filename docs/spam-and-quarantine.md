@@ -10,7 +10,7 @@ related: [receiving.md, inbox-rules.md]
 
 # Spam and quarantine
 
-cmail can score inbound mail and file the worst of it into the **Spam**
+Stanchion can score inbound mail and file the worst of it into the **Spam**
 folder instead of Inbox. Filing is off until a Manager turns it on, and
 quarantine never deletes anything — it just chooses a folder.
 
@@ -29,15 +29,15 @@ quarantine never deletes anything — it just chooses a folder.
 Cloudflare Email Routing already blocks mail that fails SPF and DKIM
 together, breaks the sender's DMARC policy, or comes from a known bad
 address — see [Email authentication](email-authentication.md). What reaches
-cmail has already cleared that check. Cloudflare then reports a spam score
+Stanchion has already cleared that check. Cloudflare then reports a spam score
 on the `X-CF-SpamH-Score` header for whatever gets through.
 
-Cloudflare doesn't publish what that score means, so cmail always records it
+Cloudflare doesn't publish what that score means, so Stanchion always records it
 in **Management > Mail trace**, for every inbound message, whether or not
 filing is turned on. Recording is not filing: a score alone never moves a
 message until an operator sets `SPAM_QUARANTINE_SCORE` (see
 [Configuration reference](configuration.md#inbound-worker-limits)). Left
-blank, cmail only records the score and always delivers to Inbox.
+blank, Stanchion only records the score and always delivers to Inbox.
 
 ## What quarantine means
 
@@ -109,9 +109,9 @@ for where it lives.
 
 ## What this is not
 
-Quarantine is a filing choice inside cmail, not a replacement for the SPF,
+Quarantine is a filing choice inside Stanchion, not a replacement for the SPF,
 DKIM, and DMARC boundary Cloudflare Email Routing already enforces before a
-message reaches cmail at all, and not a bulk-unsubscribe or mailing-list
+message reaches Stanchion at all, and not a bulk-unsubscribe or mailing-list
 management tool. See [Email authentication and sender requirements](email-authentication.md)
 for that boundary.
 

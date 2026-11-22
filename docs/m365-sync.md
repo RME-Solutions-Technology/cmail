@@ -1,6 +1,6 @@
 ---
 title: "Microsoft 365 mailbox sync"
-summary: "How to keep cmail accounts and shared mailboxes in step with a Microsoft 365 tenant, read only."
+summary: "How to keep Stanchion accounts and shared mailboxes in step with a Microsoft 365 tenant, read only."
 applies_to: standby
 audience: [operator, manager]
 switch: "Admin > Microsoft 365 > Directory sync"
@@ -15,11 +15,11 @@ November 2026 (dry run first, then live).
 
 Optional and off by default. When a manager turns it on, the email Worker
 reads the organisation's Microsoft 365 (Entra ID) users on a schedule and keeps
-cmail in step: new licensed users get a pending account and a personal
+Stanchion in step: new licensed users get a pending account and a personal
 mailbox, and people who are disabled, unlicensed or removed are paused. It
 only ever **reads** from Microsoft, and it never deletes mail or mailboxes.
 
-This is the directory half of using cmail as a standby for Exchange Online:
+This is the directory half of using Stanchion as a standby for Exchange Online:
 the people who would need the standby already have accounts when it is
 needed. Sign-in itself is separate (Google, Microsoft, an email code, or the
 [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge), which
@@ -46,7 +46,7 @@ person how to sign in.
 - [How it works](#how-it-works)
 - [Sync points, and why these ones](#sync-points-and-why-these-ones)
 - [Which accounts are synced](#which-accounts-are-synced)
-- [What the sync changes in cmail](#what-the-sync-changes-in-cmail)
+- [What the sync changes in Stanchion](#what-the-sync-changes-in-stanchion)
 - [First sign-in](#first-sign-in)
 - [Mass-pause brake](#mass-pause-brake)
 - [The switch (Admin > Microsoft 365 > Directory sync)](#the-switch-admin--microsoft-365--directory-sync)
@@ -105,7 +105,7 @@ Not used, on purpose:
 
 ## Which accounts are synced
 
-An Entra object becomes a cmail **person** when all of these hold:
+An Entra object becomes a Stanchion **person** when all of these hold:
 
 1. it is not deleted (no `@removed`);
 2. its primary SMTP address (`mail`) is on one of the organisation's mail
@@ -169,7 +169,7 @@ are two ways to tell it, and they can be used together:
    (below) and migration `0026`.
 
 Either way the object is treated as shared whatever its licence or sign-in
-state, and both take the same path in cmail. The sync:
+state, and both take the same path in Stanchion. The sync:
 
 - creates the shared mailbox if no mailbox has that address, or links an
   existing shared mailbox with that address (`m365_sync.shared_adopted`). An
@@ -280,9 +280,9 @@ can then decide what to do with it.
 Without either option, shared mailboxes are not synced at all. Create them
 in Admin as before.
 
-## What the sync changes in cmail
+## What the sync changes in Stanchion
 
-| Microsoft 365 | cmail (live mode) |
+| Microsoft 365 | Stanchion (live mode) |
 |---|---|
 | New in-scope person, address free | Creates a **pending** standard account, a personal mailbox at that address and the owner's Full assignment, in one batch with `user.provisioned` and `mailbox.created` audit rows |
 | New in-scope person, a standard account with that address exists (pending or active) | **Adopts** it: links it, no new account (`m365_sync.user_adopted`) |
@@ -324,13 +324,13 @@ Rules that always hold:
 ## First sign-in
 
 While the sync is **on**, a person it created (or adopted) signs in for the
-first time with **Sign in with Microsoft** on cmail's own sign-in page, with
+first time with **Sign in with Microsoft** on Stanchion's own sign-in page, with
 no invitation. Code: `apps/web/src/lib/server/m365-sync-signin.ts`, called
 from the Microsoft OIDC callback only when no identity is bound to the
 signed-in subject and there is no invitation or bootstrap proof.
 
 The decision rests only on the **ID token** returned by the token endpoint,
-verified by cmail, never on UserInfo, the email or the UPN:
+verified by Stanchion, never on UserInfo, the email or the UPN:
 
 1. Signature: RS256 with a key from the configured tenant's published keys
    (`https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys?appid=<client id>`;
@@ -507,9 +507,9 @@ those roles).
    without it ([checkMemberGroups](https://learn.microsoft.com/en-us/graph/api/directoryobject-checkmembergroups)).
 
 The app can read every user's profile in the tenant. It cannot read mail,
-cannot change anything in Entra, and cmail never sends it a write. With
+cannot change anything in Entra, and Stanchion never sends it a write. With
 `MailboxSettings.Read` it can also read every mailbox's settings (time zone,
-working hours, automatic-reply text and mailbox type), though cmail only
+working hours, automatic-reply text and mailbox type), though Stanchion only
 ever asks for the mailbox type. Exchange's
 [RBAC for Applications](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)
 can grant `Application MailboxSettings.Read` to a scope of mailboxes instead

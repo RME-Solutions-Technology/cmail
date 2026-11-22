@@ -12,7 +12,7 @@ related: [operations.md, downstream-implementations.md]
 
 This page explains where each kind of instance setting lives, what an upgrade
 from upstream changes, and how to upgrade a plain copy or a fork without losing
-anything. The detailed runbook is in [Running cmail: upgrade](operations.md#upgrade);
+anything. The detailed runbook is in [Running Stanchion: upgrade](operations.md#upgrade);
 this page explains the why and the checks around it.
 
 **In this article**
@@ -63,7 +63,7 @@ Use this when your checkout tracks upstream directly and has no code changes.
 1. Read the [changelog](../CHANGELOG.md) since your version. Note any new
    migration, binding, cron or secret.
 2. Record the current Pages deployment and Worker versions, and take a backup
-   point (see [Running cmail](operations.md#upgrade)).
+   point (see [Running Stanchion](operations.md#upgrade)).
 3. Pull and check:
 
    ```sh
@@ -140,6 +140,6 @@ configuration directory.
 ## Rolling back
 
 Code rolls back with Cloudflare's deployment history (see
-[Running cmail: roll back](operations.md#roll-back)). Migrations can't be
+[Running Stanchion: roll back](operations.md#roll-back)). Migrations can't be
 undone: to undo a migration, restore D1 from Time Travel or a backup taken
 before it. That's why you take a backup point before `pnpm db:migrate`.

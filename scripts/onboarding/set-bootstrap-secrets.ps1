@@ -3,7 +3,7 @@
 <#
 .SYNOPSIS
   Sets (or, with -Remove, deletes) the two one-time bootstrap secrets that let
-  the first manager sign in to a new cmail instance.
+  the first manager sign in to a new Stanchion instance.
 
 .DESCRIPTION
   Step 4 of docs/onboarding-microsoft-365.md and docs/configuration.md#bootstrap.
@@ -29,7 +29,7 @@
 .PARAMETER Remove
   Delete both secrets instead (after a successful bootstrap).
 .PARAMETER RepoRoot
-  The cmail checkout that has Wrangler installed. Defaults to this repository.
+  The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
   pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -AdminEmail admin@example.com

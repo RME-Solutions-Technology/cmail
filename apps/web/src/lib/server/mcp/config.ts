@@ -1,4 +1,4 @@
-// Shared constants and deployment-derived values for cmail's MCP server and
+// Shared constants and deployment-derived values for Stanchion's MCP server and
 // its OAuth 2.1 authorization server. Everything security-relevant is derived
 // from APP_URL (a deployment boundary, never a D1 setting) so the issuer and
 // token audience cannot drift away from the real origin.
@@ -33,7 +33,7 @@ export const SCOPE_DESCRIPTIONS: Record<McpScope, { label: string; detail: strin
   },
   'calendar.read': {
     label: 'Read calendar',
-    detail: 'See calendar events cmail has recorded from meeting invitations in the mailboxes you choose.',
+    detail: 'See calendar events Stanchion has recorded from meeting invitations in the mailboxes you choose.',
     risk: 'low',
   },
 };

@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-# ─── cmail backup worker — Cloudflare Workers config ──────────────────────
+# ─── Stanchion backup worker — Cloudflare Workers config ──────────────────────
 # Optional. Copies mail bodies/attachments and a daily D1 dump into a separate
 # R2 bucket in the same account. Copy to `wrangler.toml` (gitignored) and fill
 # in YOUR values. Create the backup bucket first:

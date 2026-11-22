@@ -10,13 +10,13 @@
       : data.risk === 'punycode'
         ? 'This address uses international characters that can look identical to a familiar brand — a Cyrillic "а" instead of a Latin "a", for example.'
         : data.risk === 'unverified'
-          ? "cmail didn't create this link, so it can't tell where it came from. Check where it goes before continuing."
+          ? "Stanchion didn't create this link, so it can't tell where it came from. Check where it goes before continuing."
           : 'The link text names one website, but the link points somewhere else — a common phishing trick.',
   );
 </script>
 
 <svelte:head>
-  <title>Check this link · {data.appName || 'cmail'}</title>
+  <title>Check this link · {data.appName || 'Stanchion'}</title>
   <meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
@@ -60,7 +60,7 @@
     {/if}
 
     <p class="safety-note">
-      cmail never asks for your password by email. If this link claims to be a sign-in page for a
+      Stanchion never asks for your password by email. If this link claims to be a sign-in page for a
       service you use, open that service directly instead.
     </p>
   </section>

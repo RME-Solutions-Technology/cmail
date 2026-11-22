@@ -2,7 +2,7 @@
   import { page } from '$app/state';
 
   const name = $derived(page.data?.orgName || page.data?.appName || 'This organisation');
-  const appName = $derived(page.data?.appName || 'cmail');
+  const appName = $derived(page.data?.appName || 'Stanchion');
   const supportEmail = $derived(page.data?.supportEmail || '');
 </script>
 
@@ -19,7 +19,7 @@
     <p>This notice explains the information handled when you use {appName}, the organisational email service operated by {name}.</p>
 
     <h2>Identity and sign-in</h2>
-    <p>{appName} authenticates invited users via Google or Microsoft. It requests the <code>openid</code>, <code>email</code> and <code>profile</code> scopes and receives a stable account identifier, an email address and a name. Google may also return a profile-picture claim, but cmail does not store it. Microsoft supplies a provider-asserted email address without a separate <code>email_verified</code> claim.</p>
+    <p>{appName} authenticates invited users via Google or Microsoft. It requests the <code>openid</code>, <code>email</code> and <code>profile</code> scopes and receives a stable account identifier, an email address and a name. Google may also return a profile-picture claim, but Stanchion does not store it. Microsoft supplies a provider-asserted email address without a separate <code>email_verified</code> claim.</p>
     <p>The service stores the identity provider and stable account identifier needed to bind future sign-ins to the invited account. It may store the email address and name when provisioning or completing that account. OAuth access and refresh tokens are not retained. These identity details are used for authentication and access control, not advertising or sale. The service does not request access to a personal inbox, Drive, contacts, files or search history.</p>
 
     <h2>Mail service information</h2>

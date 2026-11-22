@@ -1,7 +1,7 @@
 -- Microsoft 365 welcome emails: the sign-in name (docs/m365-welcome-emails.md).
 -- The welcome email tells a person which account to use at Microsoft sign-in.
 -- That is their userPrincipalName (UPN), which can differ from their primary
--- SMTP address (the cmail account address). The sync records the UPN on the
+-- SMTP address (the Stanchion account address). The sync records the UPN on the
 -- person's link each time it sees them. '' = not recorded yet (the email then
 -- names the account address, as before).
 --

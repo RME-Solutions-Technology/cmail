@@ -172,7 +172,7 @@ describe('session cookie checks', () => {
 });
 
 describe('central admin authorization', () => {
-  it('does not authenticate Access headers or an Access cookie as a cmail session', async () => {
+  it('does not authenticate Access headers or an Access cookie as a Stanchion session', async () => {
     const { response, resolve } = await invoke({
       path: '/admin',
       headers: {

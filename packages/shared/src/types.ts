@@ -2,7 +2,7 @@
 export type UserRole = 'standard' | 'manager';
 export type UserStatus = 'pending' | 'active' | 'paused' | 'offboarded';
 /**
- * Every identity provider cmail can bind a user_identities row to. 'email'
+ * Every identity provider Stanchion can bind a user_identities row to. 'email'
  * is the invitation-scoped one-time-code method (see email-otp.ts) — it is
  * deliberately NOT a valid value of users.auth_provider below; that column
  * keeps its original narrower CHECK (see migration 0013's comment for why),
@@ -31,7 +31,7 @@ export interface User {
   last_auth_country: string | null;
 }
 
-/** Immutable OpenID Connect identity bound to one cmail user. */
+/** Immutable OpenID Connect identity bound to one Stanchion user. */
 export interface UserIdentity {
   provider: IdentityProvider;
   subject: string;

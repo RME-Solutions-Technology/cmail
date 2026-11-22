@@ -1,4 +1,4 @@
-// Starts cmail for the mobile suite: a production build served by
+// Starts Stanchion for the mobile suite: a production build served by
 // `wrangler pages dev`, local-only D1 and R2 under .tmp/e2e-mobile, every real
 // migration applied, invented fixtures seeded, and a signed session per test
 // user written to .tmp/e2e-mobile/sessions.json for the specs to use.

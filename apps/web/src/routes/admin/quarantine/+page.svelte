@@ -18,7 +18,7 @@
   }
 </script>
 
-<svelte:head><title>Quarantine · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Quarantine · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="admin-page" aria-labelledby="quarantine-heading">
   <header class="page-header">

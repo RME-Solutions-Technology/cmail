@@ -139,7 +139,7 @@ interface LinkGuard {
   /**
    * When set, every other http(s) link is also routed through the warning
    * page with this signature, so the page can check the destination against
-   * the local phishing-domain list and then redirect. Only links cmail itself
+   * the local phishing-domain list and then redirect. Only links Stanchion itself
    * signed are ever redirected without a warning.
    */
   sign?: (href: string) => string | null;

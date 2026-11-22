@@ -47,7 +47,7 @@ describe('standby "switch sooner" note', () => {
 
   it('renders in the Mail feed section (Graph source on or off) with the Graph controls', () => {
     for (const enabled of [false, true]) {
-      const { body } = render(MailFeed, { props: { data: { overview: mirrorOverview(enabled), appName: 'cmail' }, form: null } as never });
+      const { body } = render(MailFeed, { props: { data: { overview: mirrorOverview(enabled), appName: 'Stanchion' }, form: null } as never });
       expect(body).toContain('data-testid="standby-sooner-note"');
       expect(body.includes(STANDBY_SWITCH_SOONER_NOTE) || body.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
       expect(body).toContain('Graph source (recommended)');
@@ -64,7 +64,7 @@ describe('standby "switch sooner" note', () => {
   });
 
   it('renders on Admin > Standby, even when that page has nothing else to show', () => {
-    const { body } = render(StandbyPage, { props: { data: { overview: null, appName: 'cmail' }, form: null } as never });
+    const { body } = render(StandbyPage, { props: { data: { overview: null, appName: 'Stanchion' }, form: null } as never });
     expect(body).toContain('data-testid="standby-sooner-note"');
     expect(body.includes(STANDBY_SWITCH_SOONER_NOTE) || body.includes(escaped(STANDBY_SWITCH_SOONER_NOTE))).toBe(true);
   });

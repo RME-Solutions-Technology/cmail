@@ -128,9 +128,9 @@ describe('Exchange mirror: filing', () => {
     t.assertNothingSent();
   });
 
-  it('files cmail\'s own colleague mail (a recorded send) unread with a notification, only for the recorded recipients', async () => {
+  it('files Stanchion\'s own colleague mail (a recorded send) unread with a notification, only for the recorded recipients', async () => {
     const t = setup();
-    // alice's Sent copy of the send, as cmail stored it (the provider reported the Message-ID).
+    // alice's Sent copy of the send, as Stanchion stored it (the provider reported the Message-ID).
     const sentCopy = (id: string, subject: string, receivedAt = "datetime('now', '-1 hour')") => t.sqlite.prepare(
       `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, to_addresses, cc_addresses, subject, folder, received_at)
        VALUES (?, 'mbx-alice', '<plan-1@example.test>', 'outbound', 'alice@example.test', '["bob@example.test"]', '[]', ?, 'sent', ${receivedAt})`,
@@ -273,7 +273,7 @@ describe('Exchange mirror: filing', () => {
 });
 
 describe('Exchange mirror: Sent copies', () => {
-  it('files a Sent copy, with Bcc, for a cmail user who sent through Exchange', async () => {
+  it('files a Sent copy, with Bcc, for a Stanchion user who sent through Exchange', async () => {
     const t = setup();
     await t.deliver(journalReport({
       inner: innerMessage(),

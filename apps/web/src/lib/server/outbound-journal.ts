@@ -881,7 +881,7 @@ async function materializeTarget(
     : null;
   // Focused Inbox (docs/focused-inbox.md): mail from another mailbox of this
   // organisation, still bound for the Inbox after inbox rules. The sender is
-  // a cmail mailbox, so its own domain is "internal". There are no headers on
+  // a Stanchion mailbox, so its own domain is "internal". There are no headers on
   // this path. null (switch off) stores nothing.
   const focus = target.direction === 'internal' && (ruleOutcome?.folder ?? target.folder) === 'inbox'
     ? await decideFocusAtDelivery(db, {
@@ -889,7 +889,7 @@ async function materializeTarget(
       sender: journal.from_address,
       mailDomain: senderDomain(journal.from_address),
       headers: null,
-      // Sent by a signed-in cmail user from one of this organisation's mailboxes.
+      // Sent by a signed-in Stanchion user from one of this organisation's mailboxes.
       senderAuthenticated: true,
     })
     : null;

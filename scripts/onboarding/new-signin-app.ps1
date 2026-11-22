@@ -2,8 +2,8 @@
 
 <#
 .SYNOPSIS
-  Creates (or reuses) the Entra app staff use to sign in to cmail, and stores
-  its client id and a new client secret on the cmail Pages project.
+  Creates (or reuses) the Entra app staff use to sign in to Stanchion, and stores
+  its client id and a new client secret on the Stanchion Pages project.
 
 .DESCRIPTION
   Step 3 of docs/onboarding-microsoft-365.md.
@@ -48,7 +48,7 @@
 .PARAMETER SkipSecret
   Create or check the app only; store nothing on Cloudflare.
 .PARAMETER RepoRoot
-  The cmail checkout that has Wrangler installed. Defaults to this repository.
+  The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
   pwsh -File scripts/onboarding/new-signin-app.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -AppUrl https://mail.example.com -PagesProject cmail-web -WhatIf
@@ -102,7 +102,7 @@ if (-not $AppId) {
     }
   }
   $audience = Get-FirstLine (Invoke-Az ad app show --id $AppId --query signInAudience -o tsv)
-  if ($audience -ne 'AzureADMyOrg') { Write-Warning "App $AppId is '$audience', not single tenant. cmail expects a single-tenant app for this guide." }
+  if ($audience -ne 'AzureADMyOrg') { Write-Warning "App $AppId is '$audience', not single tenant. Stanchion expects a single-tenant app for this guide." }
 }
 
 if (-not $AppId) {

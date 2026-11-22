@@ -9,7 +9,7 @@
 // 3. Gets the app token first: a credential problem stops the run before any
 //    mailbox is touched.
 // 4. Plans: queues the job's frozen selection as 'pending' items in chunks,
-//    keyed by (cmail message id, Entra object id). INSERT OR IGNORE plus the
+//    keyed by (Stanchion message id, Entra object id). INSERT OR IGNORE plus the
 //    0024 insert guard mean an existing item, above all a 'copied' one, is
 //    never reset.
 // 5. Works due items (pending, or failed with a retry due), fewest attempts
@@ -21,7 +21,7 @@
 //      b. look for the same Message-ID, ignoring our own copies: found =
 //         Exchange already has it, skip;
 //      c. build the message; too big for one request = skip;
-//      d. create it, then restore "unread" if it was unread in cmail;
+//      d. create it, then restore "unread" if it was unread in Stanchion;
 //      e. record the outcome. A copied item is final (triggers in 0024).
 //    Draft canary: if Exchange says a copy (new or found) is a draft, the job
 //    halts at once; nothing more is created until a manager has looked.

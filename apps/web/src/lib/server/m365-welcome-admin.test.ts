@@ -32,7 +32,7 @@ function setup(options: { canSend?: boolean | 'down' | 'none'; signIn?: 'microso
   const env: Record<string, unknown> & { DB: D1Database } = {
     DB: d1,
     APP_URL: 'https://mail.example.test',
-    APP_NAME: 'cmail',
+    APP_NAME: 'Stanchion',
     MAIL_DOMAIN: DOMAIN,
     ORG_NAME: 'Example Org',
     SYSTEM_EMAIL: `noreply@${DOMAIN}`,
@@ -135,7 +135,7 @@ describe('welcome emails admin: defaults and readiness', () => {
     await applyWelcomeAdminAction(t.env, t.manager, 'welcome_refresh', {}, NOW);
     const row = t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_welcome_profile'`).get() as { value: string };
     expect(parseWelcomeProfile(row.value)).toEqual({
-      v: 1, appUrl: 'https://mail.example.test', appName: 'cmail', orgName: 'Example Org', fromEmail: `noreply@${DOMAIN}`,
+      v: 1, appUrl: 'https://mail.example.test', appName: 'Stanchion', orgName: 'Example Org', fromEmail: `noreply@${DOMAIN}`,
       fromName: 'Example Org Mail', contactEmail: `desk@${DOMAIN}`, brandColor: '#0078d4', signIn: 'microsoft',
     });
     const offDomain = await buildWelcomeProfile({ ...t.env, SYSTEM_EMAIL: 'someone@other.test' });
@@ -275,7 +275,7 @@ describe('welcome emails admin: who would be emailed (count and list)', () => {
     t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('exchange_mirror_enabled', 'true')`).run();
     const overview = await loadWelcomeOverview(t.env, 'manager-1');
     expect(overview.standby).toBe(true);
-    expect(overview.preview?.text).toContain('uses cmail as a standby for email emergencies. Nothing changes day to day.');
+    expect(overview.preview?.text).toContain('uses Stanchion as a standby for email emergencies. Nothing changes day to day.');
   });
 });
 

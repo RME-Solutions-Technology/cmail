@@ -172,7 +172,7 @@ beforeEach(() => {
   mocks.emailOtpEnabled.mockReturnValue(true);
   mocks.createOtpProof.mockResolvedValue('signed-proof');
   mocks.consumeRateLimit.mockResolvedValue({ allowed: true });
-  mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: 'no-reply@example.com', systemFromName: 'Mail', orgName: 'Example', appName: 'cmail', appUrl: '' });
+  mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: 'no-reply@example.com', systemFromName: 'Mail', orgName: 'Example', appName: 'Stanchion', appUrl: '' });
   mocks.countryAllowed.mockReturnValue(true);
   mocks.turnstileEnabled.mockReturnValue(false);
   mocks.verifyTurnstile.mockResolvedValue(true);
@@ -249,7 +249,7 @@ describe('request a code', () => {
 
   it.each([
     ['there is no outbound provider', () => mocks.detectProvider.mockReturnValue('none')],
-    ['there is no system From address', () => mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: '', orgName: 'Example', appName: 'cmail' })],
+    ['there is no system From address', () => mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: '', orgName: 'Example', appName: 'Stanchion' })],
   ])('audits, but does not reveal, a deployment that cannot send mail because %s', async (_label, arrange) => {
     arrange();
     const { result } = await request();

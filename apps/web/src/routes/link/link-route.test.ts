@@ -34,7 +34,7 @@ async function visit(params: Record<string, string>, options: { signedIn?: boole
 const signed = (href: string, userId = 'user-1') => ({ u: href, s: linkSignature(SECRET, userId, href) });
 
 describe('/link click check', () => {
-  it('redirects a cmail-signed link that is not on the list', async () => {
+  it('redirects a Stanchion-signed link that is not on the list', async () => {
     const result = await visit(signed('https://example.com/news?id=1'));
     expect(result.redirect).toMatchObject({ status: 303, location: 'https://example.com/news?id=1' });
   });

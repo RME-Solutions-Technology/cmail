@@ -104,7 +104,7 @@ export interface WelcomeProfile {
   /**
    * How people the sync created sign in on their own, which decides the
    * wording of step 2: 'access' when the Cloudflare Access bridge is on (the
-   * Access login page appears, no cmail button), else 'microsoft' when
+   * Access login page appears, no Stanchion button), else 'microsoft' when
    * Microsoft sign-in has the sync's tenant (docs/m365-sync.md, First
    * sign-in), else 'none' (cannot send).
    */
@@ -151,7 +151,7 @@ export function parseWelcomeProfile(raw: string | null | undefined): WelcomeProf
   const profile: WelcomeProfile = {
     v: 1,
     appUrl: cleanAppUrl(parsed.appUrl),
-    appName: cleanLine(parsed.appName, 80) || 'cmail',
+    appName: cleanLine(parsed.appName, 80) || 'Stanchion',
     orgName: cleanLine(parsed.orgName, 200),
     fromEmail: typeof parsed.fromEmail === 'string' ? parsed.fromEmail.trim().toLowerCase() : '',
     fromName: cleanLine(parsed.fromName, 120),
@@ -350,7 +350,7 @@ export function renderWelcomeEmail(input: WelcomeEmailInput): WelcomeEmail {
   const steps = [
     { text: `Open ${profile.appUrl}`, html: `Open <a href="${escapeHtml(profile.appUrl)}" style="color:${accent};text-decoration:underline;">${escapeHtml(profile.appUrl)}</a>` },
     profile.signIn === 'access'
-      // Behind the Cloudflare Access bridge there is no cmail sign-in button:
+      // Behind the Cloudflare Access bridge there is no Stanchion sign-in button:
       // the Access login page asks for the work account.
       ? { text: `Sign in with your work account (${signInName}) when asked.`, html: `Sign in with your work account (${escapeHtml(signInName)}) when asked.` }
       : { text: `Choose Sign in with Microsoft and use your work account (${signInName}).`, html: `Choose <strong>Sign in with Microsoft</strong> and use your work account (${escapeHtml(signInName)}).` },

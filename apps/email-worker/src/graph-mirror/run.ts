@@ -3,7 +3,7 @@
 //
 // Why it exists: journal reports carry the ORIGINAL sender in From, and
 // Cloudflare Email Routing applies the sender's DMARC policy, so reports for
-// mail from any p=reject sender are refused before cmail sees them. This
+// mail from any p=reject sender are refused before Stanchion sees them. This
 // source reads each mailbox from Microsoft 365 instead, so no SMTP hop and
 // no sender DMARC is involved.
 //
@@ -155,7 +155,7 @@ async function alreadyFiled(db: D1Database, mailboxId: string, sent: boolean, he
     const slice = headers.slice(start, start + IN_CHUNK);
     const marks = slice.map(() => '?').join(', ');
     // Inbound: the unique (mailbox_id, message_id_header) index of migration
-    // 0001. Sent: cmail's own sends and earlier Sent copies, by the
+    // 0001. Sent: Stanchion's own sends and earlier Sent copies, by the
     // (mailbox_id, folder) index; and our Sent copy ids wherever it was moved.
     const sql = sent
       ? `SELECT message_id_header AS h FROM messages WHERE mailbox_id = ? AND folder = 'sent' AND message_id_header IN (${marks})`

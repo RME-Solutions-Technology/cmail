@@ -1,5 +1,5 @@
-// Applies classified Microsoft 365 directory objects to cmail. The rules are
-// in docs/m365-sync.md, "What the sync changes in cmail". In short:
+// Applies classified Microsoft 365 directory objects to Stanchion. The rules are
+// in docs/m365-sync.md, "What the sync changes in Stanchion". In short:
 // - Keyed on the Entra object id (m365_sync_links), never on an address.
 // - New in-scope people get a pending standard account and a personal
 //   mailbox; an existing standard account with the same address is adopted.
@@ -230,7 +230,7 @@ async function personOut(ctx: ApplyContext, entry: M365PendingEntry, link: LinkR
   ctx.round.pauseQueue.push({ id: link.object_id, address: (entry.address || user.email).slice(0, 254), reason: reason.slice(0, 64) });
 }
 
-/** Applies (live) or reports (dry run) one queued pause, re-checking cmail first. */
+/** Applies (live) or reports (dry run) one queued pause, re-checking Stanchion first. */
 export async function applyQueuedPause(ctx: ApplyContext, item: M365QueuedPause): Promise<void> {
   const links = await loadLinks(ctx, [item.id]);
   const link = links.get(item.id);

@@ -36,7 +36,7 @@ async function expectRedirectError(promise: Promise<unknown>): Promise<URL> {
 describe('discovery metadata', () => {
   it('publishes RFC 9728 and RFC 8414 documents derived from APP_URL', () => {
     const env = { APP_URL: `${APP_URL}/` };
-    expect(protectedResourceMetadata(env, 'cmail')).toMatchObject({
+    expect(protectedResourceMetadata(env, 'Stanchion')).toMatchObject({
       resource: RESOURCE,
       authorization_servers: [APP_URL],
       bearer_methods_supported: ['header'],

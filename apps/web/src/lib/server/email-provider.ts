@@ -1,5 +1,5 @@
 // Identifies which identity provider (Google or Microsoft) actually hosts a
-// given email address, so invitations are only sent to addresses cmail can
+// given email address, so invitations are only sent to addresses Stanchion can
 // authenticate against. Well-known consumer domains are classified directly;
 // everything else is resolved by an MX lookup over DNS-over-HTTPS, since
 // Node's `dns` module is not available in the Workers runtime.

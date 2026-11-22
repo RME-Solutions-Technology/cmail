@@ -1,10 +1,10 @@
 // Cloudflare Email Sending lifecycle events (delivered, deferred, bounced,
 // failed, rejected, complained) arrive on a queue through an event
-// subscription on each sending domain. Each event that matches mail cmail sent
+// subscription on each sending domain. Each event that matches mail Stanchion sent
 // is stored in delivery_events, and a terminal failure adds the recipient to
 // failed_recipients on the mail trace and on the sender's Sent copy, which the
 // message view already shows, and an "Undeliverable" notice goes to the
-// sender's Inbox (bounce-notice.ts). Events for mail cmail did not send (another app
+// sender's Inbox (bounce-notice.ts). Events for mail Stanchion did not send (another app
 // on the same sending domain) are acknowledged and dropped without storage.
 
 import { sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';

@@ -1,6 +1,6 @@
 <script lang="ts">
   let { data, form } = $props();
-  const appName = $derived(data.appName || 'cmail');
+  const appName = $derived(data.appName || 'Stanchion');
   const overview = $derived(data.overview);
   const toggle = $derived(overview?.toggle);
   const status = $derived(overview?.status);

@@ -11,7 +11,7 @@
     already_in_exchange: 'Already in Exchange',
     body_missing: 'Body missing in storage',
     attachment_missing: 'Attachment missing in storage',
-    message_gone: 'Deleted in cmail',
+    message_gone: 'Deleted in Stanchion',
     folder_not_in_scope: 'Moved out of the chosen folders',
     bad_message: 'Unreadable message record',
     access_denied: 'Access denied (mailbox outside the app scope?)',
@@ -20,7 +20,7 @@
     bad_response: 'Unexpected answer from Microsoft',
     server_error: 'Microsoft server error',
     network: 'Network error',
-    internal: 'cmail could not read the message',
+    internal: 'Stanchion could not read the message',
     copy_not_found: 'Copy disappeared before it could be set unread',
     created_as_draft: 'Exchange created a draft (job halted)',
     draft_state_unknown: 'Exchange did not confirm it is not a draft (job halted)',
@@ -46,13 +46,13 @@
   const formFolders = $derived(new Set(dry?.params.folders ?? ['inbox']));
 </script>
 
-<svelte:head><title>Copy back to Exchange · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Copy back to Exchange · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="copy-page" aria-labelledby="copy-heading">
   <header class="page-heading">
     <p class="eyebrow">Mail</p>
     <h1 id="copy-heading">Copy back to Exchange</h1>
-    <p>After an Exchange Online outage, copy the mail that arrived in cmail meanwhile into each person's Exchange mailbox. Copies keep the received time, sender, recipients, attachments and read state, and carry the category "cmail standby copy". Each message is copied at most once. Nothing is deleted in cmail or in Exchange.</p>
+    <p>After an Exchange Online outage, copy the mail that arrived in Stanchion meanwhile into each person's Exchange mailbox. Copies keep the received time, sender, recipients, attachments and read state, and carry the category "cmail standby copy". Each message is copied at most once. Nothing is deleted in Stanchion or in Exchange.</p>
   </header>
 
   {#if form?.error}<div class="notice notice-error" role="alert">{form.error}</div>{/if}
@@ -110,7 +110,7 @@
           <legend>Folders</legend>
           <label class="check"><input type="checkbox" name="folders" value="inbox" checked={formFolders.has('inbox')} /> Inbox</label>
           <label class="check"><input type="checkbox" name="folders" value="archive" checked={formFolders.has('archive')} /> Archive</label>
-          <label class="check"><input type="checkbox" name="folders" value="sent" checked={formFolders.has('sent')} /> Sent (only if people sent mail from cmail)</label>
+          <label class="check"><input type="checkbox" name="folders" value="sent" checked={formFolders.has('sent')} /> Sent (only if people sent mail from Stanchion)</label>
         </fieldset>
         <button type="submit" class="btn" disabled={!overview.installed}>Dry run</button>
       </form>
@@ -193,7 +193,7 @@
               </tbody>
             </table>
           </div>
-          <p class="muted">Skipped and given-up messages stay readable in cmail. Users can forward them, or a manager can export them.</p>
+          <p class="muted">Skipped and given-up messages stay readable in Stanchion. Users can forward them, or a manager can export them.</p>
         {/if}
       </section>
     {/if}

@@ -1,5 +1,5 @@
 // Help page for the first sign-in steps in the Microsoft 365 welcome email
-// (docs/m365-welcome-emails.md). It needs no cmail session: the hook protects
+// (docs/m365-welcome-emails.md). It needs no Stanchion session: the hook protects
 // only /mail, /admin and /api. That is NOT the same as reachable by anyone when
 // Cloudflare Access covers the whole hostname: Access then shows its own login
 // page first, so a person who has not signed in yet cannot read this page.

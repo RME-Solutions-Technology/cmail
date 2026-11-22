@@ -75,7 +75,7 @@ export function publicRuntimeConfig(env: Record<string, unknown>) {
   const primary = envString(env, 'BRAND_PRIMARY_COLOR');
   const brandPrimaryColor = /^#[\da-f]{6}$/i.test(primary) ? primary : DEFAULT_PRIMARY;
   return {
-    appName: envString(env, 'APP_NAME') || 'cmail',
+    appName: envString(env, 'APP_NAME') || 'Stanchion',
     appUrl: safePublicUrl(envString(env, 'APP_URL'), ''),
     mailDomain: normalizeDomain(envString(env, 'MAIL_DOMAIN')) || '',
     brandLogoUrl: safePublicUrl(envString(env, 'BRAND_LOGO_URL'), '/logo.svg'),

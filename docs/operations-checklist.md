@@ -37,7 +37,7 @@ Use this checklist for each environment. Adapt it to your organisation's change-
 - [ ] If sign-in is restricted to approved countries, a refused sign-in creates a pending request, notifies managers once, and the approve/deny/revoke actions in Travel approvals all work
 - [ ] Known inbound recipient tested
 - [ ] Unknown inbound recipient rejected
-- [ ] A disabled or offboarded address returns the same generic SMTP-time rejection as an unknown address; no cmail outbound auto-reply is sent
+- [ ] A disabled or offboarded address returns the same generic SMTP-time rejection as an unknown address; no Stanchion outbound auto-reply is sent
 - [ ] Worker-only `INBOUND_SENDER_HASH_KEY` present and malformed/missing-key fail-closed behavior tested
 - [ ] Native inbound actor, aggregate, and one-per-minute alert bindings have unique production/preview namespaces; a controlled threshold emits at most one generic no-PII Worker warning per colo/minute while delivery continues
 - [ ] Inbound byte/count/body-complexity limits and shared mailbox storage quota exercised at exact boundaries
@@ -73,10 +73,10 @@ Use this checklist for each environment. Adapt it to your organisation's change-
 - [ ] Review **Admin → Mail trace → Delivery recovery**; reconcile every `dispatching` or `ambiguous` send with the provider before taking action, and allow `accepted` records to finish idempotent local materialization
 - [ ] Review mailbox reservation denials, D1/R2 growth, and orphan-object reconciliation results
 - [ ] Review bounces, complaints, and provider reputation signals
-- [ ] Review Cloudflare Email Routing/Worker rejection metrics and logs for sustained abuse or unexpected unavailable-recipient volume; rejected inbound attempts are not durable per-attempt cmail trace records
+- [ ] Review Cloudflare Email Routing/Worker rejection metrics and logs for sustained abuse or unexpected unavailable-recipient volume; rejected inbound attempts are not durable per-attempt Stanchion trace records
 - [ ] Review DMARC aggregate reports, authentication drift, and unauthorised senders; investigate every sustained failure
 - [ ] Review MTA-STS and TLS-RPT failures, certificate changes, and MX drift, when enabled
-- [ ] Confirm message purpose and volume remain within cmail's non-bulk scope; stop marketing or campaign use until the documented missing controls exist
+- [ ] Confirm message purpose and volume remain within Stanchion's non-bulk scope; stop marketing or campaign use until the documented missing controls exist
 - [ ] Review Cloudflare Email Sending quota, activity logs, native/service bindings, optional REST-token access, and preview setting, when enabled
 - [ ] Confirm backups and perform scheduled restore exercises
 - [ ] Retain D1 and R2 recovery points as matching pairs; test an isolated restore before relying on a new backup process

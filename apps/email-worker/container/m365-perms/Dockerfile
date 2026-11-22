@@ -1,4 +1,4 @@
-# cmail shared mailbox access collector (docs/m365-mailbox-permissions.md).
+# Stanchion shared mailbox access collector (docs/m365-mailbox-permissions.md).
 # Read-only: PowerShell 7 + ExchangeOnlineManagement, one script.
 #
 # Versions are pinned exactly and checked at build time:

@@ -79,7 +79,7 @@ export interface GraphUser {
  * Exchange Online mailbox types (mailboxSettings userPurpose, Graph v1.0):
  * user, linked, shared, room, equipment, others. Any other answer
  * (unknownFutureValue, or a value added later) is read as 'others', which the
- * sync treats like 'user': never as shared. 'none' is cmail's own value for
+ * sync treats like 'user': never as shared. 'none' is Stanchion's own value for
  * "Graph says this object has no Exchange Online mailbox" (404).
  */
 export const MAILBOX_PURPOSES = ['user', 'linked', 'shared', 'room', 'equipment', 'others', 'none'] as const;
@@ -88,7 +88,7 @@ export type MailboxPurpose = (typeof MAILBOX_PURPOSES)[number];
  * One lookup's answer: a mailbox type, or why there is none this time.
  * 'denied' = 401/403 for that mailbox (consent missing, or an Exchange
  * application access policy that leaves it out); 'failed' = any other error.
- * Neither is cached, and neither ever changes cmail.
+ * Neither is cached, and neither ever changes Stanchion.
  */
 export type PurposeLookup = MailboxPurpose | 'denied' | 'failed';
 

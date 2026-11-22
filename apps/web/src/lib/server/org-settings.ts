@@ -47,7 +47,7 @@ export const ORG_SETTINGS_KEYS = [
 
 export type OrgSettingsKey = (typeof ORG_SETTINGS_KEYS)[number];
 
-const DEFAULT_APP_NAME = 'cmail';
+const DEFAULT_APP_NAME = 'Stanchion';
 
 function envStr(env: Record<string, unknown>, key: string): string {
   const v = env[key];

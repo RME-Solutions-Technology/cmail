@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time (and safe to repeat) setup of a WSL Ubuntu for the cmail gate and deploys.
+# One-time (and safe to repeat) setup of a WSL Ubuntu for the Stanchion gate and deploys.
 # Installs, with no changes to the Windows side: fnm + Node 22/24/26, pnpm (the version
 # pinned in package.json), PowerShell 7.6.10 (collector harness) and Chromium for Playwright.
 # Needs passwordless sudo for apt only. Usage: bash scripts/wsl/setup.sh

@@ -1,6 +1,6 @@
 ---
 title: "Getting started"
-summary: "How to set up cmail locally and create its Cloudflare storage: the first step for primary mail."
+summary: "How to set up Stanchion locally and create its Cloudflare storage: the first step for primary mail."
 applies_to: primary
 audience: [operator, developer]
 switch: none
@@ -10,7 +10,7 @@ related: [configuration.md, deployment.md, credentials.md]
 
 # Getting started
 
-This guide takes a new cmail deployment from an empty Cloudflare account to local development. See [deployment.md](deployment.md) for the production rollout.
+This guide takes a new Stanchion deployment from an empty Cloudflare account to local development. See [deployment.md](deployment.md) for the production rollout.
 
 **In this article**
 
@@ -35,7 +35,7 @@ This guide takes a new cmail deployment from an empty Cloudflare account to loca
 - A Google OAuth client, Microsoft Entra application, or both
 - Cloudflare Email Service (recommended) or Postmark only when external outbound delivery is required
 
-Provider account setup changes over time. Use this guide for cmail's expected
+Provider account setup changes over time. Use this guide for Stanchion's expected
 values, but confirm the exact steps in each provider's own current
 documentation.
 
@@ -156,7 +156,7 @@ For Microsoft sign-in, `MICROSOFT_TENANT_ID=common` works for both Microsoft
 must support both account types. Use a tenant GUID instead if only one Entra
 tenant should be allowed.
 
-Both providers use only the `openid email profile` scope. cmail calls
+Both providers use only the `openid email profile` scope. Stanchion calls
 UserInfo with the access token (Microsoft's endpoint is
 `https://graph.microsoft.com/oidc/userinfo`), and stores the provider plus
 its permanent `sub` ID as the account's real identity — not email, UPN, or

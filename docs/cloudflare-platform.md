@@ -1,6 +1,6 @@
 ---
-title: "How cmail runs on Cloudflare"
-summary: "The deployables, bindings, schedules, Cloudflare products and migrations behind cmail."
+title: "How Stanchion runs on Cloudflare"
+summary: "The deployables, bindings, schedules, Cloudflare products and migrations behind Stanchion."
 applies_to: both
 audience: [operator, developer]
 switch: none
@@ -8,9 +8,9 @@ last_reviewed: 2026-11-16
 related: [architecture.md, credentials.md]
 ---
 
-# How cmail runs on Cloudflare
+# How Stanchion runs on Cloudflare
 
-cmail is four deployables that share one D1 database and one R2 bucket. This
+Stanchion is four deployables that share one D1 database and one R2 bucket. This
 page lists each one, its bindings and schedules, and how they connect. The
 default resource names here (`cmail-web`, `cmail-db` and so on) come from the
 `*.example` Wrangler files; yours can differ. To set them up, follow
@@ -90,7 +90,7 @@ A scheduled Worker (cron `23 * * * *`) with no URL.
 
 It is deployed separately: `pnpm setup`, `pnpm deploy` and `config:check`
 don't cover it. Restoring is a manual job; see
-[Running cmail: restore](operations.md#restore).
+[Running Stanchion: restore](operations.md#restore).
 
 ### Product page: `landing/` (optional)
 

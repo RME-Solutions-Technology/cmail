@@ -10,7 +10,7 @@ import type { MessageImportance } from './types';
  * Rules run in their saved order. A rule with "stop processing more rules"
  * set (the default, as in Outlook) ends the run once it applies.
  *
- * Outlook features with no cmail equivalent are left out rather than
+ * Outlook features with no Stanchion equivalent are left out rather than
  * approximated: there are no custom folders or categories, and forwarding or
  * redirecting is not offered because automatic forwarding is a classic data
  * exfiltration path. Permanent delete is replaced by moving to Deleted.
@@ -26,7 +26,7 @@ export const MAX_RULE_NAME_CHARS = 120;
 export const MAX_VALUES_PER_CONDITION = 20;
 export const MAX_VALUE_CHARS = 200;
 export const MAX_RULE_DEFINITION_CHARS = 16_384;
-/** 150 MB, well above the largest message cmail accepts. */
+/** 150 MB, well above the largest message Stanchion accepts. */
 export const MAX_RULE_SIZE_KB = 153_600;
 
 /** The folders a rule can move a message to. Inbox is where it starts. */

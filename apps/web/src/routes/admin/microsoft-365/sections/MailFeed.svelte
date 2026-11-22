@@ -15,7 +15,7 @@
   import { GRAPH_MIRROR_REASON_TEXT, STANDBY_SWITCH_SOONER_NOTE } from '@cmail/shared/graph-mirror';
 
   let { data, form } = $props();
-  const appName = $derived(data.appName || 'cmail');
+  const appName = $derived(data.appName || 'Stanchion');
   const overview = $derived(data.overview);
   const today = $derived(overview && overview.days[0]?.day === new Date(overview.now).toISOString().slice(0, 10) ? overview.days[0] : null);
 

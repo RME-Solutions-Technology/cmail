@@ -625,7 +625,7 @@ describe('inbox rules on internal delivery', () => {
   });
 
   describe('Focused Inbox on internal delivery (docs/focused-inbox.md)', () => {
-    // The colleague copy comes from a cmail mailbox, so it is "internal" unless
+    // The colleague copy comes from a Stanchion mailbox, so it is "internal" unless
     // the receiving mailbox has an entry for that sender or domain.
     it('stores nothing when Focused Inbox is off', async () => {
       const { message, harness } = await deliverInternally([]);

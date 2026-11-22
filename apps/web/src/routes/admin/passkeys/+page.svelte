@@ -7,7 +7,7 @@
   }
 </script>
 
-<svelte:head><title>Passkey sign-in · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Passkey sign-in · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="passkey-admin" aria-labelledby="passkey-heading">
   <header class="page-heading">

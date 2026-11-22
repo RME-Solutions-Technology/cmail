@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: >-
-        Thanks for helping improve cmail. Do not attach message bodies, access tokens,
+        Thanks for helping improve Stanchion. Do not attach message bodies, access tokens,
         secret values, personal data, or production database exports. Report security
         issues privately using the instructions in the repository security policy.
   - type: textarea
@@ -70,7 +70,7 @@ body:
     id: regression
     attributes:
       label: Regression information
-      description: Did this work in an earlier cmail commit? If so, identify the last known-good commit.
+      description: Did this work in an earlier Stanchion commit? If so, identify the last known-good commit.
   - type: checkboxes
     id: safety
     attributes:

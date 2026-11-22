@@ -12,10 +12,10 @@ related: [standards-alignment.md, privacy-and-data-handling.md, security-checkli
 
 - **Document status:** public project assurance guide
 - **Last reviewed:** 14 August 2026
-- **Applies to:** the latest supported revision of the cmail beta (0.9, before 1.0)
+- **Applies to:** the latest supported revision of the Stanchion beta (0.9, before 1.0)
 - **Deployment owner:** the organisation operating each deployment
 
-This page gives managers, reviewers, and auditors a concise map of cmail's
+This page gives managers, reviewers, and auditors a concise map of Stanchion's
 security and governance controls. It is a product-capability statement and an
 evidence checklist—not a certification, legal opinion, or assurance report for
 an individual deployment.
@@ -26,12 +26,12 @@ operator enabled, monitored, or retained it correctly.
 
 ## Responsibility boundary
 
-This table shows who is responsible for what, from the cmail codebase to
+This table shows who is responsible for what, from the Stanchion codebase to
 your cloud, identity, and mail providers.
 
 | Party | Responsible for |
 |---|---|
-| cmail project | Application code, server-side authorization, mailbox model, message processing, documented defaults, migrations, tests, and published gaps |
+| Stanchion project | Application code, server-side authorization, mailbox model, message processing, documented defaults, migrations, tests, and published gaps |
 | Deployment operator | Cloudflare account security, domains and DNS, OAuth registrations, manager access, policies, retention, backups, restore tests, monitoring, incident handling, privacy notices, legal duties, and evidence preservation |
 | Cloudflare | The behavior and security of the selected Pages, Workers, D1 (hosted database), R2 (object storage), Email Routing, Email Service, and related account services under the operator's agreement |
 | Google or Microsoft | Identity verification and any MFA (multi-factor authentication), conditional-access, account-lifecycle, or risk policies configured by the operator |
@@ -39,12 +39,12 @@ your cloud, identity, and mail providers.
 
 ## Control and evidence matrix
 
-For each area, this table lists what cmail already does and what evidence
+For each area, this table lists what Stanchion already does and what evidence
 you still need to collect.
 
 | Area | Product capability | Deployment evidence required |
 |---|---|---|
-| Identity | Google and Microsoft OIDC (OpenID Connect sign-in), plus an invitation-scoped email one-time code for invitees hosted elsewhere; no cmail password database; invited-account enrolment binds the provider subject, or a bound email identity, to a cmail person; sign-in can be restricted to approved countries with a manager approval flow for exceptions | OAuth app registrations and callbacks, permitted tenants/accounts, provider MFA or conditional-access policy, email one-time-code and Turnstile configuration where used, approved sign-in countries where used, emergency access and administrator review |
+| Identity | Google and Microsoft OIDC (OpenID Connect sign-in), plus an invitation-scoped email one-time code for invitees hosted elsewhere; no Stanchion password database; invited-account enrolment binds the provider subject, or a bound email identity, to a Stanchion person; sign-in can be restricted to approved countries with a manager approval flow for exceptions | OAuth app registrations and callbacks, permitted tenants/accounts, provider MFA or conditional-access policy, email one-time-code and Turnstile configuration where used, approved sign-in countries where used, emergency access and administrator review |
 | Sessions | Signed sessions are stored as hashes; configurable lifetime and concurrency; pause/offboard revokes sessions | Effective settings, sampled revocation test, manager and Cloudflare access review |
 | Authorization | Roles and mailbox delegation are checked server-side; shared mailboxes use Read, Send as, or Full access | Current people/mailbox assignment export or reviewed screenshots, least-privilege review date, offboarding sample |
 | Public directory privacy | Directory output is globally gated and each position is internal by default; public positions expose only approved name, work email, and title | Current directory setting, approved public-position list, privacy owner sign-off, public-page review |
@@ -52,22 +52,22 @@ you still need to collect.
 | Mail standards | Message format, MIME, threading, attachment names, and plain-text alternatives are implemented in code | Live SPF, DKIM, DMARC, MTA-STS/TLS-RPT records as applicable; received-header tests; current receiver/provider requirements |
 | Audit and trace | The application has no edit/delete action for audit entries and records administrative and mail-flow metadata without message bodies | Export/protection method, access review, retention setting, sampled events, independent log destination if immutability is required |
 | Retention and deletion | Separate periods exist for deleted mail, attachments, trace, and audit data; scheduled cleanup is deliberately disabled until the operator enables it | Effective periods, job-enabled state, approval, recovery boundary, deletion test, applicable legal/privacy review |
-| Backup and recovery | Cloudflare provides D1 export/time-travel and R2 object operations; cmail documents ordering and validation | Encrypted backup location, access list, latest successful backup, restore-test date and results, recovery objectives |
+| Backup and recovery | Cloudflare provides D1 export/time-travel and R2 object operations; Stanchion documents ordering and validation | Encrypted backup location, access list, latest successful backup, restore-test date and results, recovery objectives |
 | Policy acknowledgement | Managers publish versioned organisation policy text; protected access is gated on acceptance of the latest version | Current approved policy, version history, acceptance records, exception/escalation procedure |
 | Vulnerability handling | Private reporting guidance, secret scans, dependency audit, CodeQL and CI release gates are published | Deployed revision, update owner, vulnerability intake channel, patch/rollback procedure, latest release-gate result |
 
 ## Important limitations and non-claims
 
-Know these limits before you rely on cmail for compliance or evidence.
+Know these limits before you rely on Stanchion for compliance or evidence.
 
-- cmail has not been independently certified against ISO 27001, SOC 2, PCI
+- Stanchion has not been independently certified against ISO 27001, SOC 2, PCI
   DSS, HIPAA, GDPR, the Australian Privacy Act, or another regulatory or
   assurance framework.
 - Application audit rows are append-only through the supported interface, but
   they are not independently immutable, cryptographically sealed, or a WORM
   (write-once, read-many) archive. Cloudflare/database administrators remain
   inside the trust boundary.
-- cmail has no legal-hold, eDiscovery, DLP, malware-sandbox, SIEM export,
+- Stanchion has no legal-hold, eDiscovery, DLP, malware-sandbox, SIEM export,
   records-disposition approval, or formal evidence-package feature.
 - Retention cleanup is off by default. Enabling a schedule without approved
   periods, backup, restore, legal-hold alternatives, and recovery testing is
@@ -83,7 +83,7 @@ Know these limits before you rely on cmail for compliance or evidence.
 - Accessibility work targets good keyboard, contrast, motion, and semantic
   behavior, but no formal WCAG (Web Content Accessibility Guidelines)
   conformance audit has been completed.
-- cmail is organisational and transactional email software, not a bulk
+- Stanchion is organisational and transactional email software, not a bulk
   marketing platform. It lacks campaign consent, preference, unsubscribe,
   complaint, suppression, and reputation-management controls.
 

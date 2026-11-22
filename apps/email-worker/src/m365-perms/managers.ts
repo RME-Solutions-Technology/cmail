@@ -5,7 +5,7 @@
 // The Microsoft 365 sync never adopts a manager account, so a manager has no
 // person link and every Exchange grant to them is skipped as
 // trusteeNotLinked. With the switch on, an unlinked, active manager is matched
-// to the Entra user whose primary SMTP address equals the manager's cmail
+// to the Entra user whose primary SMTP address equals the manager's Stanchion
 // address exactly, on MAIL_DOMAIN: Graph `mail` must equal it and the user's
 // proxyAddresses must hold it as the primary entry (`SMTP:`), and exactly one
 // Entra member user and exactly one manager must match. Nothing is written

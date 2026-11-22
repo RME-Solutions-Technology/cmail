@@ -1,6 +1,6 @@
 ---
 title: "Maintainer release guide"
-summary: "How maintainers cut and publish a cmail release."
+summary: "How maintainers cut and publish a Stanchion release."
 applies_to: both
 audience: [developer]
 switch: none
@@ -11,7 +11,7 @@ related: [development.md]
 # Maintainer release guide
 
 This guide covers public-repository and release hygiene. It does not replace
-the deployment or operations checklists used by each cmail operator.
+the deployment or operations checklists used by each Stanchion operator.
 
 ## Repository settings
 
@@ -94,5 +94,36 @@ Review generated notes rather than publishing them verbatim. Call out:
 Do not include private issue details, deployment identifiers, production URLs,
 message content, personal data, or secret values in commits, tags, artifacts,
 screenshots, or release notes.
+
+## Legacy names kept on purpose
+
+The product was renamed from cMail to Stanchion. Names that deployed systems,
+saved data or secrets already depend on still say `cmail`. Renaming them would
+sign people out, orphan stored data or mean new Cloudflare resources, so they
+are legacy names, kept on purpose:
+
+- cookies and browser storage keys: `cmail_session`, `cmail_enrollment`,
+  `cmail_oauth_*`, `cmail_bootstrap_proof`, `cmail_otp_proof`,
+  `__Host-cmail_last_provider`, `cmail_push_*`, `cmail_pwa_dismissed`;
+- saved-HTML markers: `data-cmail-signature`, `data-cmail-link-risk`,
+  `data-cmail-link-host`;
+- environment variables and build constants: `CMAIL_*`, `__CMAIL_BUILD__`;
+- Cloudflare resource names and service hosts in `wrangler.toml.example`:
+  `cmail-web`, `cmail-db`, `cmail-storage`, `cmail-backup`,
+  `cmail-email-worker`, `cmail-email-worker.internal`, `cmail-email-events`,
+  `cmail-exo-permissions`, `cmail-standby-probe` and the rate-limit namespaces;
+- identity names that tenants already hold: the `cmail mirror` journal rule,
+  `cmail Mailbox Access Readers` role group, `cmail Exchange permission reader`
+  app, the `cmail standby copy` Outlook category, the `cmail standby test`
+  probe subject, the `cmail standby` remote domain, the `cmail journal` remote
+  domain, the `cmail Microsoft 365 sync` and `cmail directory sync` apps, the
+  `cmail standby copy-back` app and the `cmail copy-back mailboxes` and
+  `cmail mirror mailboxes` groups and management scopes (docs and scripts quote
+  these exactly, so copied commands match what customers already have);
+- the `@cmail/*` package scope, type and CSS variable names, and the GitHub
+  repository URL, until each is renamed in its own change.
+
+New text should say Stanchion. Keep a legacy name exactly as it is when you
+quote it.
 
 [← Documentation home](README.md)

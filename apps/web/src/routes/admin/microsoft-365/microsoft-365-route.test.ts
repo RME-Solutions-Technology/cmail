@@ -96,7 +96,7 @@ describe('Admin > Microsoft 365 page', () => {
     expect(body).toContain('not recommended with Cloudflare Email Routing');
     expect(body).toContain('href="/admin/standby"');
     expect(body).toContain('data-testid="standby-link-note"');
-    expect(body).not.toMatch(/(?<![@/w-])cmail(?![/w-])/);
+    expect(body).not.toMatch(/(?<![@/\w-])Stanchion(?![/\w-])/);
   });
 
   it('sends every form to a named action in its own section, and gives each heading id once', async () => {

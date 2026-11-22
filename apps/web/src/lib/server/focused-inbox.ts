@@ -387,7 +387,7 @@ export type BackfillResult =
 /**
  * Sorts the newest BACKFILL_LIMIT never-sorted Inbox messages of one mailbox,
  * with the same classifier as delivery. Header signals are not available for
- * stored mail (cmail keeps no raw headers), so List-Id and similar cannot be
+ * stored mail (Stanchion keeps no raw headers), so List-Id and similar cannot be
  * used here: only the person's entries, correspondence, internal senders,
  * automated-looking addresses and frequent senders. Bounded: a fixed number
  * of reads, at most BACKFILL_LIMIT rows changed, only rows still unsorted (a
@@ -425,7 +425,7 @@ export async function runFocusBackfill(
        ORDER BY received_at DESC LIMIT ?`,
     ).bind(mailboxId, limit).all<{ id: string; from_address: string; direction: string }>();
     // Stored mail keeps no authentication result, so only mail delivered
-    // between cmail mailboxes (direction 'internal') counts as authenticated.
+    // between Stanchion mailboxes (direction 'internal') counts as authenticated.
     const rows = (messages || []).map((row) => ({
       id: row.id,
       sender: normalizeFocusAddress(row.from_address),

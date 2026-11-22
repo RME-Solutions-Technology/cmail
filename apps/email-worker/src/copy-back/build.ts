@@ -1,4 +1,4 @@
-// Builds the Microsoft Graph message resource for one cmail message
+// Builds the Microsoft Graph message resource for one Stanchion message
 // (docs/copy-back.md, "What a copy keeps").
 //
 // Why JSON and not MIME: Graph's create-message call accepts either, but the
@@ -8,7 +8,7 @@
 // set, so the copy is a normal received item, plus PidTagMessageDeliveryTime
 // (0x0E06) and PidTagClientSubmitTime (0x0039) so it sorts at its original
 // time, our own named marker property so it can be found again, and a
-// category the user can see. cmail does not keep the original MIME anyway:
+// category the user can see. Stanchion does not keep the original MIME anyway:
 // it stores the sanitised HTML body, the attachments and parsed header fields.
 import { participant } from '@cmail/shared/message-participants';
 import { COPYBACK_MAX_REQUEST_BYTES, type CopyBackFolder } from '@cmail/shared/copy-back';
@@ -183,7 +183,7 @@ export async function buildGraphMessage(
     toRecipients: recipients(message.to_participants, message.to_addresses),
     ccRecipients: recipients(message.cc_participants, message.cc_addresses),
     replyTo: recipients(message.reply_to_participants, '[]'),
-    // Bcc only on a Sent copy, as in cmail; received copies never reveal it.
+    // Bcc only on a Sent copy, as in Stanchion; received copies never reveal it.
     ...(message.folder === 'sent' ? { bccRecipients: recipients(message.bcc_participants, message.bcc_addresses) } : {}),
     importance,
     isRead: true,

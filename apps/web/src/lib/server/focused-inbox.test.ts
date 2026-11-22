@@ -313,7 +313,7 @@ describe('the one-off sort of recent mail', () => {
     expect(fixture.db.sqlite.prepare('SELECT COUNT(*) AS n FROM messages WHERE focus_class IS NULL').get()).toEqual({ n: 5 });
   });
 
-  it('uses the mailbox\'s entries; correspondents and internal only for mail between cmail mailboxes (stored mail has no DMARC result)', async () => {
+  it('uses the mailbox\'s entries; correspondents and internal only for mail between Stanchion mailboxes (stored mail has no DMARC result)', async () => {
     const fixture = createFixture();
     on(fixture);
     seedMessage(fixture, { id: 'e1', mailboxId: 'mb-alice', from: 'noreply@written.example.org' });
@@ -332,7 +332,7 @@ describe('the one-off sort of recent mail', () => {
     expect(row(fixture, 'e2')).toMatchObject({ focus_class: 'other', focus_reason: 'sender_override' });
     // A MAIL_DOMAIN address received from outside is not "in your organisation".
     expect(row(fixture, 'e3')).toMatchObject({ focus_class: 'other', focus_reason: 'automated_sender' });
-    // Mail from another cmail mailbox is authenticated.
+    // Mail from another Stanchion mailbox is authenticated.
     expect(row(fixture, 'e5')).toMatchObject({ focus_class: 'focused', focus_reason: 'correspondent' });
     expect(row(fixture, 'e4')).toMatchObject({ focus_class: 'other', focus_reason: 'domain_override' });
   });

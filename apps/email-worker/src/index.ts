@@ -1,4 +1,4 @@
-// cmail inbound email worker
+// Stanchion inbound email worker
 // Receives email via Cloudflare Email Routing, parses, stores in D1/R2.
 // Outbound is handled directly by the web app (Cloudflare Email Service or Postmark) —
 // this worker is inbound-only.
@@ -153,8 +153,8 @@ const OPAQUE_STORAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 // Deliberately neutral: do not disclose whether this address never existed,
 // was disabled, or belonged to an offboarded person. Cloudflare controls the
 // permanent SMTP rejection and passes this plain-text reason to the sender;
-// it does not cause Cmail to send mail.
-export const RECIPIENT_UNAVAILABLE_SMTP_RESPONSE = 'cmail: recipient unavailable; verify the address or contact the organisation';
+// it does not cause Stanchion to send mail.
+export const RECIPIENT_UNAVAILABLE_SMTP_RESPONSE = 'Stanchion: recipient unavailable; verify the address or contact the organisation';
 /** Structural type so the Worker can still run locally without the optional binding. */
 export interface InboundRateLimitBinding {
   limit(input: { key: string }): Promise<{ success: boolean }>;

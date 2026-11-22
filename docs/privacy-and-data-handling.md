@@ -18,7 +18,7 @@ ready-made legal notice or legal advice. The organisation must adapt it
 to its jurisdiction, contracts, workforce, users, message purposes, and actual
 Cloudflare/identity/outbound-provider configuration.
 
-cmail is self-hosted software. The upstream project does not receive a
+Stanchion is self-hosted software. The upstream project does not receive a
 deployment's accounts or mail merely because the software is used. The
 deployment operator normally determines why and how personal information is
 processed. It must identify its own legal role. Cloudflare, Google, Microsoft,
@@ -37,7 +37,7 @@ may have separate roles under their agreements and the operator's law.
 ## Data inventory
 
 Review the deployed schema, provider settings, logs, and local modifications.
-A typical cmail deployment can process:
+A typical Stanchion deployment can process:
 
 | Category | Examples | Typical purpose |
 |---|---|---|
@@ -57,7 +57,7 @@ approved.
 
 ## Storage and disclosures
 
-This section lists where cmail stores data and who else can access or
+This section lists where Stanchion stores data and who else can access or
 receive it.
 
 - D1 (Cloudflare's hosted database) stores application records and message
@@ -72,14 +72,14 @@ receive it.
   enables temporary content preview, document whether it is disabled or
   approved, who can access it, and its current retention behavior.
 - Google or Microsoft receives sign-in requests and returns the configured
-  identity claims. cmail requests identity scopes, but does not gain access
+  identity claims. Stanchion requests identity scopes, but does not gain access
   to a person's consumer inbox, drive, contacts, or search history.
 - Web Push sends a minimal notification through the endpoint's push service.
   Push is optional and should not contain message content.
 - When a person connects an AI app over MCP (off unless a Manager enables
   it), the mail that app reads or drafts through the approved scopes and
   mailboxes is disclosed to that app and its model provider, under that
-  provider's terms. cmail records which tools were called, never the content.
+  provider's terms. Stanchion records which tools were called, never the content.
   Decide whether staff may connect AI apps, which ones, and for what mail,
   and say so in the privacy notice and acceptable-use policy.
 - Backups, exports, support artifacts, DMARC/TLS reports, and independent logs
@@ -114,10 +114,10 @@ trace, and application audit records. Scheduled retention is off by default.
 Do not enable destructive cleanup until periods, backup, recovery, privacy,
 records, litigation/preservation, and contractual requirements are approved.
 
-cmail has no legal-hold workflow and its application audit log is not an
+Stanchion has no legal-hold workflow and its application audit log is not an
 independently immutable archive. If preservation, eDiscovery, WORM
 (write-once, read-many) storage, or protected export is required, implement
-and test it outside cmail before destructive retention is enabled.
+and test it outside Stanchion before destructive retention is enabled.
 
 AI app connection records are removed 30 days after they are revoked or
 expire, expired tokens after a day, and the per-call tool log after one year.
@@ -138,7 +138,7 @@ database/R2 exports without review and redaction.
 The operator should be able to locate a person's account, owned mailbox,
 policy acknowledgements, public positions, mailbox grants, and relevant audit
 records. Mail content and backups require a separately controlled search and
-review process. cmail does not provide a complete privacy-request or
+review process. Stanchion does not provide a complete privacy-request or
 eDiscovery workflow.
 
 ## Operator notice checklist

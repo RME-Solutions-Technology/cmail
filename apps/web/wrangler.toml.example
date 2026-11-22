@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-# ─── cmail web app — Cloudflare Pages config ──────────────────────────────
+# ─── Stanchion web app — Cloudflare Pages config ──────────────────────────────
 # Copy this file to `wrangler.toml` and fill in YOUR Cloudflare tenant values.
 # `wrangler.toml` is gitignored so your IDs never leak to forks/clones.
 
@@ -30,7 +30,7 @@ service = "cmail-email-worker"
 # Anything sensitive (OAuth secrets, SESSION_SECRET, outbound API tokens, etc.)
 # MUST go via `wrangler pages secret put <NAME>` — never commit them here.
 [vars]
-APP_NAME = "cmail"
+APP_NAME = "Stanchion"
 MAIL_DOMAIN = "example.com"
 APP_URL = "https://mail.example.com"
 # Use "common" for Microsoft 365 plus personal Microsoft accounts, or replace
@@ -161,7 +161,7 @@ binding = "EMAIL_SERVICE"
 service = "cmail-email-worker-preview"
 
 [env.preview.vars]
-APP_NAME = "cmail preview"
+APP_NAME = "Stanchion preview"
 MAIL_DOMAIN = "preview.example.com"
 APP_URL = "https://preview.example.pages.dev"
 MICROSOFT_TENANT_ID = "common"
