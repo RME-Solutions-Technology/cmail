@@ -494,7 +494,7 @@
 {/snippet}
 
 <svelte:head>
-  <title>Organisation · Management · {data.appName || 'cmail'}</title>
+  <title>Organisation · Management · {data.appName || 'Stanchion'}</title>
 </svelte:head>
 
 <header class="page-heading">

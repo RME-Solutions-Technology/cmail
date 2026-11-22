@@ -188,7 +188,7 @@ describe('applyDeliveryEvent (real migrations)', () => {
     expect(failedOn('messages', 'message-1')).toEqual([]);
   });
 
-  it('stores nothing for mail cmail did not send', async () => {
+  it('stores nothing for mail Stanchion did not send', async () => {
     const { d1, eventCount } = setup();
     const event = parseDeliveryEvent(sendingEvent('bounced', {}, { messageId: 'someone-else' }))!;
     expect(await applyDeliveryEvent(d1, event)).toBe('unmatched');

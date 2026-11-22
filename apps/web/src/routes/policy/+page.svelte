@@ -15,7 +15,7 @@
   }
 </script>
 
-<svelte:head><title>Usage policy · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Usage policy · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <main id="main-content" class="policy-wrap nb-quiet" tabindex="-1">
   {#if data.user}

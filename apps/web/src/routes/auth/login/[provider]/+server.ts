@@ -26,7 +26,7 @@ export const GET: RequestHandler = async ({ params, platform, url, cookies, requ
     && !cookies.get(ENROLLMENT_COOKIE)
     && !cookies.get(BOOTSTRAP_PROOF_COOKIE);
   if (reuseProviderSession && locals.user) {
-    // The hook has validated the cmail session; /mail enforces policy and
+    // The hook has validated the Stanchion session; /mail enforces policy and
     // mailbox assignments. No provider or Access header authenticates here.
     return new Response(null, {
       status: 303,

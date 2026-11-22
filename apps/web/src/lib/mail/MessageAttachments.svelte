@@ -29,7 +29,7 @@
       {:else}
         <h2 id="attachments-title">Attachments ({attachments.length})</h2>
       {/if}
-      <p>cmail does not malware-scan attachments. Only open files you trust.</p>
+      <p>Stanchion does not malware-scan attachments. Only open files you trust.</p>
     </div>
     {#if showList}
     <div class="attachment-list">

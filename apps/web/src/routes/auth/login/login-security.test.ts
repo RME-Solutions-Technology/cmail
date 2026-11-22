@@ -77,7 +77,7 @@ describe('optional staff SSO entry', () => {
     expect(event.cookies.set).not.toHaveBeenCalledWith(cookie, expect.anything(), expect.anything());
   });
 
-  it.each(['google', 'microsoft'])('opens mail directly for an already validated cmail session via %s', async (provider) => {
+  it.each(['google', 'microsoft'])('opens mail directly for an already validated Stanchion session via %s', async (provider) => {
     const event = loginEvent(provider, '?sso=1&returnTo=https://other.example');
     event.locals.user = { id: 'existing-user' };
     const response = await GET(event as never) as Response;
@@ -89,7 +89,7 @@ describe('optional staff SSO entry', () => {
     expect(mocks.consumeRateLimit).not.toHaveBeenCalled();
   });
 
-  it('does not accept Access headers or URL identity/redirect hints as cmail authentication', async () => {
+  it('does not accept Access headers or URL identity/redirect hints as Stanchion authentication', async () => {
     const event = loginEvent('google', '?sso=1&email=manager@example.com&login_hint=manager@example.com&returnTo=https://other.example');
     event.request.headers.set('Cf-Access-Authenticated-User-Email', 'manager@example.com');
     event.request.headers.set('Cf-Access-Jwt-Assertion', 'unverified-assertion');

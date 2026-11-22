@@ -1,6 +1,6 @@
 -- Outbound delivery events from Cloudflare Email Sending, received through a
 -- Queues event subscription on each sending domain. The email Worker's queue()
--- consumer stores one row per provider event that matches mail cmail sent
+-- consumer stores one row per provider event that matches mail Stanchion sent
 -- (by the provider tracking ID in mail_trace.provider_message_ids). The
 -- provider's eventId is the key, so a redelivered queue message is a no-op.
 -- Rows are deleted with their mail_trace row when trace retention runs.

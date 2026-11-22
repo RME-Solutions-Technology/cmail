@@ -35,7 +35,7 @@ test.describe('axe: serious and critical issues', () => {
     }
   });
 
-  // The click-time link pages. A link cmail did not sign shows the "unverified"
+  // The click-time link pages. A link Stanchion did not sign shows the "unverified"
   // page; a flagged one shows the "mismatch" warning. Both are plain pages.
   test.describe('link warning pages', () => {
     test.use({ as: 'user-mia' });

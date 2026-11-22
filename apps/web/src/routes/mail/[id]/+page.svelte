@@ -115,7 +115,7 @@
 
 </script>
 
-<svelte:head><title>{data.message.subject || '(no subject)'} · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>{data.message.subject || '(no subject)'} · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <div>
   <MessageToolbar

@@ -1,8 +1,9 @@
 <!--
   Brand — the mark + name lockup.
 
-  cmail is whitelabel: APP_NAME is set per tenant. So the lockup renders the
-  drawn wordmark only when the name is still "cmail"; any other name is set
+  Stanchion is whitelabel: APP_NAME is set per tenant. So the lockup renders the
+  drawn wordmark only while the name is still the legacy "cmail" (the artwork spells it);
+  any other name, including the default "Stanchion", is set
   in the display face with the wordmark's optical tracking applied, so a
   renamed deployment still looks designed rather than defaulted.
 -->
@@ -19,7 +20,7 @@
    *   id?: string,
    * }}
    */
-  let { name = 'cmail', size = 28, tone = 'brand', gradient = false, id = 'brand' } = $props();
+  let { name = 'Stanchion', size = 28, tone = 'brand', gradient = false, id = 'brand' } = $props();
 
   const isDefault = $derived((name || '').trim().toLowerCase() === 'cmail');
 </script>

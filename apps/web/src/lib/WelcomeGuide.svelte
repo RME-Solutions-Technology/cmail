@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
 
   let {
-    appName = 'cmail',
+    appName = 'Stanchion',
     orgName = '',
     userId,
     isManager = false,

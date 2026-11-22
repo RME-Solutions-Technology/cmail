@@ -1,7 +1,7 @@
 -- Server-authoritative per-user/device push opt-outs. A browser capability can
 -- rotate its endpoint, so endpoint-only deletion cannot express a durable
 -- opt-out. The device ID is a random browser-local pseudonymous identifier;
--- it is never exposed or logged by cmail.
+-- it is never exposed or logged by Stanchion.
 ALTER TABLE push_subscriptions ADD COLUMN device_id TEXT
   CHECK (device_id IS NULL OR length(device_id) = 36);
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_device

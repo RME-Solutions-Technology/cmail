@@ -73,7 +73,7 @@ export interface M365PermsEnv {
   M365_PERMS_INTERVAL_HOURS?: string | number;
   /** Removal brake: hold removals and downgrades above this percent of sync-made grants. Default 20. */
   M365_PERMS_MAX_REMOVE_PERCENT?: string | number;
-  /** "true" maps Full Access without Send As to cmail Full (default "false": Read). */
+  /** "true" maps Full Access without Send As to Stanchion Full (default "false": Read). */
   M365_PERMS_FULLACCESS_IMPLIES_SEND?: string | boolean;
   /** Durable Object namespace that owns the collector container. */
   M365_PERMS_COLLECTOR?: DurableObjectNamespace;
@@ -151,9 +151,9 @@ export const M365_PERMS_COUNT_KEYS = [
   'removed',
   /** Exchange grants a manager-made assignment already covers or that a manager set differently: left as is. */
   'managerKept',
-  /** Grants with no cmail equivalent (Send As alone). */
+  /** Grants with no Stanchion equivalent (Send As alone). */
   'notRepresentable',
-  /** Trustees that are not a linked, active cmail person. */
+  /** Trustees that are not a linked, active Stanchion person. */
   'trusteeNotLinked',
   /** Exchange grants (shared mailbox, person) resolved to an unlinked manager account by address (switch on). */
   'managerMatched',
@@ -180,9 +180,9 @@ export type M365PermsCounts = Record<M365PermsCountKey, number>;
 export interface M365PermsReportItem {
   /** add, upgrade, downgrade, remove, manager_kept, not_representable, ... */
   action: string;
-  /** Shared mailbox address in cmail, lower case, or ''. */
+  /** Shared mailbox address in Stanchion, lower case, or ''. */
   mailbox: string;
-  /** cmail account address, lower case, or ''. */
+  /** Stanchion account address, lower case, or ''. */
   user: string;
   /** Short machine reason. */
   reason: string;
@@ -248,7 +248,7 @@ export interface M365PermsRound {
    * on), resolved once before the diff. Absent = not resolved yet.
    */
   managerMatches?: M365PermsManagerMatch[];
-  /** cmail account ids of the managers looked up this round (matched or not). */
+  /** Stanchion account ids of the managers looked up this round (matched or not). */
   managerLookedAt?: string[];
 }
 
@@ -256,7 +256,7 @@ export interface M365PermsRound {
 export interface M365PermsManagerMatch {
   /** Entra user object id, lower case. */
   objectId: string;
-  /** cmail account id of the manager. */
+  /** Stanchion account id of the manager. */
   userId: string;
   /** The manager's address when matched, lower case; checked again before every use. */
   email: string;

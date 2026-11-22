@@ -206,7 +206,7 @@ describe('Exchange-hosted recipients (mirror and "Send colleague mail through Ex
     expect(locallyDeliverable(rows, new Set(['example.com']))).toEqual([{ address: 'desk@example.org', id: 'm3' }]);
   });
 
-  it('sends Exchange-hosted cmail mailboxes through the provider, keeping the visible headers', () => {
+  it('sends Exchange-hosted Stanchion mailboxes through the provider, keeping the visible headers', () => {
     const local = new Set(locallyDeliverable(rows, new Set(['example.com'])).map((row) => row.address));
     expect(planRecipientDelivery(
       ['alice@example.com'],

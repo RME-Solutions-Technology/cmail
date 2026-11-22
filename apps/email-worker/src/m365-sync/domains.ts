@@ -41,7 +41,7 @@ export function domainRefreshDue(cache: OrgDomainsCache, now: number, force: boo
   return now - cache.refreshedAt >= DOMAIN_REFRESH_MS;
 }
 
-/** The domains cmail may serve from one listing: verified, not initial, Email. */
+/** The domains Stanchion may serve from one listing: verified, not initial, Email. */
 export function mailDomainsOf(list: readonly TenantDomain[]): string[] {
   return cleanDomainList(list.filter((domain) => domain.isVerified && !domain.isInitial && domain.email).map((domain) => domain.name));
 }

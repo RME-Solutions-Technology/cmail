@@ -24,7 +24,7 @@ export const PASSKEY_PAGE_CSP = [
 ].join('; ');
 
 export function renderPasskeySignInPage(options: { appName: string; orgName: string }): string {
-  const appName = escapeHtml(options.appName || 'cmail');
+  const appName = escapeHtml(options.appName || 'Stanchion');
   const orgName = escapeHtml(options.orgName || '');
   return `<!doctype html>
 <html lang="en">

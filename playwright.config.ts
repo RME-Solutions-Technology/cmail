@@ -13,7 +13,7 @@ const shared = {
   ignoreHTTPSErrors: true,
   timezoneId: 'Australia/Sydney',
   locale: 'en-AU',
-  // An invented point in inland NSW; cmail never asks for location.
+  // An invented point in inland NSW; Stanchion never asks for location.
   geolocation: { latitude: -31.4, longitude: 147.9 },
   permissions: ['geolocation'],
   reducedMotion: 'reduce' as const,

@@ -123,7 +123,7 @@ describe('push service worker', () => {
     let pending: Promise<unknown> | undefined;
     harness.handlers.get('push')?.({
       data: { json: () => ({
-        title: 'Cmail',
+        title: 'Stanchion',
         body: 'A new message arrived.',
         url: '/mail/message-1?mailbox=mailbox-1',
         tag: 'cmail:mailbox-1:message-1',
@@ -132,7 +132,7 @@ describe('push service worker', () => {
     });
     await pending;
 
-    expect(harness.self.registration.showNotification).toHaveBeenCalledWith('Cmail', expect.objectContaining({
+    expect(harness.self.registration.showNotification).toHaveBeenCalledWith('Stanchion', expect.objectContaining({
       body: 'A new message arrived.',
       icon: '/icon-192.png',
       badge: '/icon-192.png',

@@ -2,7 +2,7 @@
   import { page } from '$app/state';
 
   const name = $derived(page.data?.orgName || page.data?.appName || 'This organisation');
-  const appName = $derived(page.data?.appName || 'cmail');
+  const appName = $derived(page.data?.appName || 'Stanchion');
   const supportEmail = $derived(page.data?.supportEmail || '');
 </script>
 

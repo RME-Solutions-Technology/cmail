@@ -18,7 +18,7 @@
   }
 </script>
 
-<svelte:head><title>Audit log · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Audit log · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="audit-page" aria-labelledby="audit-heading">
   <header class="page-heading">

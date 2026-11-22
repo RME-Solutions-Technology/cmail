@@ -6,7 +6,7 @@
   type Row = { standard: string; rfc?: string; status: Status; detail: string };
   type Area = { eyebrow: string; title: string; intro: string; rows: Row[] };
 
-  const appName = $derived(page.data?.appName || 'cmail');
+  const appName = $derived(page.data?.appName || 'Stanchion');
 
   const STATUS_LABEL: Record<Status, string> = {
     met: 'Implemented',
@@ -77,7 +77,7 @@
           standard: 'Authenticated Received Chain',
           rfc: 'RFC 8617',
           status: 'gap',
-          detail: 'The boundary\'s own arc= verdict is parsed but not stored, and cmail performs no chain validation of its own. Mail relayed through a forwarder or mailing list cannot have a broken SPF or DKIM result reassessed here.',
+          detail: 'The boundary\'s own arc= verdict is parsed but not stored, and Stanchion performs no chain validation of its own. Mail relayed through a forwarder or mailing list cannot have a broken SPF or DKIM result reassessed here.',
         },
       ],
     },
@@ -189,12 +189,12 @@
         {
           standard: 'ISO/IEC 27001:2022 and ISO/IEC 27002:2022',
           status: 'reference',
-          detail: 'The security alignment target: risk and asset ownership, least privilege, provider and secret management, monitoring, secure change, vulnerability handling, backup and restore, incident response, audit and continual review. cmail contributes controls; the operator establishes and evidences the ISMS.',
+          detail: 'The security alignment target: risk and asset ownership, least privilege, provider and secret management, monitoring, secure change, vulnerability handling, backup and restore, incident response, audit and continual review. Stanchion contributes controls; the operator establishes and evidences the ISMS.',
         },
         {
           standard: 'ISO/IEC 20000-1:2018',
           status: 'reference',
-          detail: 'The service-management alignment target: defined service and support scope, ownership, incident/request/problem/change records, supplier management, service targets, reporting and improvement. The cmail support model maps these practices but is not a certified service-management system.',
+          detail: 'The service-management alignment target: defined service and support scope, ownership, incident/request/problem/change records, supplier management, service targets, reporting and improvement. The Stanchion support model maps these practices but is not a certified service-management system.',
         },
         {
           standard: 'ISO/IEC 27701:2025 and ISO/IEC 27018:2025',
@@ -231,7 +231,7 @@
     },
     {
       title: 'No legal hold or protected audit export',
-      why: 'cmail has configurable retention processing, but no legal-hold workflow, signed export, write-once archive, or tamper-evident audit store.',
+      why: 'Stanchion has configurable retention processing, but no legal-hold workflow, signed export, write-once archive, or tamper-evident audit store.',
       effect: 'Operators must preserve and protect records using their own approved backup, access-control and evidence-retention processes before destructive retention is enabled.',
       closes: 'An organisation-approved preservation and evidence-export capability, with controls appropriate to the required assurance standard.',
     },
@@ -243,13 +243,13 @@
     },
     {
       title: 'No Authenticated Received Chain (RFC 8617)',
-      why: 'ARC lets a receiver trust an earlier authentication result after a forwarder or mailing list has broken SPF or DKIM alignment. The boundary\'s arc= verdict is parsed, but cmail seals and validates no chain of its own.',
+      why: 'ARC lets a receiver trust an earlier authentication result after a forwarder or mailing list has broken SPF or DKIM alignment. The boundary\'s arc= verdict is parsed, but Stanchion seals and validates no chain of its own.',
       effect: 'Legitimate mail relayed through a forwarder may fail authentication downstream with no chain to appeal to.',
       closes: 'Implementing ARC sealing and chain validation, which needs its own key management and cryptographic verification.',
     },
     {
       title: 'No one-click unsubscribe (RFC 8058)',
-      why: 'This is deliberate. cmail is organisational mail, not bulk-marketing tooling, and it lacks consent evidence, suppression precedence, feedback-loop processing and campaign rate control.',
+      why: 'This is deliberate. Stanchion is organisational mail, not bulk-marketing tooling, and it lacks consent evidence, suppression precedence, feedback-loop processing and campaign rate control.',
       effect: 'It must not be used for campaigns or subscription mail, and its recipient and hourly limits must not be raised to work around that boundary.',
       closes: 'A separate bulk feature with its own threat model, abuse controls, provider review and legal review.',
     },
@@ -298,9 +298,9 @@
   <section class="responsibility" aria-labelledby="responsibility-heading">
     <p class="eyebrow">Scope and responsibility</p>
     <h2 id="responsibility-heading">Capability is not deployment assurance</h2>
-    <p class="section-intro">cmail supplies some controls; the organisation operating it configures and evidences others. Cloudflare, identity and outbound-mail providers operate their own services — review each layer together.</p>
+    <p class="section-intro">Stanchion supplies some controls; the organisation operating it configures and evidences others. Cloudflare, identity and outbound-mail providers operate their own services — review each layer together.</p>
     <div class="responsibility-grid">
-      <div><strong>cmail product</strong><span>Source-checked application behavior such as server-side mailbox checks, sessions, content handling, trace and policy records.</span></div>
+      <div><strong>Stanchion product</strong><span>Source-checked application behavior such as server-side mailbox checks, sessions, content handling, trace and policy records.</span></div>
       <div><strong>Deployment operator</strong><span>DNS, SPF/DMARC/MTA-STS, identity-provider MFA, provider accounts, retention activation, backups, privacy, legal hold and evidence protection.</span></div>
       <div><strong>Providers</strong><span>Infrastructure, identity, signing, delivery and platform controls according to their current service terms and configuration.</span></div>
     </div>
@@ -351,7 +351,7 @@
   <section class="evidence-checklist" aria-labelledby="evidence-heading">
     <p class="eyebrow">Deployment evidence</p>
     <h2 id="evidence-heading">What to retain for an assurance review</h2>
-    <p class="section-intro">Complete these for the specific deployment — cmail does not generate or attest them.</p>
+    <p class="section-intro">Complete these for the specific deployment — Stanchion does not generate or attest them.</p>
     <ul>
       <li>Deployed version or commit, review owner and review date.</li>
       <li>Approved provider list, data handling/privacy decisions and Cloudflare Email Preview decision.</li>

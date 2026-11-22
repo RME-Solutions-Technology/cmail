@@ -1,7 +1,7 @@
 #Requires -Version 7.6
 <#
 .SYNOPSIS
-  cmail shared mailbox access collector (read-only). docs/m365-mailbox-permissions.md
+  Stanchion shared mailbox access collector (read-only). docs/m365-mailbox-permissions.md
 
 .DESCRIPTION
   Connects to Exchange Online app-only with a certificate, lists shared
@@ -53,7 +53,7 @@ $script:AllowedCommands = @(
   'Get-Group'
 )
 
-# Recipient types that are people (cmail accounts) or groups. Everything
+# Recipient types that are people (Stanchion accounts) or groups. Everything
 # else (shared, room or equipment mailboxes as trustees, contacts, ...) is
 # counted as otherKind and skipped.
 $script:UserTypes = @('UserMailbox', 'MailUser', 'User', 'LinkedMailbox', 'RemoteUserMailbox', 'GuestMailUser')
@@ -280,7 +280,7 @@ function Get-PermissionSnapshot {
 
     $grants = [System.Collections.Generic.List[object]]::new()
     if ($hasDeny) {
-      # Exchange applies Deny over Allow (also through groups). cmail cannot
+      # Exchange applies Deny over Allow (also through groups). Stanchion cannot
       # model that, so a mailbox with any Deny entry is listed with no grants
       # and as incomplete: the Worker then neither adds nor removes there.
       $errors['deny_entries'] = 1 + [int]($errors['deny_entries'] ?? 0)

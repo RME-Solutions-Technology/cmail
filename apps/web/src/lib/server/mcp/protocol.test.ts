@@ -111,7 +111,7 @@ describe('legacy (initialize-based) protocol', () => {
       protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' },
     }, { 'mcp-protocol-version': '' });
     expect(response.status).toBe(200);
-    expect(response.body?.result).toMatchObject({ protocolVersion: '2025-06-18', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'cmail' } });
+    expect(response.body?.result).toMatchObject({ protocolVersion: '2025-06-18', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'Stanchion' } });
     expect(response.body?.result.instructions).toMatch(/untrusted/);
     expect(response.headers.get('mcp-session-id')).toBeNull();
     const future = await mcp(fixture, tokens.access_token, 'initialize', { protocolVersion: '2099-01-01' });
@@ -244,7 +244,7 @@ describe('modern (2026-07-28) protocol', () => {
   it('names the server in every modern result and only there', async () => {
     const fixture = createFixture();
     const { tokens } = await connect(fixture);
-    const serverInfo = { 'io.modelcontextprotocol/serverInfo': { name: 'cmail', version: expect.any(String) } };
+    const serverInfo = { 'io.modelcontextprotocol/serverInfo': { name: 'Stanchion', version: expect.any(String) } };
     for (const body of [{ method: 'server/discover' }, { method: 'tools/list' }, { method: 'tools/call', params: { name: 'list_mailboxes', arguments: {} } }]) {
       const response = await modern(fixture, tokens.access_token, body);
       expect(response.body.result._meta).toMatchObject(serverInfo);

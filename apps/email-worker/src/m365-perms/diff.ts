@@ -2,9 +2,9 @@
 // docs/m365-mailbox-permissions.md, "Mapping" and "Safety rules". In short:
 // - Exchange rights are combined per (shared mailbox, person), direct grants
 //   and group grants together.
-// - Full Access + Send As -> cmail Full. Full Access alone -> cmail Read (or
-//   Full with M365_PERMS_FULLACCESS_IMPLIES_SEND). Send As alone has no cmail
-//   equivalent (cmail Send as includes reading) and grants nothing.
+// - Full Access + Send As -> Stanchion Full. Full Access alone -> Stanchion Read (or
+//   Full with M365_PERMS_FULLACCESS_IMPLIES_SEND). Send As alone has no Stanchion
+//   equivalent (Stanchion Send as includes reading) and grants nothing.
 // - Never more than Exchange grants.
 // - Only rows the sync wrote (ledger row + live row still carrying the sync's
 //   marker, level and no assigned_by) are ever raised, lowered or removed.
@@ -43,9 +43,9 @@ export interface LedgerRow { level: CmailLevel; assignedAt: string }
 
 export interface DiffInput {
   snapshot: PermissionSnapshot;
-  /** Entra object id -> linked cmail shared mailbox. */
+  /** Entra object id -> linked Stanchion shared mailbox. */
   sharedLinks: Map<string, SharedLink>;
-  /** Entra object id -> linked cmail person (and, switch on, matched manager accounts). */
+  /** Entra object id -> linked Stanchion person (and, switch on, matched manager accounts). */
   personLinks: Map<string, PersonLink>;
   /** Expanded group members (user object ids) by group object id. */
   groupMembers: Map<string, Set<string>>;
@@ -167,7 +167,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     const live = input.assignments.get(k);
     const ledger = input.ledger.get(k);
     if (!level) {
-      // Send As without Full Access: cmail cannot send without reading.
+      // Send As without Full Access: Stanchion cannot send without reading.
       note('notRepresentable', { action: 'not_representable', mailbox: entry.mailbox, user: entry.user, reason: 'sendas_without_read' });
       // A sync-made row stays until the snapshot covers the mailbox; then it goes like any other.
       continue;

@@ -19,7 +19,7 @@
     <h2>Level 1: internally trained organisation people</h2>
     <p>L1 receives reports, confirms impact, and uses approved runbooks, Mail trace, and Audit log without exposing message content. L1 owns user communication and the organisation's incident, privacy, and change processes.</p>
     {#if supportEmail}
-      <p><a class="btn btn-primary" href={`mailto:${supportEmail}?subject=cmail%20support%20request`}>Email organisation support</a></p>
+      <p><a class="btn btn-primary" href={`mailto:${supportEmail}?subject=Stanchion%20support%20request`}>Email organisation support</a></p>
     {:else}
       <p><strong>No Level 1 support address is published in this deployment.</strong> Ask a manager for the approved internal channel.</p>
     {/if}
@@ -43,20 +43,20 @@
 
   <section id="scope">
     <h2>Separate defects from quoted work</h2>
-    <p>A product-bug escalation is a clear, reproducible behaviour in supported cmail code that conflicts with documented functionality. Work covered by a separate support agreement follows that agreement. Design, configuration, Cloudflare, identity-provider, DNS, provider, migration, recovery, bespoke integration, training, and non-reproducible troubleshooting outside that scope are separately scoped or quoted work.</p>
+    <p>A product-bug escalation is a clear, reproducible behaviour in supported Stanchion code that conflicts with documented functionality. Work covered by a separate support agreement follows that agreement. Design, configuration, Cloudflare, identity-provider, DNS, provider, migration, recovery, bespoke integration, training, and non-reproducible troubleshooting outside that scope are separately scoped or quoted work.</p>
     <p>If the boundary is unclear, mark the request as a scope review and state the facts rather than presuming a defect or entitlement.</p>
   </section>
 
   <section id="safety">
     <h2>Keep support evidence safe</h2>
     <p>Never include message bodies, attachments, credentials, OAuth or session values, API keys, private URLs, database exports, unredacted logs, or unnecessary personal data in a ticket or email. Use timestamps, trace identifiers, commit IDs, redacted screenshots, and synthetic reproductions instead.</p>
-    <div class="callout"><strong>Security and privacy incidents are urgent.</strong><p>Contain suspected compromise, unauthorised access, or data exposure and follow the organisation's incident process immediately. Suspected cmail vulnerabilities use the private security process, not ordinary support.</p></div>
+    <div class="callout"><strong>Security and privacy incidents are urgent.</strong><p>Contain suspected compromise, unauthorised access, or data exposure and follow the organisation's incident process immediately. Suspected Stanchion vulnerabilities use the private security process, not ordinary support.</p></div>
   </section>
 
   <section id="alignment">
     <h2>Service-management alignment</h2>
     <p>This workflow maps to ITIL service desk, incident, service request, problem, change enablement, knowledge, service level, supplier, information-security, monitoring and continual-improvement practices. ISO/IEC 20000-1 is the principal service-management reference; ISO/IEC 27001/27002, 27035 and 22301 cover security, security incidents and continuity.</p>
-    <p><a href="/help/standards">Review the full standards and assurance map</a>. Alignment is an operating target, not certification of cmail, RME Solutions Technology, or a deployment.</p>
+    <p><a href="/help/standards">Review the full standards and assurance map</a>. Alignment is an operating target, not certification of Stanchion, RME Solutions Technology, or a deployment.</p>
   </section>
 </article>
 

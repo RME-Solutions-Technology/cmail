@@ -568,7 +568,7 @@ export const actions: Actions = {
       } catch (caught) {
         if (caught && typeof caught === 'object' && 'status' in caught && 'location' in caught) throw caught;
         return fail(503, {
-          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — cmail won\'t send it again.',
+          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — Stanchion won\'t send it again.',
         });
       }
     }
@@ -992,7 +992,7 @@ export const actions: Actions = {
         }
         if (!recoveryReadSucceeded) {
           return fail(503, {
-            error: 'The send reservation couldn\'t be confirmed. No provider call was made; retry after the database recovers so cmail can reconcile it safely.',
+            error: 'The send reservation couldn\'t be confirmed. No provider call was made; retry after the database recovers so Stanchion can reconcile it safely.',
           });
         }
         if (!recovered || recovered.payload_hash !== fingerprint.payloadHash) {
@@ -1196,7 +1196,7 @@ export const actions: Actions = {
         if (caught && typeof caught === 'object' && 'status' in caught && 'location' in caught) throw caught;
         console.error('Accepted-send materialization failed', caught instanceof Error ? caught.message : String(caught));
         return fail(503, {
-          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — cmail won\'t send it again.',
+          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — Stanchion won\'t send it again.',
         });
       }
     }
@@ -1608,7 +1608,7 @@ export const actions: Actions = {
     const notAllowed = outcomes.filter((item) => item.outcome === 'not_allowed').map((item) => item.address);
     if (notAllowed.length) {
       return fail(422, {
-        error: `${notAllowed.join(', ')} can't be unblocked from cmail: the recipient reported spam, or Cloudflare locked the block. Ask an administrator.`,
+        error: `${notAllowed.join(', ')} can't be unblocked from Stanchion: the recipient reported spam, or Cloudflare locked the block. Ask an administrator.`,
       });
     }
     if (outcomes.some((item) => item.outcome === 'unavailable')) {

@@ -32,7 +32,7 @@ export function isPlainDomain(value: unknown): value is string {
   return typeof value === 'string' && DOMAIN.test(value);
 }
 
-/** Microsoft's tenant routing domains: never a mail domain cmail serves. */
+/** Microsoft's tenant routing domains: never a mail domain Stanchion serves. */
 export function isMicrosoftInitialDomain(domain: string): boolean {
   return domain === 'onmicrosoft.com' || domain.endsWith('.onmicrosoft.com');
 }
@@ -134,7 +134,7 @@ export interface OrgDomains {
   /**
    * The sync has read this tenant's domains successfully at least once. From
    * then on the instance is multi-domain: the mirror files only organisation
-   * domains and cmail sends only from MAIL_DOMAIN (phase 1).
+   * domains and Stanchion sends only from MAIL_DOMAIN (phase 1).
    */
   discovered: boolean;
 }
@@ -167,8 +167,8 @@ export function addressDomain(address: string): string {
 }
 
 /**
- * Why cmail will not send from this address, or null when it may. Multi-domain
- * phase 1: once the organisation's domains have been discovered, cmail sends
+ * Why Stanchion will not send from this address, or null when it may. Multi-domain
+ * phase 1: once the organisation's domains have been discovered, Stanchion sends
  * only from MAIL_DOMAIN, the domain set up for sending (a mailbox on another
  * domain, or one left on a domain that was dropped, can be read and filed but
  * not sent from). Before discovery, nothing changes.

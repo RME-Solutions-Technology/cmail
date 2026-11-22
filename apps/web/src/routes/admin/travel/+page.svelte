@@ -4,7 +4,7 @@
   let { data, form } = $props();
 </script>
 
-<svelte:head><title>Travel approvals · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Travel approvals · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="admin-page" aria-labelledby="travel-heading">
   <header class="page-header">

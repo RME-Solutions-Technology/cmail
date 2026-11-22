@@ -31,7 +31,7 @@ function setup(options: { aliasSwitch?: boolean; sync?: boolean; dryRun?: boolea
   person(2, 'bob');
   sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('mbx-support', ?, 'shared', 'active')`).run(`support@${DOMAIN}`);
   sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id) VALUES (?, 'shared', 'mbx-support')`).run(oid(3));
-  // A cmail-only mailbox that Microsoft 365 knows nothing about.
+  // A Stanchion-only mailbox that Microsoft 365 knows nothing about.
   sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('mbx-sales', ?, 'shared', 'active')`).run(`sales@${DOMAIN}`);
 
   const env = { DB: d1, M365_TENANT_ID: TENANT_ID, M365_CLIENT_ID: CLIENT_ID, M365_CLIENT_SECRET: 'test-secret', MAIL_DOMAIN: DOMAIN };

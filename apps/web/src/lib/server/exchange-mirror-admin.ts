@@ -319,12 +319,12 @@ export async function applyExchangeMirrorAdminAction(
     if (!await loadExchangeMirrorSwitch(db)) return { ok: false, status: 409, error: 'Turn the Exchange mirror on first' };
     await putSetting(db, EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND, true, manager.id);
     await audit(db, { event_type: 'org.exchange_mirror_colleague_send_toggled', ...actor, detail: 'Send colleague mail through Exchange turned on' });
-    return { ok: true, message: 'Mail to colleagues on the mail domain now goes through Exchange, so it shows in Outlook; their cmail copy comes from the mirror.' };
+    return { ok: true, message: 'Mail to colleagues on the mail domain now goes through Exchange, so it shows in Outlook; their Stanchion copy comes from the mirror.' };
   }
   if (action === 'colleague_send_disable') {
     await putSetting(db, EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND, false, manager.id);
     await audit(db, { event_type: 'org.exchange_mirror_colleague_send_toggled', ...actor, detail: 'Send colleague mail through Exchange turned off' });
-    return { ok: true, message: 'Mail to colleagues is delivered straight into their cmail mailbox again (Outlook does not see it).' };
+    return { ok: true, message: 'Mail to colleagues is delivered straight into their Stanchion mailbox again (Outlook does not see it).' };
   }
   if (action === 'enable' || action === 'alias_enable') {
     const overview = await loadExchangeMirrorOverview(env);
@@ -386,7 +386,7 @@ async function applyGraphAction(
     }
     await putSetting(db, GRAPH_MIRROR_SETTING_ENABLED, true, manager.id);
     await audit(db, { event_type: 'org.graph_mirror_toggled', ...actor, detail: 'Exchange mirror Graph source turned on' });
-    return { ok: true, message: 'The Graph source is on. Within a few minutes cmail starts reading new mail from each linked mailbox.' };
+    return { ok: true, message: 'The Graph source is on. Within a few minutes Stanchion starts reading new mail from each linked mailbox.' };
   }
   // Stop always works, even with the source off.
   if (action === 'graph_import_stop') return applyImportAction(env, manager, action, input);
@@ -437,7 +437,7 @@ async function applyImportAction(
     await db.prepare('DELETE FROM org_settings WHERE key = ?').bind(GRAPH_IMPORT_SETTING_REQUEST).run();
     if (Number(stopped.meta?.changes ?? 0) === 0 && !request) return { ok: true, message: 'Nothing was running.' };
     await audit(db, { event_type: 'org.graph_mirror_import_stopped', ...actor, detail: 'Import older mail: stopped' });
-    return { ok: true, message: 'Stopped. Mail already imported stays; nothing more is read. You can run a new estimate and start again; mail already in cmail is not filed twice.' };
+    return { ok: true, message: 'Stopped. Mail already imported stays; nothing more is read. You can run a new estimate and start again; mail already in Stanchion is not filed twice.' };
   }
 
   if (job?.status === 'running') return { ok: false, status: 409, error: 'An import is already running. Stop it first, or wait for it to finish.' };
@@ -480,5 +480,5 @@ async function applyImportAction(
     ...actor,
     detail: `Import older mail: confirmed ${graphImportPeriod(estimate.period)?.label ?? estimate.period}, about ${messages} messages and ${bytes} bytes; the Worker recounts first`,
   });
-  return { ok: true, message: 'Confirmed. On its next run (within about 5 minutes) cmail counts again to check the numbers; if they moved by more than 20% it asks you again, otherwise the import starts. You can stop it at any time.' };
+  return { ok: true, message: 'Confirmed. On its next run (within about 5 minutes) Stanchion counts again to check the numbers; if they moved by more than 20% it asks you again, otherwise the import starts. You can stop it at any time.' };
 }

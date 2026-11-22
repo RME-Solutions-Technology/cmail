@@ -4,7 +4,7 @@ import { generateInviteEmail } from './invite-email';
 const baseInvite = {
   email: 'person@example.com',
   displayName: 'Example Person',
-  appName: 'cmail',
+  appName: 'Stanchion',
   appUrl: 'https://mail.example.com',
   senderName: 'Workspace manager',
   enrollmentToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ',

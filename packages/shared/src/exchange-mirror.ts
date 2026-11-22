@@ -12,9 +12,9 @@ export const EXCHANGE_MIRROR_SETTING_ENABLED = 'exchange_mirror_enabled';
 export const M365_ALIAS_SYNC_SETTING_ENABLED = 'm365_alias_sync_enabled';
 /**
  * "Send colleague mail through Exchange" (docs/exchange-mirror.md). Off by
- * default, and meaningful only while the mirror is on: mail from cmail to a
+ * default, and meaningful only while the mirror is on: mail from Stanchion to a
  * colleague on the Exchange-hosted domain goes out through the provider (so
- * Exchange and Outlook get it) instead of straight into their cmail mailbox.
+ * Exchange and Outlook get it) instead of straight into their Stanchion mailbox.
  */
 export const EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND = 'exchange_mirror_colleague_send';
 
@@ -260,12 +260,12 @@ export const EXCHANGE_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
   unmatched_domain: 'A recipient\'s mailbox is on a domain that is not one of the organisation\'s domains (MAIL_DOMAIN or a verified Microsoft 365 domain), so it was counted, not filed.',
   unsafe_envelope: 'The report envelope has lines in an order Exchange does not write (possible injected text).',
   no_recipients: 'The report envelope lists no recipients.',
-  too_many_recipients: 'The report envelope lists more recipients than cmail files at once.',
+  too_many_recipients: 'The report envelope lists more recipients than Stanchion files at once.',
   original_unparseable: 'The attached original message could not be read.',
   body_limit: 'The message body is over the processing limit.',
   attachment_count: 'The message has more attachments than the inbound limit.',
   attachment_bytes: 'The attachments are larger than the inbound limit.',
-  blocked_attachment: 'The message has an attachment type cmail never accepts.',
+  blocked_attachment: 'The message has an attachment type Stanchion never accepts.',
   quota: 'A mailbox is full (storage quota).',
   guard_unavailable: 'The mailbox storage check was unavailable.',
   budget: 'The message had more recipients than one report can file within the Worker limits.',
@@ -290,7 +290,7 @@ export interface AliasSyncCounts {
   removed: number;
   /** Addresses refused: another mailbox's own address, or claimed by two mailboxes. */
   conflicts: number;
-  /** Microsoft 365 objects with addresses that have no linked cmail mailbox. */
+  /** Microsoft 365 objects with addresses that have no linked Stanchion mailbox. */
   unlinked: number;
   /** Removals held back by the mass-removal brake. */
   heldRemovals: number;

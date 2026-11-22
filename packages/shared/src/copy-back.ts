@@ -12,11 +12,11 @@ export const COPYBACK_SETTING_ENABLED = 'standby_copyback_enabled';
 /** JSON of the last dry run: params, counts, time and manager. */
 export const COPYBACK_SETTING_LAST_DRY_RUN = 'standby_copyback_last_dry_run';
 
-/** cmail folders that may be copied. Drafts, Spam and Trash never are. */
+/** Stanchion folders that may be copied. Drafts, Spam and Trash never are. */
 export const COPYBACK_FOLDERS = ['archive', 'inbox', 'sent'] as const;
 export type CopyBackFolder = (typeof COPYBACK_FOLDERS)[number];
 
-/** Exchange well-known folder names (mailFolder resource) for each cmail folder. */
+/** Exchange well-known folder names (mailFolder resource) for each Stanchion folder. */
 export const EXCHANGE_FOLDER: Readonly<Record<CopyBackFolder, string>> = {
   inbox: 'inbox',
   archive: 'archive',
@@ -112,7 +112,7 @@ export function parseCopyBackParams(input: { from: unknown; to: unknown; target:
   return { ok: true, params: { from: dbTime(from), to: dbTime(to), target: rawTarget || null, folders } };
 }
 
-/** cmail message ids: UUIDs, or 'inbound-' + 64 hex characters for inbound mail with a Message-ID. */
+/** Stanchion message ids: UUIDs, or 'inbound-' + 64 hex characters for inbound mail with a Message-ID. */
 export const COPYBACK_MESSAGE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export function paramsKey(params: CopyBackParams): string {
@@ -350,7 +350,7 @@ export async function copyBackProgress(db: D1Database, params: CopyBackParams): 
 }
 
 export interface CopyBackProblemRow {
-  /** The target mailbox address in cmail (not mail content). */
+  /** The target mailbox address in Stanchion (not mail content). */
   mailbox: string;
   state: 'failed' | 'skipped';
   reason: string;

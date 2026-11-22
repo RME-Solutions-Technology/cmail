@@ -37,7 +37,7 @@ export interface OutboundEmail {
   messageIdHeader?: string;
   attachments?: OutboundAttachment[];
   /**
-   * Mail cmail itself sends from the configured system address (sign-in
+   * Mail Stanchion itself sends from the configured system address (sign-in
    * codes, invitations, notices), not from a person's mailbox: exempt from
    * the multi-domain phase-1 From check, so system mail never stops.
    */

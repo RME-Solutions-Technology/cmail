@@ -356,7 +356,7 @@
   }
 </script>
 
-<svelte:head><title>{folderLabel} · {d.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>{folderLabel} · {d.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="mail-page" aria-labelledby="message-list-title">
   <header class="page-header">

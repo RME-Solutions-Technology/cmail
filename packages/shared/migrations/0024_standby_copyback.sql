@@ -7,18 +7,18 @@
 -- one mailbox or all, folders). At most one job runs at a time. lease_until
 -- stops two overlapping cron invocations from working the same job.
 --
--- standby_copyback_items: one row per (cmail message id, Entra object id of
+-- standby_copyback_items: one row per (Stanchion message id, Entra object id of
 -- the target mailbox). It is the memory that makes the copy idempotent: a row
 -- in state 'copied' is final (the triggers below refuse to change it back or
 -- delete it), so a message is never copied to the same mailbox twice, even by
 -- a later job with an overlapping window. There is deliberately no foreign key
--- to messages: retention or a manager may delete a message in cmail, and that
+-- to messages: retention or a manager may delete a message in Stanchion, and that
 -- must neither be blocked by this table nor erase the "already copied" record.
 --
 -- Nothing here deletes or changes mail. The rows hold ids, states and short
 -- reason codes only: no subjects, addresses or content.
 --
--- cmail message ids come in more than one shape (a UUID for most mail,
+-- Stanchion message ids come in more than one shape (a UUID for most mail,
 -- 'inbound-' + 64 hex characters for inbound mail with a Message-ID), so ids
 -- here allow up to 128 characters.
 --

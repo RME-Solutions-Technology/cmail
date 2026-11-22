@@ -319,7 +319,7 @@
 
 {#if d.user?.id}
   <WelcomeGuide
-    appName={d.appName || 'cmail'}
+    appName={d.appName || 'Stanchion'}
     orgName={d.orgName || ''}
     userId={d.user.id}
     isManager={d.user.role === 'manager'}

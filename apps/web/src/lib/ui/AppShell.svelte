@@ -36,7 +36,7 @@
    * }}
    */
   let {
-    appName = 'cmail',
+    appName = 'Stanchion',
     user,
     mode = 'mail',
     supportEmail = '',

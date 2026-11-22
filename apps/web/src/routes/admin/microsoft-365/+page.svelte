@@ -8,7 +8,7 @@
 
   let { data, form } = $props();
 
-  const appName = $derived(data.appName || 'cmail');
+  const appName = $derived(data.appName || 'Stanchion');
   // A result message reaches only the section whose button was pressed.
   const shown = (section: string) => (form?.section === section ? form : null);
 

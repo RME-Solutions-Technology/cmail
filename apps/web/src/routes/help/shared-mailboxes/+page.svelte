@@ -35,7 +35,7 @@
         </tbody>
       </table>
     </div>
-    <p class="fine-print">These are cmail's own bundled access levels. “Send as” and “Full access” are familiar terms, but this is not a Microsoft Exchange server, and the permissions are not a one-to-one Exchange match.</p>
+    <p class="fine-print">These are Stanchion's own bundled access levels. “Send as” and “Full access” are familiar terms, but this is not a Microsoft Exchange server, and the permissions are not a one-to-one Exchange match.</p>
   </section>
 
   <section>

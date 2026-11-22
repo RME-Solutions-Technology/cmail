@@ -222,7 +222,7 @@
   }
 </script>
 
-<svelte:head><title>Passkeys · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Passkeys · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="passkeys-page nb-quiet" aria-labelledby="passkeys-heading">
   <header class="page-header">

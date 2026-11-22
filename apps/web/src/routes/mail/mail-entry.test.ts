@@ -63,7 +63,7 @@ describe('remembered provider mailbox entry', () => {
     await expect(mailEntry(event as never)).rejects.toMatchObject({ location: '/' });
   });
 
-  it('lets an active cmail session reach the assignment query regardless of the preference', async () => {
+  it('lets an active Stanchion session reach the assignment query regardless of the preference', async () => {
     const event = entry('microsoft');
     event.locals.user = { id: 'user-1', role: 'standard' };
     const result = await mailEntry(event as never);

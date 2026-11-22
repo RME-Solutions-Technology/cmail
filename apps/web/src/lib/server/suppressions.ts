@@ -8,18 +8,18 @@
  * token, CLOUDFLARE_SUPPRESSIONS_API_TOKEN ("Email Sending: Edit"). It is
  * separate from the REST send token so turning this on never changes how
  * mail is sent.
- * Without it, cmail's own bounce records name the likely address and an
+ * Without it, Stanchion's own bounce records name the likely address and an
  * administrator lifts the block in the Cloudflare dashboard.
  */
 
 const ACCOUNT_ID_RX = /^[0-9a-f]{32}$/i;
 const MAX_LOOKUPS = 10;
-/** Cloudflare decides `read_only`; cmail also never lifts a complaint or policy block. */
+/** Cloudflare decides `read_only`; Stanchion also never lifts a complaint or policy block. */
 const LIFTABLE_REASONS = new Set(['hard_bounce', 'soft_bounce']);
 
 export interface BlockedRecipient {
   address: string;
-  /** Cloudflare's reason, or cmail's own record when the API isn't configured. */
+  /** Cloudflare's reason, or Stanchion's own record when the API isn't configured. */
   reason: 'hard_bounce' | 'soft_bounce' | 'complaint' | 'manual' | 'policy' | 'bounced' | 'unknown';
   expiresAt: string | null;
   canUnblock: boolean;
@@ -63,7 +63,7 @@ function appliesTo(entry: SuppressionEntry, domain: string): boolean {
 }
 
 /**
- * cmail lifts only a bounce block scoped to this sending domain. An
+ * Stanchion lifts only a bounce block scoped to this sending domain. An
  * account-wide entry also blocks other apps on the account, so an
  * administrator lifts it in the dashboard.
  */
@@ -123,7 +123,7 @@ async function entriesFor(
 
 /**
  * Which of `recipients` Cloudflare refuses for mail from `fromAddress`.
- * Falls back to cmail's own hard-bounce and complaint records when the API
+ * Falls back to Stanchion's own hard-bounce and complaint records when the API
  * isn't configured or the lookup fails.
  */
 export async function findBlockedRecipients(

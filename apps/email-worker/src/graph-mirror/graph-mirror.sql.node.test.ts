@@ -295,7 +295,7 @@ describe('Graph mirror: filing', () => {
     u.assertNothingSent();
   });
 
-  it('never files a second Sent copy of mail cmail itself sent (or copied back into Exchange)', async () => {
+  it('never files a second Sent copy of mail Stanchion itself sent (or copied back into Exchange)', async () => {
     const t = setup();
     t.sqlite.prepare(
       `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, to_addresses, cc_addresses, subject, folder)

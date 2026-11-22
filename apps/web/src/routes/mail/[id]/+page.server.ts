@@ -36,7 +36,7 @@ interface InviteViewModel {
   status: 'confirmed' | 'cancelled';
   organizerAddress: string;
   organizerSelf: boolean;
-  /** Present when the invite carries a recurrence rule. Shown as-is; cmail does not expand occurrences. */
+  /** Present when the invite carries a recurrence rule. Shown as-is; Stanchion does not expand occurrences. */
   rrule: string | null;
   attendees: Array<{ address: string; name: string; partstat: string }>;
   myPartstat: string | null;

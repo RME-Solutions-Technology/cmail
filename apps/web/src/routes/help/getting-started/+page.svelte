@@ -5,7 +5,7 @@
 <article class="guide">
   <header>
     <p class="eyebrow">User guide</p>
-    <h1>Start using {page.data?.appName || 'cmail'}</h1>
+    <h1>Start using {page.data?.appName || 'Stanchion'}</h1>
     <p>How to sign in, pick a mailbox, and send mail safely.</p>
   </header>
 
@@ -16,7 +16,7 @@
 
   <section id="sign-in">
     <h2>1. Sign in with the invited account</h2>
-    <p>Open your invitation email within 72 hours and select its one button. For a Google or Microsoft address, that leads straight into that provider's sign-in — use the same one every time after that. Microsoft sign-in accepts a work or school account, or Outlook, Hotmail, or Live where the organisation allows personal Microsoft accounts. For a mailbox hosted elsewhere, the same button leads to a one-time email code instead: request a code, then enter the 8-digit code cmail emails you within 5 minutes.</p>
+    <p>Open your invitation email within 72 hours and select its one button. For a Google or Microsoft address, that leads straight into that provider's sign-in — use the same one every time after that. Microsoft sign-in accepts a work or school account, or Outlook, Hotmail, or Live where the organisation allows personal Microsoft accounts. For a mailbox hosted elsewhere, the same button leads to a one-time email code instead: request a code, then enter the 8-digit code Stanchion emails you within 5 minutes.</p>
     <p>If the link expired, was already used, or you chose the wrong address, ask a manager to send a new invitation. Do not forward an invitation — it is only for its recipient.</p>
     <div class="callout"><strong>What sign-in does not do</strong><p>It verifies who you are. It does not grant this application access to your personal inbox, files, contacts, or search history.</p></div>
   </section>
@@ -40,7 +40,7 @@
       <li>Add a subject, write the message, and attach files. Leave <strong>Importance</strong> at Normal unless the recipient genuinely needs High or Low.</li>
       <li>Check recipients and the From address again, then select <strong>Send</strong>.</li>
     </ol>
-    <p>Drafts save automatically, even if you navigate back to the message. Reply, Reply all, and Forward keep the formatted original below your text, with remote images removed for privacy. Reply all drops your own address from the recipients — check To and Cc before sending, especially from a shared mailbox. Attachments stay in the current tab only; cmail warns before you leave with files attached.</p>
+    <p>Drafts save automatically, even if you navigate back to the message. Reply, Reply all, and Forward keep the formatted original below your text, with remote images removed for privacy. Reply all drops your own address from the recipients — check To and Cc before sending, especially from a shared mailbox. Attachments stay in the current tab only; Stanchion warns before you leave with files attached.</p>
     <p>Importance does not speed up delivery, bypass spam checks, or guarantee attention — it is just shown by compatible email clients. New replies and forwards start at Normal.</p>
     <p>Drafts are private to their creator, even from a shared mailbox. Other delegates see shared mail and the Sent copy after delivery, but not your unfinished draft.</p>
     <p>Forwarding does not automatically attach original files or embedded images; return to the message and reattach the ones you want.</p>

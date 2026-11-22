@@ -6,7 +6,7 @@
   let update = $state<UpdateStatus | null>(null);
   const supportLink = $derived(
     /^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(supportEmail)
-      ? `mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent('cmail update support')}&body=${encodeURIComponent(`Please help us update cmail.\n\nInstalled web build: ${update?.build.revision || 'unknown'}\nUpdate status: ${update?.status || 'unknown'}\nChanges: ${update?.changesUrl || 'unavailable'}\n`)}`
+      ? `mailto:${encodeURIComponent(supportEmail)}?subject=${encodeURIComponent('Stanchion update support')}&body=${encodeURIComponent(`Please help us update Stanchion.\n\nInstalled web build: ${update?.build.revision || 'unknown'}\nUpdate status: ${update?.status || 'unknown'}\nChanges: ${update?.changesUrl || 'unavailable'}\n`)}`
       : '',
   );
   onMount(() => {

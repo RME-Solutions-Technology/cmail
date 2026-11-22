@@ -120,7 +120,7 @@ export function newMailNotificationPayload(
   // One tag per opaque delivery suppresses retries without collapsing alerts
   // for different messages or mailboxes shared with the same person.
   const tag = `cmail:${mailbox}:${message}`;
-  const appTitle = sanitizeNotificationText(appName, NOTIFICATION_TITLE_MAX_LENGTH) || 'cmail';
+  const appTitle = sanitizeNotificationText(appName, NOTIFICATION_TITLE_MAX_LENGTH) || 'Stanchion';
   if (sender === undefined && subject === undefined) {
     return { title: appTitle, body: 'A new message arrived.', url, tag };
   }

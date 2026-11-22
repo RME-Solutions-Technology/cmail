@@ -20,7 +20,7 @@ const HOUR = 60 * MINUTE;
 const PROFILE: WelcomeProfile = {
   v: 1,
   appUrl: 'https://mail.example.test',
-  appName: 'cmail',
+  appName: 'Stanchion',
   orgName: 'Example Org',
   fromEmail: `noreply@${DOMAIN}`,
   fromName: 'Example Org Mail',
@@ -277,10 +277,10 @@ describe('welcome emails: content', () => {
 
   it('uses the standby sentence only when set, and the brand colour only when readable', () => {
     const plain = renderWelcomeEmail({ profile: { ...PROFILE, brandColor: '#ffff00' }, passkeys: false, note: '', displayName: '', address: `alice@${DOMAIN}` });
-    expect(plain.text).toContain('Hello,\n\nYou now have a mail account at Example Org in cmail. Signing in once now means your account is ready if you ever need it.\n');
+    expect(plain.text).toContain('Hello,\n\nYou now have a mail account at Example Org in Stanchion. Signing in once now means your account is ready if you ever need it.\n');
     expect(plain.html).toContain('color:#1d4ed8');
     const note = renderWelcomeEmail({ profile: PROFILE, passkeys: false, note: 'This is our standby mailbox.', displayName: 'Alice Example', address: `alice@${DOMAIN}` });
-    expect(note.text).toContain('Hello Alice,\n\nYou now have a mail account at Example Org in cmail. Signing in once now means your account is ready if you ever need it. This is our standby mailbox.\n');
+    expect(note.text).toContain('Hello Alice,\n\nYou now have a mail account at Example Org in Stanchion. Signing in once now means your account is ready if you ever need it. This is our standby mailbox.\n');
     expect(note.html).toContain('color:#0078d4');
   });
 });
@@ -458,7 +458,7 @@ describe('welcome emails: sign-in name (UPN), standby wording, help link', () =>
       on.setting(key, 'true');
       on.person('alice');
       await on.tick();
-      expect(on.sent[0].text).toContain('Example Org uses cmail as a standby for email emergencies. Nothing changes day to day.');
+      expect(on.sent[0].text).toContain('Example Org uses Stanchion as a standby for email emergencies. Nothing changes day to day.');
       expect(on.sent[0].html).toContain('Nothing changes day to day.');
     }
     const off = setup();

@@ -1,5 +1,5 @@
 // Cloudflare Access bridge: turns a verified Access identity (access-jwt.ts)
-// into a cmail account and session.
+// into a Stanchion account and session.
 //
 // Binding rules (see docs/staff-sign-in.md):
 // - The authority is user_identities('access', <Access sub>). Returning
@@ -251,7 +251,7 @@ export async function resolveAccessUser(
 }
 
 /**
- * For a request that already has a valid cmail session: true when the
+ * For a request that already has a valid Stanchion session: true when the
  * session's account is bound to this Access sub, or when it has no Access
  * binding yet, its email matches the verified token, and the binding is
  * made now. This is how managers and existing Google, Microsoft or email
@@ -303,7 +303,7 @@ async function denyAccess(
  * Resolves the account and mints a session and cookie for this browser,
  * with the same country gate, session cap, eviction and audit trail as an
  * OAuth sign-in. hooks.server.ts calls this only when the request has no
- * valid cmail cookie, so a browser mints once and then reuses its own
+ * valid Stanchion cookie, so a browser mints once and then reuses its own
  * cookie. Returns null (signed out) on any refusal.
  */
 export async function establishAccessSession(

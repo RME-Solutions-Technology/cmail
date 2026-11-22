@@ -3,7 +3,7 @@
 -- turns the Graph source on in Admin > Exchange mirror and the email Worker
 -- has the Microsoft 365 app settings.
 --
--- graph_mirror_folders holds, per cmail mailbox and Exchange well-known
+-- graph_mirror_folders holds, per Stanchion mailbox and Exchange well-known
 -- folder, where the Microsoft Graph delta query stands: the next page or
 -- delta link (a Graph URL holding Microsoft's opaque state token, no mail
 -- content), the receivedDateTime floor and the filing cap of the round in

@@ -1,12 +1,12 @@
 // Exchange mirror: file the original message of each Exchange Online journal
-// report into every recipient's cmail mailbox (docs/exchange-mirror.md).
+// report into every recipient's Stanchion mailbox (docs/exchange-mirror.md).
 //
 // Called by the inbound handler only for mail to the exact configured
 // journal address. With the manager switch off it returns false at once and
 // the inbound handler treats the address like any unknown one.
 //
 // What a mirrored copy never does: it raises no new-mail notification (except
-// cmail's own colleague mail coming back through Exchange: see
+// Stanchion's own colleague mail coming back through Exchange: see
 // recordedSendRecipients), runs no inbox rule, records no contact or calendar change, and nothing here can
 // send mail (no reply, forward, bounce or read receipt). The only SMTP answer
 // is Cloudflare's own reject of a report that fails the checks in verify.ts.
@@ -37,7 +37,7 @@ import { headerBlockWellFormed, headerValues, verifyJournalReport } from './veri
 import { MAX_DIAGNOSTIC, journalDiagnostic } from './diagnostic';
 
 /** SMTP text for a refused report. Deliberately says nothing about why. */
-export const JOURNAL_REJECT_RESPONSE = 'cmail: journal report refused';
+export const JOURNAL_REJECT_RESPONSE = 'Stanchion: journal report refused';
 /** Cloudflare Email Routing's inbound ceiling. */
 const HARD_MAX_REPORT_BYTES = 25 * 1024 * 1024;
 const DEFAULT_SUBREQUEST_BUDGET = 8_000;
@@ -258,7 +258,7 @@ export const OWN_SEND_WINDOW_DAYS = 2;
  * The visible recipients (To and Cc) of a message this instance sent from
  * `mailboxId` in the last OWN_SEND_WINDOW_DAYS days, with this Message-ID
  * (as the provider reported it) and this subject, or null when there is
- * none. A mirrored copy for one of them is cmail's own colleague mail coming
+ * none. A mirrored copy for one of them is Stanchion's own colleague mail coming
  * back through Exchange ("Send colleague mail through Exchange"), so it is
  * treated as proven. Read from the sender's Sent copy (indexed by mailbox,
  * folder and time). The mirror's own Sent copies (ids `mirror-sent-…`) are
@@ -314,9 +314,9 @@ async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<
 }
 
 /**
- * A Sent copy is filed only for mail a cmail user really sent through
+ * A Sent copy is filed only for mail a Stanchion user really sent through
  * Exchange, and only when M365_JOURNAL_MIRROR_SENT is "true" (off by
- * default): the envelope sender is a cmail mailbox, Exchange knew the
+ * default): the envelope sender is a Stanchion mailbox, Exchange knew the
  * addressing (To/Cc/Bcc lines, which it writes for authenticated
  * submissions; internet mail gets "Recipient:" lines), the sender is the
  * original's From or Sender, and the original carries
@@ -590,7 +590,7 @@ export interface MirrorFilingOptions {
   targets: readonly MirrorTarget[];
   /** Bcc recipients, shown only on a Sent copy. */
   bccForSent: MessageParticipant[];
-  /** The cmail mailbox of the original's From, if any (colleague mail sent from this instance). */
+  /** The Stanchion mailbox of the original's From, if any (colleague mail sent from this instance). */
   fromMailbox: string | undefined;
   tenantId: string | null;
   /** Subrequests this original may use in all. */
@@ -748,7 +748,7 @@ export async function fileMirrorCopies(
       hasAttachments,
       size,
       sent ? 'sent' : placement.folder,
-      // Mirrored copies are filed as read; cmail's own colleague mail is new mail.
+      // Mirrored copies are filed as read; Stanchion's own colleague mail is new mail.
       ownSend && placement.folder === 'inbox' ? 0 : 1,
       importance,
       inReplyTo,

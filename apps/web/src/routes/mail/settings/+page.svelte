@@ -28,14 +28,14 @@
   const fontChanged = $derived(fontFamily !== savedDefaults.fontFamily || Number(fontSizePt) !== savedDefaults.fontSizePt);
 </script>
 
-<svelte:head><title>Font and signature · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Font and signature · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="settings-page nb-quiet" aria-labelledby="signature-heading">
   <header class="page-header">
     <div>
       <p class="eyebrow">Mail settings</p>
       <h1 id="signature-heading">Font and signature</h1>
-      <p>How your new messages, replies, and forwards start, and the sign-off cmail adds to them.</p>
+      <p>How your new messages, replies, and forwards start, and the sign-off Stanchion adds to them.</p>
     </div>
     <a href="/mail/compose" class="btn"><Icon name="compose" size={15} /> Preview in a message</a>
   </header>

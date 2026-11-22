@@ -76,7 +76,7 @@
 </script>
 
 <svelte:head>
-  <title>{currentItem.label} · Management · {page.data?.appName || 'cmail'}</title>
+  <title>{currentItem.label} · Management · {page.data?.appName || 'Stanchion'}</title>
 </svelte:head>
 
 {#snippet crumbBar()}
@@ -91,7 +91,7 @@
 {/snippet}
 
 <AppShell
-  appName={page.data?.appName || 'cmail'}
+  appName={page.data?.appName || 'Stanchion'}
   user={data.user}
   mode="admin"
   supportEmail={page.data?.supportEmail || ''}

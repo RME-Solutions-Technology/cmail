@@ -112,7 +112,7 @@ export async function buildWelcomeProfile(env: Record<string, unknown>): Promise
   const profile: WelcomeProfile = {
     v: 1,
     appUrl,
-    appName: settings.appName || 'cmail',
+    appName: settings.appName || 'Stanchion',
     orgName: settings.orgName,
     fromEmail,
     fromName: settings.systemFromName,

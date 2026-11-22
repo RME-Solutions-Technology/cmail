@@ -745,7 +745,7 @@ describe('pre-reservation write amplification', () => {
   });
 
   it('uses a plain-text recipient-unavailable reason and leaves SMTP status selection to Cloudflare', () => {
-    expect(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE).toBe('cmail: recipient unavailable; verify the address or contact the organisation');
+    expect(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE).toBe('Stanchion: recipient unavailable; verify the address or contact the organisation');
     expect(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE).not.toMatch(/\b[45]\d\d(?:[ .]|$)/);
   });
 

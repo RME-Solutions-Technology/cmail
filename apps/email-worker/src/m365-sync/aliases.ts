@@ -7,7 +7,7 @@
 // app and User.Read.All permission as the sync), keeps the smtp: entries on
 // the organisation's domains (orgDomains: MAIL_DOMAIN plus the tenant's
 // verified domains the sync discovered) of objects the sync has linked to a
-// cmail mailbox, and makes mailbox_aliases match. Rules:
+// Stanchion mailbox, and makes mailbox_aliases match. Rules:
 // - An alias is never another mailbox's own address (any status): such an
 //   address is refused and counted as a conflict. The database enforces the
 //   same (migration 0027 triggers).
@@ -157,7 +157,7 @@ export async function runAliasSyncTick(env: M365SyncWorkerEnv, deps: AliasSyncDe
         url = page.nextLink;
       }
 
-      // 2. Which cmail mailbox each linked object feeds (a person's own
+      // 2. Which Stanchion mailbox each linked object feeds (a person's own
       //    personal mailbox, only when there is exactly one; a shared mailbox).
       const { results: links } = await db.prepare(
         `SELECT l.object_id AS object_id,

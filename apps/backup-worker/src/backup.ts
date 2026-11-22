@@ -1,7 +1,7 @@
-// Scheduled backup of one cmail deployment into a separate R2 bucket.
+// Scheduled backup of one Stanchion deployment into a separate R2 bucket.
 //
 // - Mail bodies and attachments (the SOURCE bucket) are copied to
-//   `objects/<key>` in BACKUP. Keys are immutable in cmail, so a copy normally
+//   `objects/<key>` in BACKUP. Keys are immutable in Stanchion, so a copy normally
 //   happens once; if a key's content ever changes, the previous copy is kept
 //   under `versions/<day>/<key>` for the retention window.
 // - A dated manifest of every source key is written each day, flagged
@@ -209,7 +209,7 @@ async function dumpDatabase(env: BackupEnv, day: string): Promise<number> {
       lines = [];
     };
     for (;;) {
-      // rowid paging stays correct even if rows are deleted mid-dump; every cmail table has a rowid.
+      // rowid paging stays correct even if rows are deleted mid-dump; every Stanchion table has a rowid.
       const page = await env.DB.prepare(`SELECT rowid AS "__cmail_rowid", * FROM ${quoted} WHERE rowid > ? ORDER BY rowid LIMIT ?`)
         .bind(Number.isFinite(lastRowid) ? lastRowid : -9007199254740991, ROWS_PER_QUERY).all<Record<string, unknown>>();
       for (const row of page.results) {

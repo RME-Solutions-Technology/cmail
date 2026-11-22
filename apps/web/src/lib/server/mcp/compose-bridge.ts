@@ -21,7 +21,7 @@ export interface ComposeFields {
   /** Plain text authored by the agent, or a stored rich-text draft's sanitised HTML. */
   body: string;
   /**
-   * 'html' only when re-submitting a draft that cmail itself stored as rich
+   * 'html' only when re-submitting a draft that Stanchion itself stored as rich
    * text; agent-written bodies are always plain text. The compose action
    * sanitises either way.
    */

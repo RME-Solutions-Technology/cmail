@@ -27,7 +27,7 @@
   }
 </script>
 
-<svelte:head><title>Rules · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Rules · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="rules-page nb-quiet" aria-labelledby="rules-heading">
   <header class="page-header">

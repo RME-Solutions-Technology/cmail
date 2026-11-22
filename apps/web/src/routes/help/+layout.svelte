@@ -19,14 +19,14 @@
 </script>
 
 <svelte:head>
-  <title>Help · {page.data?.appName || 'cmail'}</title>
+  <title>Help · {page.data?.appName || 'Stanchion'}</title>
 </svelte:head>
 
 <div class="help-shell nb-quiet">
   <header class="help-header">
     <a class="help-brand" href={page.data?.user ? '/mail' : '/'}>
       <img src={page.data?.brandIconUrl || '/icon.svg'} alt="" width="28" height="28" />
-      <span><strong>{page.data?.appName || 'cmail'}</strong><small>Help centre</small></span>
+      <span><strong>{page.data?.appName || 'Stanchion'}</strong><small>Help centre</small></span>
     </a>
     <nav aria-label="Help sections">
       {#each sections as section}

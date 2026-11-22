@@ -5,7 +5,7 @@
   const settings = $derived(data.settings);
 </script>
 
-<svelte:head><title>Settings · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Settings · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="settings-page" aria-labelledby="settings-heading">
   <header class="page-heading">
@@ -73,7 +73,7 @@
         <button type="submit" class="btn {data.focusedInbox.enabled ? 'btn-outline-danger' : 'btn-primary'}">
           {data.focusedInbox.enabled ? 'Turn off Focused Inbox' : 'Turn on Focused Inbox'}
         </button>
-        <small>Sorting uses the sender and standard mail headers only, inside cmail. <a class="text-link" href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
+        <small>Sorting uses the sender and standard mail headers only, inside Stanchion. <a class="text-link" href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
       </form>
     </section>
   {/if}
@@ -141,7 +141,7 @@
 
         <div class="field">
           <label for="app-name">Application name</label>
-          <input id="app-name" type="text" name="app_name" value={settings.appName} maxlength="80" placeholder="cmail" />
+          <input id="app-name" type="text" name="app_name" value={settings.appName} maxlength="80" placeholder="Stanchion" />
         </div>
 
         <div class="field deployment-value">

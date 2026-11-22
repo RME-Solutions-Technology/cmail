@@ -9,7 +9,7 @@
 import { escapeHtml } from './validation';
 
 export function renderPasskeyPairPage(options: { appName: string; orgName: string }): string {
-  const appName = escapeHtml(options.appName || 'cmail');
+  const appName = escapeHtml(options.appName || 'Stanchion');
   const orgName = escapeHtml(options.orgName || '');
   return `<!doctype html>
 <html lang="en">

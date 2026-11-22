@@ -34,7 +34,7 @@ export function storageFor(user: TestUser, baseURL: string) {
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
-/** Messages the browser prints that are not cmail defects. */
+/** Messages the browser prints that are not Stanchion defects. */
 const IGNORED_CONSOLE = [
   // Playwright WebKit reports style-src CSP for SvelteKit's hashed inline styles.
   /Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline'/i,
@@ -74,7 +74,7 @@ export const test = base.extend<Fixtures>({
   },
   // Mark the first-run guide done. Done with one evaluate on a static file,
   // not an init script or storageState origin, both of which Playwright also
-  // runs inside cmail's sandboxed message frames (logging bogus errors there).
+  // runs inside Stanchion's sandboxed message frames (logging bogus errors there).
   page: async ({ page, as }, use) => {
     if (as) {
       await page.goto('/favicon.svg');
@@ -89,7 +89,7 @@ export const test = base.extend<Fixtures>({
       const text = message.text();
       if (IGNORED_CONSOLE.some((pattern) => pattern.test(text))) return;
       // Playwright's trace recorder injects a snapshot script into every
-      // frame; cmail's sandboxed message frames (correctly) refuse it.
+      // frame; Stanchion's sandboxed message frames (correctly) refuse it.
       const where = message.location().url;
       if ((where === 'about:srcdoc' || where.startsWith('web-inspector://')) && /^Blocked script execution in 'about:srcdoc'/.test(text)) return;
       errors.push(`${text} @${JSON.stringify(message.location())}`);
@@ -119,7 +119,7 @@ export async function open(page: Page, path: string): Promise<void> {
  * How far content reaches past the right edge of the screen, in px: the
  * document's sideways scroll, a page pane that scrolls sideways as well as
  * down (the page "stretches"), or any element sticking out, fixed and sticky
- * bars included (cmail's shell clips overflow, which would otherwise hide a
+ * bars included (Stanchion's shell clips overflow, which would otherwise hide a
  * too-wide header or list). Content inside a sideways-only scroller (tables,
  * toolbars) is fine.
  */

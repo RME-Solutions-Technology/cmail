@@ -4,7 +4,7 @@ import type { AuthProvider } from '@cmail/shared/types';
 export interface InviteEmailOptions {
   email: string;
   displayName: string;
-  appName: string;             // product name (e.g. "cmail") — only used in subtle footer
+  appName: string;             // product name (e.g. "Stanchion") — only used in subtle footer
   appUrl: string;              // sign-in URL base (e.g. https://mail.example.com)
   provider: AuthProvider;      // the identity provider that actually hosts `email`
   enrollmentToken: string;     // raw single-use token; placed in a URL fragment, never a request URL

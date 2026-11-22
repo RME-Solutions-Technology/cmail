@@ -2,7 +2,7 @@
   import Icon from '#lib/ui/Icon.svelte';
 
   let { data, form } = $props();
-  const appName = $derived(data.appName || 'cmail');
+  const appName = $derived(data.appName || 'Stanchion');
   let sendScopeChecked = $state(false);
 
   const permissionLabels: Record<string, string> = {

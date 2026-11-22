@@ -2,7 +2,7 @@
   // A read-only summary of what the sections below already check. It adds no
   // new reads: every value comes from the same overviews those sections use.
   let { data } = $props();
-  const appName = $derived(data.appName || 'cmail');
+  const appName = $derived(data.appName || 'Stanchion');
   const sync = $derived(data.sync);
   const access = $derived(data.access);
   const graph = $derived(data.feed?.graph);
