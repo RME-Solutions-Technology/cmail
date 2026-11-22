@@ -41,6 +41,7 @@
     "@tiptap/pm": "3.33.1",
     "@tiptap/starter-kit": "3.33.1",
     "mimetext": "^3.0.28",
+    "qrcode-generator": "2.0.4",
     "rehype-parse": "9.0.1",
     "rehype-sanitize": "6.0.0",
     "rehype-stringify": "10.0.1",

@@ -8,6 +8,7 @@ import {
   passkeyRouteContext,
   removeOwnPasskey,
 } from '#lib/server/passkeys.js';
+import { pairingsInstalled } from '#lib/server/passkey-pairing.js';
 
 type PasskeyEnv = Record<string, unknown> & { DB: D1Database };
 
@@ -29,6 +30,7 @@ export const load: PageServerLoad = async ({ locals, platform, url, setHeaders }
     addBlockedReason: addRefusal ? MANAGE_REFUSAL_MESSAGES[addRefusal] : '',
     freshMinutes: REGISTRATION_FRESH_MINUTES,
     passkeySignInUrl: `${url.origin}/auth/passkey`,
+    pairingAvailable: await pairingsInstalled(env.DB),
   };
 };
 

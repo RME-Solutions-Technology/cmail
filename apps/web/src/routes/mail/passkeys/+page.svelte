@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import Icon from '#lib/ui/Icon.svelte';
   import { browserSupportsPasskeys, registerPasskey, suggestDeviceName } from '#lib/passkey-browser.js';
+  import { qrPath, type QrPath } from '#lib/qr.js';
 
   let { data, form: rawForm } = $props();
   const form = $derived(rawForm as { error?: string; success?: string } | null);
@@ -13,10 +14,190 @@
   let message = $state('');
   let messageIsError = $state(false);
 
+  // "Add a phone": a QR code, approve the phone that scans it.
+  type PairPhase = 'idle' | 'starting' | 'offered' | 'joined' | 'approved' | 'done' | 'ended';
+  let mounted = $state(false);
+  let pairPhase = $state<PairPhase>('idle');
+  let pairId = $state('');
+  let pairUrl = $state('');
+  let pairQr = $state<QrPath | null>(null);
+  let pairLabel = $state('');
+  let pairCountry = $state('');
+  let pairChoices = $state<string[]>([]);
+  let approveBox = $state<HTMLElement | null>(null);
+  let finishingSince = 0;
+  let pairSecondsLeft = $state(0);
+  let pairMessage = $state('');
+  let pairMessageIsError = $state(false);
+  let pairBusy = $state(false);
+  let copied = $state(false);
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
+  let deadline = 0;
+
   onMount(() => {
     supported = browserSupportsPasskeys();
     deviceName = suggestDeviceName();
+    mounted = true;
   });
+  onDestroy(() => stopPairTimers());
+
+  function stopPairTimers() {
+    if (pollTimer) clearInterval(pollTimer);
+    if (tickTimer) clearInterval(tickTimer);
+    pollTimer = undefined;
+    tickTimer = undefined;
+  }
+
+  function countdown(seconds: number): string {
+    const safe = Math.max(0, seconds);
+    return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`;
+  }
+
+  async function pairCall(method: 'GET' | 'POST', body?: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await fetch('/mail/passkeys/pair', {
+      method,
+      credentials: 'same-origin',
+      headers: { accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Something went wrong. Try again.');
+    return data;
+  }
+
+  function countryName(code: string): string {
+    if (!code) return '';
+    try {
+      return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code;
+    } catch {
+      return code;
+    }
+  }
+
+  function endPairing(message: string, isError: boolean) {
+    stopPairTimers();
+    pairPhase = 'ended';
+    pairQr = null;
+    pairUrl = '';
+    pairMessage = message;
+    pairMessageIsError = isError;
+  }
+
+  async function startPairing() {
+    if (pairBusy) return;
+    pairBusy = true;
+    pairPhase = 'starting';
+    pairMessage = '';
+    copied = false;
+    try {
+      const data = await pairCall('POST', { action: 'create' });
+      pairId = String(data.pairingId);
+      pairUrl = String(data.pairUrl);
+      pairQr = qrPath(pairUrl);
+      pairLabel = '';
+      pairCountry = '';
+      pairChoices = [];
+      finishingSince = 0;
+      deadline = Date.now() + Number(data.secondsLeft) * 1000;
+      pairSecondsLeft = Number(data.secondsLeft);
+      pairPhase = 'offered';
+      pairMessage = 'Scan the code with your phone camera.';
+      pairMessageIsError = false;
+      stopPairTimers();
+      tickTimer = setInterval(() => {
+        pairSecondsLeft = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        if (pairSecondsLeft === 0 && (pairPhase === 'offered' || pairPhase === 'joined' || pairPhase === 'approved')) {
+          endPairing('The code expired. Press Add a phone to make a new one.', false);
+        }
+      }, 1000);
+      pollTimer = setInterval(() => { void pollPairing(); }, 2000);
+    } catch (error) {
+      pairPhase = 'idle';
+      pairMessage = error instanceof Error ? error.message : 'Could not start. Try again.';
+      pairMessageIsError = true;
+    } finally {
+      pairBusy = false;
+    }
+  }
+
+  async function pollPairing() {
+    try {
+      const data = await pairCall('GET');
+      const state = String(data.state);
+      if (state === 'joined' && pairPhase !== 'joined') {
+        pairLabel = String(data.deviceLabel || 'A phone');
+        pairCountry = typeof data.country === 'string' ? data.country : '';
+        pairChoices = Array.isArray(data.choices) ? data.choices.map(String) : [];
+        pairPhase = 'joined';
+        pairMessage = `${pairLabel} wants to join. Pick the number shown on the phone to approve it, only if it is your phone and you just scanned the code.`;
+        pairMessageIsError = false;
+        // Move focus to the approve box so keyboard and screen reader users land on it.
+        await tick();
+        approveBox?.focus();
+      } else if (state === 'finishing') {
+        if (!finishingSince) finishingSince = Date.now();
+        pairMessage = `Finishing on ${pairLabel || 'the phone'}...`;
+        if (Date.now() - finishingSince > 20000) {
+          endPairing('The phone did not finish adding its passkey. Press Add a phone to try again.', true);
+        }
+      } else if (state === 'approved') {
+        // Also after a failed attempt: the offer went back to approved, so the phone can try again.
+        if (pairPhase !== 'approved' || finishingSince) pairMessage = `Approved. Now finish on ${pairLabel || 'the phone'}.`;
+        finishingSince = 0;
+        pairPhase = 'approved';
+      } else if (state === 'consumed') {
+        // The server reports consumed only once the passkey really exists.
+        stopPairTimers();
+        pairPhase = 'done';
+        pairQr = null;
+        pairUrl = '';
+        pairMessage = `${pairLabel || 'The phone'} was added.`;
+        pairMessageIsError = false;
+        await invalidateAll();
+      } else if (state === 'denied') {
+        endPairing('That request was ended.', false);
+      } else if (state === 'expired') {
+        endPairing('The code expired. Press Add a phone to make a new one.', false);
+      }
+    } catch (error) {
+      // A refused poll (signed out, rate limited) ends the offer rather than looping.
+      endPairing(error instanceof Error ? error.message : 'Lost contact. Start again.', true);
+    }
+  }
+
+  async function decide(action: 'approve' | 'deny', code?: string) {
+    if (pairBusy) return;
+    pairBusy = true;
+    try {
+      await pairCall('POST', { action, pairingId: pairId, code });
+      if (action === 'approve') {
+        pairPhase = 'approved';
+        pairMessage = `Approved. Now finish on ${pairLabel || 'the phone'}.`;
+        pairMessageIsError = false;
+      } else {
+        endPairing('That request was declined.', false);
+      }
+    } catch (error) {
+      pairMessage = error instanceof Error ? error.message : 'Could not do that. Try again.';
+      pairMessageIsError = true;
+      // Three wrong picks end the offer on the server; the next poll shows it.
+      void pollPairing();
+    } finally {
+      pairBusy = false;
+    }
+  }
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(pairUrl);
+      copied = true;
+    } catch {
+      copied = false;
+      pairMessage = 'Could not copy. Select the link and copy it.';
+      pairMessageIsError = true;
+    }
+  }
 
   async function add(event: SubmitEvent) {
     event.preventDefault();
@@ -73,6 +254,57 @@
     {/if}
     {#if message}<p class:error-text={messageIsError} class="status-text" role="status" aria-live="polite">{message}</p>{/if}
   </section>
+
+  {#if data.pairingAvailable}
+    <section class="card" aria-labelledby="phone-heading">
+      <h2 id="phone-heading">Add a phone</h2>
+      {#if !data.canAdd}
+        <p class="muted">{data.addBlockedReason}</p>
+      {:else}
+        <p class="muted">Show a code here, scan it with your phone camera and the phone makes its own passkey for this account. You do not sign in or type anything on the phone. Do it now, before you need it: if the normal sign-in is down you can still use a passkey you already added.</p>
+        {#if pairPhase === 'idle' || pairPhase === 'ended' || pairPhase === 'done' || pairPhase === 'starting'}
+          <div>
+            <button type="button" class="btn btn-primary" onclick={startPairing} disabled={!mounted || pairBusy}>
+              <Icon name="key" size={15} /> Add a phone
+            </button>
+          </div>
+          <noscript><p class="muted">Adding a phone needs JavaScript. Without it, open this page on the phone itself, sign in and use Add a passkey above.</p></noscript>
+        {:else}
+          {#if pairQr}
+            <div class="qr-block">
+              <svg class="qr" viewBox="-4 -4 {pairQr.size + 8} {pairQr.size + 8}" role="img" aria-label="QR code for adding a phone. Scan it with the phone camera." shape-rendering="crispEdges">
+                <rect x="-4" y="-4" width={pairQr.size + 8} height={pairQr.size + 8} fill="#ffffff" />
+                <path d={pairQr.path} fill="#000000" />
+              </svg>
+              <div class="qr-side">
+                <p class="countdown">Expires in <strong>{countdown(pairSecondsLeft)}</strong></p>
+                <label class="sr-only" for="pair-link">Pairing link</label>
+                <input id="pair-link" class="pair-link" type="text" readonly value={pairUrl} onfocus={(event) => (event.currentTarget as HTMLInputElement).select()} />
+                <div class="qr-actions">
+                  <button type="button" class="btn btn-subtle" onclick={copyLink}>{copied ? 'Copied' : 'Copy link'}</button>
+                  <button type="button" class="btn btn-ghost" onclick={() => decide('deny')} disabled={pairBusy}>Cancel</button>
+                </div>
+                <p class="muted">The link works once, on one phone, and only if you approve that phone here.</p>
+              </div>
+            </div>
+          {/if}
+          {#if pairPhase === 'joined'}
+            <div class="approve-box" bind:this={approveBox} tabindex="-1" role="group" aria-labelledby="approve-heading">
+              <p id="approve-heading"><strong>{pairLabel}</strong>{#if pairCountry} (connecting from {countryName(pairCountry)}){/if} wants to join.</p>
+              <p class="muted">Pick the number shown on the phone to approve it. If you do not recognise this phone, deny it.</p>
+              <div class="qr-actions">
+                {#each pairChoices as choice (choice)}
+                  <button type="button" class="btn btn-primary choice" onclick={() => decide('approve', choice)} disabled={pairBusy}>{choice}</button>
+                {/each}
+                <button type="button" class="btn btn-outline-danger" onclick={() => decide('deny')} disabled={pairBusy}>Deny</button>
+              </div>
+            </div>
+          {/if}
+        {/if}
+      {/if}
+      <p class:error-text={pairMessageIsError} class="status-text" role="status" aria-live="polite">{pairMessage}</p>
+    </section>
+  {/if}
 
   <section class="card" aria-labelledby="list-heading">
     <h2 id="list-heading">Your passkeys</h2>
@@ -133,6 +365,16 @@
   .actions { text-align: right; }
   .tag { margin-left: 8px; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--bg-subtle); color: var(--text-muted); font-size: 11px; }
   code { overflow-wrap: anywhere; }
+  .qr-block { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .qr { width: 220px; height: 220px; flex: none; border: 1px solid var(--border); border-radius: 6px; }
+  .qr-side { display: grid; gap: 8px; min-width: 0; flex: 1 1 220px; }
+  .countdown { margin: 0; font-size: 13px; color: var(--text-muted); }
+  .pair-link { width: 100%; font-size: 12px; }
+  .qr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .approve-box { padding: 12px; border-left: 3px solid var(--primary); background: var(--bg-subtle); }
+  .approve-box p { margin: 0 0 8px; }
+  .approve-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .choice { min-width: 56px; font-size: 18px; font-variant-numeric: tabular-nums; }
   @media (max-width: 600px) {
     .add-form { flex-direction: column; align-items: stretch; }
     .field { min-width: 0; }

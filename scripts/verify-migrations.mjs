@@ -475,6 +475,10 @@ try {
         WHERE name = 'owner_user_id') AS personal_mailbox_owner_column_count,
       (SELECT COUNT(*) FROM pragma_table_info('push_subscriptions')
         WHERE name = 'device_id') AS push_device_id_column_count,
+      (SELECT COUNT(*) FROM pragma_table_info('passkey_pairings')
+        WHERE name IN ('id', 'user_id', 'session_id', 'token_hash', 'state', 'device_label', 'country', 'joiner_hash', 'approve_code', 'wrong_tries', 'challenge_id', 'credential_id', 'expires_at', 'created_at')) AS passkey_pairing_column_count,
+      (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'index' AND name IN ('idx_passkey_pairings_user_state', 'idx_passkey_pairings_expiry', 'idx_passkey_pairings_one_open')) AS passkey_pairing_index_count,
       (SELECT COUNT(*) FROM pragma_foreign_key_check) AS foreign_key_violation_count;
   `;
 
@@ -518,6 +522,8 @@ try {
   assertEqual(Number(row.compose_preference_column_count), 4, 'Compose preference columns');
   assertEqual(Number(row.personal_mailbox_owner_column_count), 1, 'Personal mailbox owner column');
   assertEqual(Number(row.push_device_id_column_count), 1, 'Push device identifier column');
+  assertEqual(Number(row.passkey_pairing_column_count), 14, 'Passkey pairing columns');
+  assertEqual(Number(row.passkey_pairing_index_count), 3, 'Passkey pairing indexes');
   assertEqual(Number(row.foreign_key_violation_count), 0, 'Foreign-key violation count');
 
   verifyUpgradeFixture();
