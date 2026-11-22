@@ -17,7 +17,6 @@ export function renderPasskeyPairPage(options: { appName: string; orgName: strin
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<meta name="referrer" content="no-referrer">
 <title>Add this phone · ${appName}</title>
 <style>
   :root { color-scheme: light dark; --bg: #ffffff; --text: #1b1b1f; --muted: #5d5f66; --primary: #0f6cbd; --on-primary: #ffffff; --danger: #b3261e; --border: #d0d3da; }
@@ -33,6 +32,8 @@ export function renderPasskeyPairPage(options: { appName: string; orgName: strin
   button:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   #pair-status { min-height: 1.5em; margin: 14px 0 0; color: var(--text); }
   #pair-status.error { color: var(--danger); }
+  #pair-code-box[hidden] { display: none; }
+  .code { margin: 0 0 12px; font-size: 56px; font-weight: 700; letter-spacing: .08em; color: var(--text); }
   a { color: var(--primary); }
   .note { margin-top: 28px; font-size: 12px; text-align: left; border-top: 1px solid var(--border); padding-top: 12px; }
 </style>
@@ -42,6 +43,10 @@ export function renderPasskeyPairPage(options: { appName: string; orgName: strin
   <h1>Add this phone</h1>
   <p>${orgName ? `${orgName} · ` : ''}${appName}. This creates a passkey on this phone for your account. You will confirm with your fingerprint, face or PIN.</p>
   <button type="button" id="pair-button" hidden>Create passkey</button>
+  <div id="pair-code-box" hidden>
+    <p>Pick this number on your computer:</p>
+    <p id="pair-code" class="code" aria-live="polite"></p>
+  </div>
   <div id="pair-status" role="status" aria-live="polite"></div>
   <noscript><p>Adding a phone needs JavaScript. Turn it on and scan the code again.</p></noscript>
   <p class="note">Scanned a code you did not start? Close this page. Nothing is added unless the person signed in on the computer approves this phone, and a code stops working after 10 minutes.</p>
@@ -106,13 +111,31 @@ export const PASSKEY_PAIR_CLIENT_JS = `'use strict';
     return;
   }
 
+  // Poll every 3 seconds. A network error or a 429 is retried with a growing
+  // delay (up to 30 s); anything else the server says ends the wait.
   async function waitForApproval() {
+    var delay = 3000;
+    var failures = 0;
     for (;;) {
-      var state = await postJson('/auth/passkey/pair/options', { token: token, joiner: joiner, wait: true });
+      var state;
+      try {
+        state = await postJson('/auth/passkey/pair/options', { token: token, joiner: joiner, wait: true });
+        failures = 0;
+        delay = 3000;
+      } catch (error) {
+        var retryable = error && (error.status === undefined || error.status === 429 || error.status >= 500);
+        failures += 1;
+        if (!retryable || failures > 20) throw error;
+        say('Connection trouble. Trying again...', false);
+        delay = Math.min(30000, delay * 2);
+        await sleep(delay);
+        continue;
+      }
       if (state.state === 'approved') return;
       if (state.state === 'denied') throw new Error('The request was declined on your computer.');
-      if (state.state === 'expired' || state.state === 'consumed') throw new Error('This code has expired. Start again on your computer.');
-      await sleep(2000);
+      if (state.state === 'consumed') throw new Error('This code was already used. Start again on your computer.');
+      if (state.state === 'expired') throw new Error('This code has expired. Start again on your computer.');
+      await sleep(delay);
     }
   }
 
@@ -121,13 +144,17 @@ export const PASSKEY_PAIR_CLIENT_JS = `'use strict';
     try {
       var joined = await postJson('/auth/passkey/pair/join', { token: token });
       joiner = joined.joiner;
+      document.getElementById('pair-code').textContent = joined.code || '';
+      document.getElementById('pair-code-box').hidden = false;
       say('Waiting for approval on your computer. It will ask you to approve "' + (joined.deviceLabel || 'this phone') + '".', false);
       await waitForApproval();
+      document.getElementById('pair-code-box').hidden = true;
       say('Approved. Press Create passkey.', false);
       button.hidden = false;
       button.disabled = false;
       button.focus();
     } catch (error) {
+      document.getElementById('pair-code-box').hidden = true;
       say((error && error.message) || 'That did not work. Try again.', true);
     }
   }

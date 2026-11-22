@@ -21,5 +21,5 @@ export const POST: RequestHandler = async ({ platform, url, request }) => {
   }
   const result = await joinPairing(env, request, body, (request.headers.get('cf-connecting-ip') || '').slice(0, 64));
   if (!result.ok) return json({ message: result.message }, { status: result.status, headers: noStore });
-  return json({ joiner: result.joiner, deviceLabel: result.deviceLabel, secondsLeft: result.secondsLeft }, { headers: noStore });
+  return json({ joiner: result.joiner, deviceLabel: result.deviceLabel, code: result.code, secondsLeft: result.secondsLeft }, { headers: noStore });
 };

@@ -146,26 +146,33 @@ signs you in at `/auth/passkey`, and you can add more phones from there.
 Needs migration `0034_passkey_pairings.sql` (one new table, additive). Until it
 is applied the card is hidden. It is also hidden while passkey sign-in is off.
 
-1. You press **Add a phone** (same rule as adding a passkey: an ordinary
-   session opened in the last 15 minutes, never a passkey session). The server
+1. You press **Add a phone** (an ordinary session, never a passkey session,
+   opened in the last 5 minutes: adding a passkey needs a session under 15
+   minutes old, and the offer lasts 10, so an approved offer cannot go stale
+   before the phone finishes). The server
    makes a random 256-bit token, stores only its SHA-256 hash with your account
    and session, and shows `https://<host>/auth/passkey/pair#<token>` as an
    inline SVG QR code, the same link as text with Copy, and a 10 minute
    countdown. The token is in the URL fragment, so no server log or referrer
-   ever holds it. Starting a new offer cancels the old one.
+   ever holds it. A person has one open offer (a database rule): starting a new
+   one cancels the old one, and that is audited.
 2. The phone opens the page (no sign-in needed). Its script reads the fragment,
    removes it from the address bar and posts it. One conditional update moves
    the offer from `offered` to `joined` and returns a second random secret that
    only that phone holds. The server records a friendly label from the user
-   agent (for example "iPhone (Safari)"). The label is for you to read and is
-   never trusted.
+   agent (for example "iPhone (Safari)") and the country Cloudflare saw. Both
+   are for you to read and are never trusted. The phone shows a two-digit
+   number.
 3. The page you are signed in on (polling every 2 seconds, announced to screen
-   readers) says "iPhone (Safari) wants to join" with **Approve this phone** and
-   **Deny**. This step stops someone who photographed the QR code from adding
-   their own phone. Only the session that made the offer can approve or deny.
+   readers, with focus moved to the prompt) says "iPhone (Safari) (connecting
+   from Australia) wants to join" with three numbers and **Deny**. You approve
+   by picking the number shown on the phone. This step stops someone who
+   photographed the QR code from adding their own phone. Three wrong picks end
+   the offer. Only the session that made the offer can approve or deny.
 4. After approval the phone gets registration options (the same options and
    checks as adding a passkey: discoverable credential, user verification
    required, origin and RP ID exactly `APP_URL`) and presses **Create passkey**.
+   The challenge is stored on the offer and verify must present that same one.
    The server claims the offer (`approved` to `consumed`), verifies and stores
    the passkey, and sends the usual "Passkey added" notices. A failed attempt
    puts the offer back to `approved` while it lasts.
@@ -176,7 +183,10 @@ session must still be live at every step; the options and verify steps need the
 phone's own secret as well as the token. Rate limits: offers per person per
 hour, joins per address, failed token or secret guesses per address (IPv6 per
 /64), polls per address and per person. Every refusal on the phone side gives
-the same answer. Without JavaScript the card says so and points to adding the
+the same answer, and a request with no connecting address is refused instead
+of sharing one bucket. The page shows the phone as added only once the passkey
+really exists. The phone page retries network errors and rate limits with a
+growing delay. Without JavaScript the card says so and points to adding the
 passkey on the phone itself.
 
 Audit events: `auth.passkey_pair_started`, `_joined`, `_approved`, `_denied`,

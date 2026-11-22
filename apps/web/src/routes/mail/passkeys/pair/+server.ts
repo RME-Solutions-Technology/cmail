@@ -28,7 +28,7 @@ export const POST: RequestHandler = async ({ platform, url, locals, request }) =
   if (!locals.user) return json({ error: 'Authentication required' }, { status: 401, headers: noStore });
   const raw = await request.text();
   if (bodyTooLarge(raw, MAX_BODY_BYTES)) return json({ error: 'Request too large' }, { status: 413, headers: noStore });
-  let body: { action?: unknown; pairingId?: unknown };
+  let body: { action?: unknown; pairingId?: unknown; code?: unknown };
   try {
     body = JSON.parse(raw) as typeof body;
   } catch {
@@ -47,8 +47,9 @@ export const POST: RequestHandler = async ({ platform, url, locals, request }) =
     }, { headers: noStore });
   }
   if (body.action === 'approve' || body.action === 'deny') {
-    const decide = body.action === 'approve' ? approvePairing : denyPairing;
-    const result = await decide(env, locals.user, locals.sessionId, body.pairingId, { clientIp });
+    const result = body.action === 'approve'
+      ? await approvePairing(env, locals.user, locals.sessionId, body.pairingId, body.code, { clientIp })
+      : await denyPairing(env, locals.user, locals.sessionId, body.pairingId, { clientIp });
     if (!result.ok) return json({ error: result.error }, { status: result.status, headers: noStore });
     return json({ ok: true }, { headers: noStore });
   }

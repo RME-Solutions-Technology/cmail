@@ -18,7 +18,6 @@ export const GET: RequestHandler = async ({ platform, url }) => {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
-      'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': PASSKEY_PAGE_CSP,
     },
   });

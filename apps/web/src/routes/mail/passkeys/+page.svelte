@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { invalidateAll } from '$app/navigation';
   import Icon from '#lib/ui/Icon.svelte';
   import { browserSupportsPasskeys, registerPasskey, suggestDeviceName } from '#lib/passkey-browser.js';
@@ -22,6 +22,10 @@
   let pairUrl = $state('');
   let pairQr = $state<QrPath | null>(null);
   let pairLabel = $state('');
+  let pairCountry = $state('');
+  let pairChoices = $state<string[]>([]);
+  let approveBox = $state<HTMLElement | null>(null);
+  let finishingSince = 0;
   let pairSecondsLeft = $state(0);
   let pairMessage = $state('');
   let pairMessageIsError = $state(false);
@@ -62,6 +66,15 @@
     return data;
   }
 
+  function countryName(code: string): string {
+    if (!code) return '';
+    try {
+      return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code;
+    } catch {
+      return code;
+    }
+  }
+
   function endPairing(message: string, isError: boolean) {
     stopPairTimers();
     pairPhase = 'ended';
@@ -83,6 +96,9 @@
       pairUrl = String(data.pairUrl);
       pairQr = qrPath(pairUrl);
       pairLabel = '';
+      pairCountry = '';
+      pairChoices = [];
+      finishingSince = 0;
       deadline = Date.now() + Number(data.secondsLeft) * 1000;
       pairSecondsLeft = Number(data.secondsLeft);
       pairPhase = 'offered';
@@ -111,13 +127,27 @@
       const state = String(data.state);
       if (state === 'joined' && pairPhase !== 'joined') {
         pairLabel = String(data.deviceLabel || 'A phone');
+        pairCountry = typeof data.country === 'string' ? data.country : '';
+        pairChoices = Array.isArray(data.choices) ? data.choices.map(String) : [];
         pairPhase = 'joined';
-        pairMessage = `${pairLabel} wants to join. Approve it only if it is your phone and you just scanned the code.`;
+        pairMessage = `${pairLabel} wants to join. Pick the number shown on the phone to approve it, only if it is your phone and you just scanned the code.`;
         pairMessageIsError = false;
-      } else if (state === 'approved' && pairPhase !== 'approved') {
+        // Move focus to the approve box so keyboard and screen reader users land on it.
+        await tick();
+        approveBox?.focus();
+      } else if (state === 'finishing') {
+        if (!finishingSince) finishingSince = Date.now();
+        pairMessage = `Finishing on ${pairLabel || 'the phone'}...`;
+        if (Date.now() - finishingSince > 20000) {
+          endPairing('The phone did not finish adding its passkey. Press Add a phone to try again.', true);
+        }
+      } else if (state === 'approved') {
+        // Also after a failed attempt: the offer went back to approved, so the phone can try again.
+        if (pairPhase !== 'approved' || finishingSince) pairMessage = `Approved. Now finish on ${pairLabel || 'the phone'}.`;
+        finishingSince = 0;
         pairPhase = 'approved';
-        pairMessage = `Approved. Now finish on ${pairLabel || 'the phone'}.`;
       } else if (state === 'consumed') {
+        // The server reports consumed only once the passkey really exists.
         stopPairTimers();
         pairPhase = 'done';
         pairQr = null;
@@ -136,11 +166,11 @@
     }
   }
 
-  async function decide(action: 'approve' | 'deny') {
+  async function decide(action: 'approve' | 'deny', code?: string) {
     if (pairBusy) return;
     pairBusy = true;
     try {
-      await pairCall('POST', { action, pairingId: pairId });
+      await pairCall('POST', { action, pairingId: pairId, code });
       if (action === 'approve') {
         pairPhase = 'approved';
         pairMessage = `Approved. Now finish on ${pairLabel || 'the phone'}.`;
@@ -151,6 +181,8 @@
     } catch (error) {
       pairMessage = error instanceof Error ? error.message : 'Could not do that. Try again.';
       pairMessageIsError = true;
+      // Three wrong picks end the offer on the server; the next poll shows it.
+      void pollPairing();
     } finally {
       pairBusy = false;
     }
@@ -257,10 +289,13 @@
             </div>
           {/if}
           {#if pairPhase === 'joined'}
-            <div class="approve-box">
-              <p><strong>{pairLabel}</strong> wants to join.</p>
+            <div class="approve-box" bind:this={approveBox} tabindex="-1" role="group" aria-labelledby="approve-heading">
+              <p id="approve-heading"><strong>{pairLabel}</strong>{#if pairCountry} (connecting from {countryName(pairCountry)}){/if} wants to join.</p>
+              <p class="muted">Pick the number shown on the phone to approve it. If you do not recognise this phone, deny it.</p>
               <div class="qr-actions">
-                <button type="button" class="btn btn-primary" onclick={() => decide('approve')} disabled={pairBusy}>Approve this phone</button>
+                {#each pairChoices as choice (choice)}
+                  <button type="button" class="btn btn-primary choice" onclick={() => decide('approve', choice)} disabled={pairBusy}>{choice}</button>
+                {/each}
                 <button type="button" class="btn btn-outline-danger" onclick={() => decide('deny')} disabled={pairBusy}>Deny</button>
               </div>
             </div>
@@ -338,6 +373,8 @@
   .qr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .approve-box { padding: 12px; border-left: 3px solid var(--primary); background: var(--bg-subtle); }
   .approve-box p { margin: 0 0 8px; }
+  .approve-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .choice { min-width: 56px; font-size: 18px; font-variant-numeric: tabular-nums; }
   @media (max-width: 600px) {
     .add-form { flex-direction: column; align-items: stretch; }
     .field { min-width: 0; }
