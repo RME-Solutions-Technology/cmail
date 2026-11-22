@@ -12,24 +12,24 @@ related: [architecture.md, credentials.md]
 
 Stanchion is four deployables that share one D1 database and one R2 bucket. This
 page lists each one, its bindings and schedules, and how they connect. The
-default resource names here (`cmail-web`, `cmail-db` and so on) come from the
-`*.example` Wrangler files; yours can differ. To set them up, follow
+default resource names here (`stanchion-web`, `stanchion-db` and so on) come from the
+`*.example` Wrangler files; yours can differ (existing instances keep their older `cmail-*` names). To set them up, follow
 [Getting started](getting-started.md) and [Deployment](deployment.md).
 
 ```mermaid
 flowchart LR
-  browser["Browser"] --> web["cmail-web (Pages)"]
-  web -->|"EMAIL_SERVICE binding"| worker["cmail-email-worker"]
+  browser["Browser"] --> web["stanchion-web (Pages)"]
+  web -->|"EMAIL_SERVICE binding"| worker["stanchion-email-worker"]
   worker -->|"send_email binding"| sending["Email Sending"]
   routing["Email Routing"] --> worker
   sending -.->|"events, optional"| queue["Queue"] -.-> worker
-  web --> d1[("D1 cmail-db")]
-  web --> r2[("R2 cmail-storage")]
+  web --> d1[("D1 stanchion-db")]
+  web --> r2[("R2 stanchion-storage")]
   worker --> d1
   worker --> r2
-  backup["cmail-backup-worker"] --> d1
+  backup["stanchion-backup-worker"] --> d1
   backup --> r2
-  backup --> r2b[("R2 cmail-backup")]
+  backup --> r2b[("R2 stanchion-backup")]
 ```
 
 ## The deployables
@@ -42,9 +42,9 @@ and the MCP endpoint for AI apps.
 
 | Binding | Type | Default resource |
 |---|---|---|
-| `DB` | D1 | `cmail-db` (migrations in `packages/shared/migrations`) |
-| `STORAGE` | R2 | `cmail-storage` |
-| `EMAIL_SERVICE` | Service binding | `cmail-email-worker` |
+| `DB` | D1 | `stanchion-db` (migrations in `packages/shared/migrations`) |
+| `STORAGE` | R2 | `stanchion-storage` |
+| `EMAIL_SERVICE` | Service binding | `stanchion-email-worker` |
 
 Pages can't hold a `send_email` binding, which is why outbound mail goes
 through the email Worker. Settings go in `[vars]` and Pages secrets; see the
@@ -75,8 +75,8 @@ fail closed) and `VAPID_PRIVATE_KEY` (only for push notifications).
 
 A scheduled Worker (cron `23 * * * *`) with no URL.
 
-- Each hour it copies new and changed R2 objects from `cmail-storage` to
-  `cmail-backup` under `objects/`. If an object changed, the old copy is kept
+- Each hour it copies new and changed R2 objects from `stanchion-storage` to
+  `stanchion-backup` under `objects/`. If an object changed, the old copy is kept
   under `versions/`.
 - Once a day it exports every D1 table as NDJSON under `d1/<day>/`, with the
   schema and a `complete.json` marker, and writes a manifest.

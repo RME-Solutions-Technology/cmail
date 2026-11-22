@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRuleDefinition } from '@cmail/shared/inbox-rules';
+import { parseRuleDefinition } from '@stanchion/shared/inbox-rules';
 import {
   CONDITION_OPTIONS,
   EXCEPTION_OPTIONS,

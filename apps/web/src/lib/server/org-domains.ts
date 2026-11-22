@@ -1,8 +1,8 @@
 // The organisation's mail domains in the web app (docs/multi-domain.md).
-// The list itself comes from @cmail/shared/org-domains: MAIL_DOMAIN plus the
+// The list itself comes from @stanchion/shared/org-domains: MAIL_DOMAIN plus the
 // tenant's verified domains the Microsoft 365 sync discovered. A manager can
 // only choose from it; a domain is never typed in.
-import { orgDomains, orgDomainsFrom, type OrgDomains } from '@cmail/shared/org-domains';
+import { orgDomains, orgDomainsFrom, type OrgDomains } from '@stanchion/shared/org-domains';
 
 /**
  * For a page load that only shows choices: on a D1 failure it falls back to

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseAuthenticationIdentities, parseAuthenticationResults } from '../authentication-results';
-import { exchangeMirrorConfig, isJournalAddress, maskJournalAddress } from '@cmail/shared/exchange-mirror';
+import { exchangeMirrorConfig, isJournalAddress, maskJournalAddress } from '@stanchion/shared/exchange-mirror';
 import { attachedOriginal, envelopeAddress, envelopeText, MAX_JOURNAL_RECIPIENTS, parseJournalEnvelope } from './report';
 import { fromDomain, headerBlockWellFormed, headerValues, verifyJournalReport } from './verify';
 import { sentCopyAllowed } from './ingest';

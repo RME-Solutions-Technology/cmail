@@ -1,4 +1,4 @@
-import type { AuthProvider, UserRole } from '@cmail/shared/types';
+import type { AuthProvider, UserRole } from '@stanchion/shared/types';
 
 /**
  * Manager sessions require an OAuth identity. Email OTP is intentionally

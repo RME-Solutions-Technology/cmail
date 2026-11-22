@@ -17,7 +17,7 @@
 // - Nothing happens before the first manager exists: /bootstrap stays the
 //   only way to create that account.
 
-import type { Env, User } from '@cmail/shared/types';
+import type { Env, User } from '@stanchion/shared/types';
 import type { AccessIdentity } from './access-jwt';
 import { audit } from './db';
 import { maxSessionsPerUser, sessionTtlMs } from './config';

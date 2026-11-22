@@ -1083,8 +1083,8 @@ real tenant:
 ## How to test
 
 ```sh
-pnpm --filter @cmail/email-worker exec vitest run src/exchange-mirror/ src/graph-mirror/ src/m365-sync/aliases.sql.node.test.ts
-pnpm --filter @cmail/web exec vitest run src/lib/server/exchange-mirror-admin.test.ts src/lib/server/graph-mirror-admin.test.ts src/routes/admin/microsoft-365/
+pnpm --filter @stanchion/email-worker exec vitest run src/exchange-mirror/ src/graph-mirror/ src/m365-sync/aliases.sql.node.test.ts
+pnpm --filter @stanchion/web exec vitest run src/lib/server/exchange-mirror-admin.test.ts src/lib/server/graph-mirror-admin.test.ts src/routes/admin/microsoft-365/
 ```
 
 The Graph source tests (`apps/email-worker/src/graph-mirror/graph-mirror.sql.node.test.ts`)
@@ -1110,7 +1110,7 @@ recount (within and beyond 20%), the import of every message once with
 duplicates counted on a second import, resume with a bounded list position,
 Stop (at once, during the count and during the import), one import at a time,
 live mail first, throttling, and the web guards on every action. Run them with
-`pnpm --filter @cmail/shared test` as well.
+`pnpm --filter @stanchion/shared test` as well.
 
 The Worker tests drive the real inbound handler on a real SQLite database
 with every migration, with reports shaped like Exchange's

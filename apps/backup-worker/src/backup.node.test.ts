@@ -199,7 +199,7 @@ describe('database dump', () => {
     const limits = backup.objects.get('d1/2026-10-31/tables/rate_limits/part-00001.ndjson')!.body.trim().split('\n');
     expect(limits).toHaveLength(1203);
     expect(JSON.parse(limits[1202])).toMatchObject({ key: 'key-01202', count: 1 });
-    expect(JSON.parse(limits[0])).not.toHaveProperty('__cmail_rowid');
+    expect(JSON.parse(limits[0])).not.toHaveProperty('__stanchion_rowid');
     expect(backup.objects.get('d1/2026-10-31/tables/mailboxes/part-00001.ndjson')!.body).toContain('team@example.test');
     expect(backup.objects.get('d1/2026-10-31/schema.sql')!.body).toContain('CREATE TRIGGER');
 

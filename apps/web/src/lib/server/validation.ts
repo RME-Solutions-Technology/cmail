@@ -1,4 +1,4 @@
-import { normalizeParticipantAddress } from '@cmail/shared/message-participants';
+import { normalizeParticipantAddress } from '@stanchion/shared/message-participants';
 
 const DOMAIN_RX = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 

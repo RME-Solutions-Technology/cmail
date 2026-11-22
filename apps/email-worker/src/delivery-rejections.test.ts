@@ -4,8 +4,8 @@ import { GUARDS_OFF, deliverInbound, deliveryDatabase, insertedRow, memoryStorag
 // Inbound mail the Worker must refuse: each refusal gives the sender a fixed,
 // non-diagnostic reason and stores nothing in R2 or the messages table.
 
-vi.mock('@cmail/shared/push', async (original) => ({
-  ...(await original<typeof import('@cmail/shared/push')>()),
+vi.mock('@stanchion/shared/push', async (original) => ({
+  ...(await original<typeof import('@stanchion/shared/push')>()),
   sendNewMailNotifications: vi.fn(async () => ({})),
 }));
 

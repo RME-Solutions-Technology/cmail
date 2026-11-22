@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadM365SyncSwitch } from '@cmail/shared/m365-sync';
+import { loadM365SyncSwitch } from '@stanchion/shared/m365-sync';
 import { createTestDatabase } from './mcp/testing/harness';
 import { applyM365AdminAction, loadM365SyncOverview, parseM365AdminAction, workerConfigStatus } from './m365-sync-admin';
 

@@ -14,8 +14,8 @@ import {
   m365StatusView,
   type M365StatusView,
   type M365SyncSwitch,
-} from '@cmail/shared/m365-sync';
-import { emptyOrgDomainsCache, loadOrgDomainsCache, type OrgDomainsCache } from '@cmail/shared/org-domains';
+} from '@stanchion/shared/m365-sync';
+import { emptyOrgDomainsCache, loadOrgDomainsCache, type OrgDomainsCache } from '@stanchion/shared/org-domains';
 import { audit } from './db';
 
 export type M365ConfigStatus =

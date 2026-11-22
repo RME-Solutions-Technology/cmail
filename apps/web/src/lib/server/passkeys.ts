@@ -48,7 +48,7 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import type { Env, User } from '@cmail/shared/types';
+import type { Env, User } from '@stanchion/shared/types';
 
 // The WebAuthn library is loaded only when a passkey ceremony runs. This
 // module is also imported by hooks.server.ts (for the session check), so a

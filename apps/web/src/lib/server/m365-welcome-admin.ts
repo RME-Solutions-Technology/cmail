@@ -9,7 +9,7 @@
 //   can send (by setting name only);
 // - reads the once-only records and the status row the Worker writes, and
 //   re-queues one person when a manager presses Resend.
-import { M365_SYNC_SETTING_DRY_RUN, M365_SYNC_SETTING_ENABLED } from '@cmail/shared/m365-sync';
+import { M365_SYNC_SETTING_DRY_RUN, M365_SYNC_SETTING_ENABLED } from '@stanchion/shared/m365-sync';
 import {
   M365_WELCOME_LIST_LIMIT,
   M365_WELCOME_SETTING_ENABLED,
@@ -37,7 +37,7 @@ import {
   type M365WelcomeState,
   type M365WelcomeSwitch,
   type WelcomeProfile,
-} from '@cmail/shared/m365-welcome';
+} from '@stanchion/shared/m365-welcome';
 import { accessMode } from './access-jwt';
 import { getEnabledProviders } from './auth';
 import { syncSignInTenant } from './m365-sync-signin';

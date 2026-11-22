@@ -32,9 +32,9 @@
   The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
-  pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -AdminEmail admin@example.com
+  pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject stanchion-web -AdminEmail admin@example.com
 .EXAMPLE
-  pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -Remove
+  pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject stanchion-web -Remove
 #>
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Set')]
 param(

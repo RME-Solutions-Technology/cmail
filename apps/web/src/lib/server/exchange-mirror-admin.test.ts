@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadAliasSyncSwitch, loadColleagueSendViaExchange, loadExchangeMirrorSwitch } from '@cmail/shared/exchange-mirror';
+import { loadAliasSyncSwitch, loadColleagueSendViaExchange, loadExchangeMirrorSwitch } from '@stanchion/shared/exchange-mirror';
 import { createTestDatabase } from './mcp/testing/harness';
 import {
   applyExchangeMirrorAdminAction,

@@ -10,8 +10,8 @@
 // time, our own named marker property so it can be found again, and a
 // category the user can see. Stanchion does not keep the original MIME anyway:
 // it stores the sanitised HTML body, the attachments and parsed header fields.
-import { participant } from '@cmail/shared/message-participants';
-import { COPYBACK_MAX_REQUEST_BYTES, type CopyBackFolder } from '@cmail/shared/copy-back';
+import { participant } from '@stanchion/shared/message-participants';
+import { COPYBACK_MAX_REQUEST_BYTES, type CopyBackFolder } from '@stanchion/shared/copy-back';
 import { COPYBACK_MARKER_PROPERTY } from './graph';
 
 /** Shown to the user in Outlook; also a second, human-visible marker. */

@@ -40,7 +40,7 @@
 // Logs and status carry counts and short codes only: never addresses,
 // subjects, Graph ids or tokens.
 import PostalMime, { type Email } from 'postal-mime';
-import { emptyMirrorCounts, mirrorDay, type ExchangeMirrorCounts } from '@cmail/shared/exchange-mirror';
+import { emptyMirrorCounts, mirrorDay, type ExchangeMirrorCounts } from '@stanchion/shared/exchange-mirror';
 import {
   emptyGraphMirrorCounts,
   graphMirrorConfig,
@@ -51,9 +51,9 @@ import {
   type GraphMirrorEnv,
   type GraphMirrorFolder,
   type GraphMirrorStatus,
-} from '@cmail/shared/graph-mirror';
-import { GRAPH_IMPORT_LIVE_SHARE, GRAPH_IMPORT_MESSAGES_PER_RUN } from '@cmail/shared/graph-import';
-import { orgDomains } from '@cmail/shared/org-domains';
+} from '@stanchion/shared/graph-mirror';
+import { GRAPH_IMPORT_LIVE_SHARE, GRAPH_IMPORT_MESSAGES_PER_RUN } from '@stanchion/shared/graph-import';
+import { orgDomains } from '@stanchion/shared/org-domains';
 import { GraphError } from '../m365-sync/graph';
 import { fileMirrorCopies, prepareMirrorContent, sentCopyId, type InboundTools, type JournalEnv } from '../exchange-mirror/ingest';
 import { headerValues } from '../exchange-mirror/verify';

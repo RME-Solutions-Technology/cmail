@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { Mailbox } from '@cmail/shared/types';
-import { buildIcs } from '@cmail/shared/ics';
+import type { Mailbox } from '@stanchion/shared/types';
+import { buildIcs } from '@stanchion/shared/ics';
 import {
   invitationBody,
   MAX_EVENT_ATTENDEES,

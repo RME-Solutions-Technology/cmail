@@ -5,10 +5,10 @@ import { normalizeEmail } from './validation';
 import {
   messageImportanceHeaders,
   normalizeMessageImportance,
-} from '@cmail/shared/message-importance';
-import { sanitizeParticipantName } from '@cmail/shared/message-participants';
-import type { MessageImportance } from '@cmail/shared/types';
-import { orgDomains, sendingDomainRefusal } from '@cmail/shared/org-domains';
+} from '@stanchion/shared/message-importance';
+import { sanitizeParticipantName } from '@stanchion/shared/message-participants';
+import type { MessageImportance } from '@stanchion/shared/types';
+import { orgDomains, sendingDomainRefusal } from '@stanchion/shared/org-domains';
 import { createMimeMessage, Mailbox } from 'mimetext/browser';
 
 export interface OutboundAttachment {

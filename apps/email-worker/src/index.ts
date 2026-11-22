@@ -19,19 +19,19 @@ import {
   standbyConfigDiagnostic,
   type ProbeDecision,
 } from './standby/standby';
-import type { StandbyEnv } from '@cmail/shared/standby';
-import { isJournalAddress, type ExchangeMirrorEnv } from '@cmail/shared/exchange-mirror';
-import { graphMirrorConfig, type GraphMirrorEnv } from '@cmail/shared/graph-mirror';
+import type { StandbyEnv } from '@stanchion/shared/standby';
+import { isJournalAddress, type ExchangeMirrorEnv } from '@stanchion/shared/exchange-mirror';
+import { graphMirrorConfig, type GraphMirrorEnv } from '@stanchion/shared/graph-mirror';
 import { GRAPH_MIRROR_CRON, runGraphMirrorTick } from './graph-mirror/run';
 import { exchangeMirrorConfigDiagnostic, handleJournalDelivery, type InboundTools } from './exchange-mirror/ingest';
 import { runAliasSyncTick } from './m365-sync/aliases';
 import { runWelcomeTick, welcomeConfigDiagnostic, type WelcomeWorkerEnv } from './m365-welcome/welcome';
 import PostalMime from 'postal-mime';
-import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
-import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
-import { parseMessageImportance } from '@cmail/shared/message-importance';
-import { contactUpsertStatements } from '@cmail/shared/contacts';
-import { decideFocusAtDelivery, focusUpdateStatement } from '@cmail/shared/focused-inbox';
+import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@stanchion/shared/push';
+import { sanitizeBoundedEmailHtml } from '@stanchion/shared/sanitize-email';
+import { parseMessageImportance } from '@stanchion/shared/message-importance';
+import { contactUpsertStatements } from '@stanchion/shared/contacts';
+import { decideFocusAtDelivery, focusUpdateStatement } from '@stanchion/shared/focused-inbox';
 import {
   evaluateInboxRules,
   loadEnabledInboxRules,
@@ -43,20 +43,20 @@ import {
   ruleNeedsHeaders,
   type InboxRuleOutcome,
   type RuleMessageFacts,
-} from '@cmail/shared/inbox-rules';
+} from '@stanchion/shared/inbox-rules';
 import {
   normalizeParticipantAddress,
   normalizeParticipants,
   sanitizeParticipantName,
   serializeParticipants,
   type MessageParticipant,
-} from '@cmail/shared/message-participants';
+} from '@stanchion/shared/message-participants';
 import {
   decideInboundPlacement,
   pickSenderRule,
   readSpamScore,
   spamQuarantineThreshold,
-} from '@cmail/shared/inbound-risk';
+} from '@stanchion/shared/inbound-risk';
 import { parseAuthenticationResults } from './authentication-results';
 import { applyCalendarWrites, extractCalendarText } from './calendar';
 import {
@@ -575,7 +575,7 @@ async function isFirstContact(
 /**
  * Resolves the winning organisation-wide sender rule for the header From
  * address, matching its exact address and its bare domain in one prepared
- * statement. pickSenderRule (from @cmail/shared/inbound-risk) then applies
+ * statement. pickSenderRule (from @stanchion/shared/inbound-risk) then applies
  * the address-beats-domain, block-beats-allow precedence.
  *
  * A lookup failure resolves to no rule. sender_rules is a management
@@ -584,7 +584,7 @@ async function isFirstContact(
  */
 export async function lookupSenderRule(db: D1Database, headerFrom: string): Promise<'allow' | 'block' | null> {
   // The delimiter is the final @ for the same reason normalizeParticipantAddress
-  // (in @cmail/shared/message-participants) uses it: a quoted local-part may
+  // (in @stanchion/shared/message-participants) uses it: a quoted local-part may
   // itself contain @.
   const delimiter = headerFrom.lastIndexOf('@');
   const domain = delimiter >= 0 ? headerFrom.slice(delimiter + 1) : '';

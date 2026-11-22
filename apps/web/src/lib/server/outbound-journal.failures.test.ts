@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { InboxRuleRow } from '@cmail/shared/inbox-rules';
+import type { InboxRuleRow } from '@stanchion/shared/inbox-rules';
 import type { OutboundResult } from './outbound';
 import {
   applyProviderResult,

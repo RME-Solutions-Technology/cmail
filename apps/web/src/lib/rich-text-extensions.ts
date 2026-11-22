@@ -8,7 +8,7 @@
 // default (Ctrl+K for a link, Ctrl+M and Ctrl+Shift+M for indent).
 
 import { Extension } from '@tiptap/core';
-import { COMPOSE_MAX_INDENT_LEVEL } from '@cmail/shared/compose-style';
+import { COMPOSE_MAX_INDENT_LEVEL } from '@stanchion/shared/compose-style';
 import { indentLevelFromMargin, indentMargin } from './rich-text-format';
 
 declare module '@tiptap/core' {

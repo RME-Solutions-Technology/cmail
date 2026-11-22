@@ -1,5 +1,5 @@
-import { htmlToText, sanitizeComposeHtml } from '@cmail/shared/compose-html';
-import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
+import { htmlToText, sanitizeComposeHtml } from '@stanchion/shared/compose-html';
+import { sanitizeBoundedEmailHtml } from '@stanchion/shared/sanitize-email';
 import { escapeHtml, htmlToPlainText, plainTextToHtml } from './validation';
 
 const QUOTE_START = '<!--cmail-compose-quote:start-->';

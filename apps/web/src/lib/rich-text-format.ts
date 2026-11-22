@@ -7,7 +7,7 @@ import {
   COMPOSE_INDENT_STEP_PX,
   COMPOSE_MAX_INDENT_LEVEL,
   composeFontByName,
-} from '@cmail/shared/compose-style';
+} from '@stanchion/shared/compose-style';
 
 export interface Swatch {
   name: string;

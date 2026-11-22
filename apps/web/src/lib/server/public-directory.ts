@@ -1,4 +1,4 @@
-import { loadOrgDomainsCache, orgDomainsFrom, usableOrgDomainsCache } from '@cmail/shared/org-domains';
+import { loadOrgDomainsCache, orgDomainsFrom, usableOrgDomainsCache } from '@stanchion/shared/org-domains';
 import { normalizeDomain } from './validation';
 
 export interface PublicDirectoryEntry {

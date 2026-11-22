@@ -1,5 +1,5 @@
-import type { MessageImportance } from '@cmail/shared/types';
-import type { MailboxStorageReservation } from '@cmail/shared/mailbox-storage';
+import type { MessageImportance } from '@stanchion/shared/types';
+import type { MailboxStorageReservation } from '@stanchion/shared/mailbox-storage';
 import {
   evaluateInboxRules,
   loadEnabledInboxRules,
@@ -9,8 +9,8 @@ import {
   ruleNeedsBody,
   ruleNeedsHeaders,
   type InboxRuleOutcome,
-} from '@cmail/shared/inbox-rules';
-import { decideFocusAtDelivery, focusUpdateStatement, senderDomain } from '@cmail/shared/focused-inbox';
+} from '@stanchion/shared/inbox-rules';
+import { decideFocusAtDelivery, focusUpdateStatement, senderDomain } from '@stanchion/shared/focused-inbox';
 import type { OutboundAttachment, OutboundEmail, OutboundResult } from './outbound';
 
 export type OutboundJournalState =

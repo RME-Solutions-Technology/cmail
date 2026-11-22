@@ -1,7 +1,7 @@
 // Pure eligibility rules for the Microsoft 365 mailbox sync. See
 // docs/m365-sync.md, "Which accounts are synced".
-import { EXCHANGE_MAILBOX_PLANS, isGuid } from '@cmail/shared/m365-sync';
-import { domainIn } from '@cmail/shared/org-domains';
+import { EXCHANGE_MAILBOX_PLANS, isGuid } from '@stanchion/shared/m365-sync';
+import { domainIn } from '@stanchion/shared/org-domains';
 import type { GraphUser, PurposeLookup } from './graph';
 
 export type OutReason =

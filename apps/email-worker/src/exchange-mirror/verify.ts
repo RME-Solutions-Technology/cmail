@@ -53,7 +53,7 @@
 //    With "false", only 1-3 apply: then the token is the only real
 //    protection.
 import { parseAuthenticationIdentities, parseAuthenticationResults } from '../authentication-results';
-import type { ExchangeMirrorConfig } from '@cmail/shared/exchange-mirror';
+import type { ExchangeMirrorConfig } from '@stanchion/shared/exchange-mirror';
 
 type Header = { key: string; value: string };
 

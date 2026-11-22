@@ -10,8 +10,8 @@
 // - GET users/{id}/mailFolders/{well-known}/messages/delta  (what is new)
 // - GET users/{id}/messages/{id}/$value                    (the MIME)
 // It never writes, moves, deletes or sends anything in Microsoft 365.
-import type { GraphMirrorFolder } from '@cmail/shared/graph-mirror';
-import { GRAPH_IMPORT_SAMPLE_SIZE } from '@cmail/shared/graph-import';
+import type { GraphMirrorFolder } from '@stanchion/shared/graph-mirror';
+import { GRAPH_IMPORT_SAMPLE_SIZE } from '@stanchion/shared/graph-import';
 import { GRAPH_ROOT, GraphClient, GraphError, isGraphUrl } from '../m365-sync/graph';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

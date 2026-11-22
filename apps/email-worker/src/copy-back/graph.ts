@@ -12,7 +12,7 @@
 // - PATCH users/{id}/messages/{id} { isRead: false }      (restore unread)
 // It never deletes, moves or sends mail, and never uses upload sessions or
 // the import API (those use pre-authenticated outlook.office.com URLs).
-import { COPYBACK_MESSAGE_ID } from '@cmail/shared/copy-back';
+import { COPYBACK_MESSAGE_ID } from '@stanchion/shared/copy-back';
 import { GRAPH_ROOT, GraphClient, GraphError } from '../m365-sync/graph';
 
 /**

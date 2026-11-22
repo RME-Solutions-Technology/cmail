@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import worker, { RECIPIENT_UNAVAILABLE_SMTP_RESPONSE } from '../index';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { GUARDS_OFF } from '../testing/delivery';
-import { STANDBY_PROBE_HEADER } from '@cmail/shared/standby';
+import { STANDBY_PROBE_HEADER } from '@stanchion/shared/standby';
 import { STANDBY_PROBE_CRON, pruneStandby, runStandbyProbeNow, runStandbyProbeTick, type StandbyDeps } from './standby';
 
 // The standby address and probe against every real migration (node:sqlite),

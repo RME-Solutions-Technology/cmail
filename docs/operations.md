@@ -12,7 +12,7 @@ related: [credentials.md, upgrading.md, deployment.md]
 
 The repeatable jobs for a live deployment, in one place: upgrading, backing up, restoring, rolling back, watching for trouble, and rotating secrets. Most procedures already live in [Deployment and verification](deployment.md); this page gives the order and links to them, and adds monitoring and secret rotation. Tick off the [Operations checklist](operations-checklist.md) as you go.
 
-Examples use the default resource names (`cmail-web`, `cmail-db`, `cmail-storage`, `cmail-backup`). Use your own.
+Examples use the default resource names (`stanchion-web`, `stanchion-db`, `stanchion-storage`, `stanchion-backup`). Use your own; instances created before the rename keep their `cmail-*` names.
 
 **In this article**
 

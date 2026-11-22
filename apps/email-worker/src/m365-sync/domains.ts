@@ -17,7 +17,7 @@ import {
   loadOrgDomainsCache,
   saveOrgDomainsCache,
   type OrgDomainsCache,
-} from '@cmail/shared/org-domains';
+} from '@stanchion/shared/org-domains';
 import { GraphError, type TenantDomain } from './graph';
 
 /** A successful read is repeated after this long. */

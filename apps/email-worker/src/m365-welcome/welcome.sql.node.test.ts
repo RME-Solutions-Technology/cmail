@@ -6,7 +6,7 @@ import {
   parseM365WelcomeState,
   renderWelcomeEmail,
   type WelcomeProfile,
-} from '@cmail/shared/m365-welcome';
+} from '@stanchion/shared/m365-welcome';
 import { runWelcomeTick, welcomeConfigDiagnostic, type WelcomeDeps } from './welcome';
 
 // Welcome emails against every real migration (node:sqlite). Cloudflare Email

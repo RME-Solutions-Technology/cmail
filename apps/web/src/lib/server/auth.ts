@@ -1,4 +1,4 @@
-import type { AuthProvider } from '@cmail/shared/types';
+import type { AuthProvider } from '@stanchion/shared/types';
 import { assertStrongSessionSecret } from './config';
 
 export interface OAuthTokens {

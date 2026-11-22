@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadM365PermsState } from '@cmail/shared/m365-perms';
+import { loadM365PermsState } from '@stanchion/shared/m365-perms';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { MAX_BATCHES_PER_PASS, runM365PermsTick, type M365PermsDeps } from './sync';
 import { ORGANIZATION, TENANT_ID, fakeCollector, snapshotOf, type FakeOutcome } from './testing/fake-collector';

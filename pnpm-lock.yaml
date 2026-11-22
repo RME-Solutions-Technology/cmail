@@ -54,7 +54,7 @@ importers:
 
   apps/email-worker:
     dependencies:
-      '@cmail/shared':
+      '@stanchion/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       postal-mime:
@@ -82,12 +82,12 @@ importers:
 
   apps/web:
     dependencies:
-      '@cmail/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@simplewebauthn/server':
         specifier: 14.1.0
         version: 14.1.0
+      '@stanchion/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@tiptap/core':
         specifier: 3.33.1
         version: 3.33.1(@tiptap/pm@3.33.1)

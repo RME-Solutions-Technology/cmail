@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { Mailbox, MailboxAssignment, UserStatus } from '@cmail/shared/types';
+import type { Mailbox, MailboxAssignment, UserStatus } from '@stanchion/shared/types';
 import { audit, generateId } from '#lib/server/db.js';
 import {
   ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL,
@@ -8,7 +8,7 @@ import {
   getEligibleMailboxAssignee,
 } from '#lib/server/mailbox-assignees.js';
 import { chooseOrgDomain, orgDomainsForDisplay } from '#lib/server/org-domains.js';
-import { orgDomains, type OrgDomains } from '@cmail/shared/org-domains';
+import { orgDomains, type OrgDomains } from '@stanchion/shared/org-domains';
 import {
   boundedInteger,
   escapeLike,

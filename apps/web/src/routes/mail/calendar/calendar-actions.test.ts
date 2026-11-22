@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 // The migration and packages/shared/src/ics.ts module this feature depends on
 // are owned by a different in-flight change. Mock the module so these tests
 // exercise the route logic regardless of that work's landing order.
-vi.mock('@cmail/shared/ics', () => ({
+vi.mock('@stanchion/shared/ics', () => ({
   buildIcs: vi.fn(() => 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n'),
   parseIcs: vi.fn(() => null),
 }));

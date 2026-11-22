@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sendEmail } from './outbound';
-import { parseM365WelcomeSwitch, parseWelcomeProfile } from '@cmail/shared/m365-welcome';
+import { parseM365WelcomeSwitch, parseWelcomeProfile } from '@stanchion/shared/m365-welcome';
 import { createTestDatabase } from './mcp/testing/harness';
 import {
   applyWelcomeAdminAction,

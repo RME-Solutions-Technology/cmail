@@ -1,4 +1,4 @@
-import type { Mailbox, MailboxAssignment } from '@cmail/shared/types';
+import type { Mailbox, MailboxAssignment } from '@stanchion/shared/types';
 
 export const MAILBOX_PERMISSIONS = ['read', 'send-as', 'full'] as const satisfies readonly MailboxAssignment['permissions'][];
 export const MAILBOX_STATUSES = ['active', 'disabled'] as const satisfies readonly Mailbox['status'][];

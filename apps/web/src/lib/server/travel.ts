@@ -18,7 +18,7 @@ import { generateId } from './db';
 import { countryName } from '#lib/countries.js';
 import { notifyManagers } from './notify-managers';
 import type { OrgSettings } from './org-settings';
-import type { Env, User } from '@cmail/shared/types';
+import type { Env, User } from '@stanchion/shared/types';
 
 /** Uppercased CF-IPCountry, or 'XX' when absent/malformed (e.g. local dev). */
 export function requestCountry(request: Request): string {

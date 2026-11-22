@@ -25,7 +25,7 @@ import {
   standbyPrimaryAddress,
   type StandbyConfig,
   type StandbyEnv,
-} from '@cmail/shared/standby';
+} from '@stanchion/shared/standby';
 
 /** Its own cron, so the M365 sync and the probe never share a run budget. */
 export const STANDBY_PROBE_CRON = '*/10 * * * *';

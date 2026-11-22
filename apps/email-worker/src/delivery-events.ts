@@ -7,7 +7,7 @@
 // sender's Inbox (bounce-notice.ts). Events for mail Stanchion did not send (another app
 // on the same sending domain) are acknowledged and dropped without storage.
 
-import { sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
+import { sendNewMailNotifications, type PushEnvironment } from '@stanchion/shared/push';
 import { deliverBounceNotices, type SentCopy } from './bounce-notice';
 
 export const DELIVERY_EVENT_TYPES = ['delivered', 'deferred', 'bounced', 'failed', 'rejected', 'complained'] as const;

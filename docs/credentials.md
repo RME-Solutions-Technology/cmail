@@ -154,7 +154,7 @@ Non-secret settings (`APP_URL`, `MAIL_DOMAIN`, `M365_TENANT_ID`,
 Each command prompts for the value, so it never appears on screen or in shell history. To pipe it in instead, use `<command that prints the value> | <the command below>`:
 
 ```sh
-pnpm exec wrangler pages secret put SESSION_SECRET --project-name cmail-web
+pnpm exec wrangler pages secret put SESSION_SECRET --project-name stanchion-web
 pnpm exec wrangler secret put M365_CLIENT_SECRET --config apps/email-worker/wrangler.toml --env=""
 ```
 

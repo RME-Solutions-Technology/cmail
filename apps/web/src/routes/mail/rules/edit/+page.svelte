@@ -9,7 +9,7 @@
     parseRuleDefinition,
     ruleNeedsBody,
     ruleNeedsHeaders,
-  } from '@cmail/shared/inbox-rules';
+  } from '@stanchion/shared/inbox-rules';
   import {
     ACTION_OPTIONS,
     CONDITION_OPTIONS,

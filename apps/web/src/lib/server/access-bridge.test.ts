@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { createTestDatabase, type TestDatabase } from './mcp/testing/harness';
 import {
   accessSignInPathAllowed,

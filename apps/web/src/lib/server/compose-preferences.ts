@@ -4,7 +4,7 @@ import {
   isComposeFontSize,
   normaliseComposeDefaults,
   type ComposeDefaults,
-} from '@cmail/shared/compose-style';
+} from '@stanchion/shared/compose-style';
 
 interface StoredComposePreferences {
   font_family: string;

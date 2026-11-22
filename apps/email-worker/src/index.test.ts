@@ -23,8 +23,8 @@ import worker, {
   retentionEnabled,
   stableInboundId,
 } from './index';
-import { parseMessageImportance } from '@cmail/shared/message-importance';
-import { normalizeParticipants, sanitizeParticipantName } from '@cmail/shared/message-participants';
+import { parseMessageImportance } from '@stanchion/shared/message-importance';
+import { normalizeParticipants, sanitizeParticipantName } from '@stanchion/shared/message-participants';
 import PostalMime from 'postal-mime';
 
 function routedMessage(overrides: Partial<{

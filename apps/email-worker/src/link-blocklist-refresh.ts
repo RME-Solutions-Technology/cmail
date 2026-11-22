@@ -10,7 +10,7 @@ import {
   parseDomainList,
   shardKey,
   type LinkBlocklistMeta,
-} from '@cmail/shared/link-blocklist';
+} from '@stanchion/shared/link-blocklist';
 
 export const LINK_BLOCKLIST_CRON = '7 * * * *';
 

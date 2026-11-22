@@ -4,4 +4,4 @@ export {
   sanitizeEmailHtml,
   sanitizeEmailHtmlWithLinkGuard,
   type RiskyLink,
-} from '@cmail/shared/sanitize-email';
+} from '@stanchion/shared/sanitize-email';

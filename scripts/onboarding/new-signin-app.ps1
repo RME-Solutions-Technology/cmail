@@ -51,7 +51,7 @@
   The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
-  pwsh -File scripts/onboarding/new-signin-app.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -AppUrl https://mail.example.com -PagesProject cmail-web -WhatIf
+  pwsh -File scripts/onboarding/new-signin-app.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -AppUrl https://mail.example.com -PagesProject stanchion-web -WhatIf
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(

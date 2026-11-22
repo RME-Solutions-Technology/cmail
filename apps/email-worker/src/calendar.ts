@@ -25,10 +25,10 @@ import {
   type IcsMethod,
   type ParsedAttendee,
   type ParsedEvent,
-} from '@cmail/shared/ics';
-import { normalizeParticipantAddress } from '@cmail/shared/message-participants';
+} from '@stanchion/shared/ics';
+import { normalizeParticipantAddress } from '@stanchion/shared/message-participants';
 
-export type { IcsMethod, ParsedAttendee, ParsedEvent } from '@cmail/shared/ics';
+export type { IcsMethod, ParsedAttendee, ParsedEvent } from '@stanchion/shared/ics';
 
 /** The subset of a PostalMime Attachment this module reads. */
 export interface CalendarSourceAttachment {

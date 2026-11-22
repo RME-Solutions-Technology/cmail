@@ -1,6 +1,6 @@
 import { assertStrongBootstrapToken, assertStrongSessionSecret } from './config';
 import { normalizeEmail } from './validation';
-import type { AuthProvider, User } from '@cmail/shared/types';
+import type { AuthProvider, User } from '@stanchion/shared/types';
 
 export const BOOTSTRAP_PROOF_COOKIE = 'cmail_bootstrap_proof';
 export const BOOTSTRAP_PROOF_TTL_SECONDS = 10 * 60;

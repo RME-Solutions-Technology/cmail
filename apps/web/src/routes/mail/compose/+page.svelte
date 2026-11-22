@@ -352,7 +352,7 @@
       const destination = new URL(String(target), window.location.origin);
       const destinationPath = `${destination.pathname}${destination.search}`;
       const canUseHistoryBack = preferHistoryBack
-        && page.state?.cmailComposeReturn === destinationPath;
+        && page.state?.stanchionComposeReturn === destinationPath;
       if (canUseHistoryBack) {
         if (message) {
           try { sessionStorage.setItem('cmail:pending-navigation-toast', message); } catch { /* toast is optional */ }
@@ -375,7 +375,7 @@
       }
       await goto(target, {
         replaceState: replaceCurrent,
-        ...(message ? { state: { cmailToast: message } } : {}),
+        ...(message ? { state: { stanchionToast: message } } : {}),
       });
     } finally {
       navigationInProgress = false;

@@ -11,7 +11,7 @@ import {
   standbyStatusView,
   type StandbyRun,
   type StandbyStatusView,
-} from '@cmail/shared/standby';
+} from '@stanchion/shared/standby';
 import { audit } from './db';
 
 export type StandbyWorkerConfig =

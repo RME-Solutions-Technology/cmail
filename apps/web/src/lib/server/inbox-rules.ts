@@ -7,8 +7,8 @@ import {
   ruleNeedsBody,
   ruleNeedsHeaders,
   type InboxRuleDefinition,
-} from '@cmail/shared/inbox-rules';
-import type { MessageImportance } from '@cmail/shared/types';
+} from '@stanchion/shared/inbox-rules';
+import type { MessageImportance } from '@stanchion/shared/types';
 import { generateId } from './db';
 
 /** "Run rule now" looks at this many of the newest Inbox messages. */

@@ -1,5 +1,5 @@
 import { boundedInteger, normalizeDomain } from './validation';
-import { publicPushKey } from '@cmail/shared/push';
+import { publicPushKey } from '@stanchion/shared/push';
 
 const DEFAULT_PRIMARY = '#0078d4';
 

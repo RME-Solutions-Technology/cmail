@@ -9,7 +9,7 @@ import {
   GRAPH_IMPORT_SETTING_ESTIMATE,
   GRAPH_IMPORT_SETTING_JOB,
   GRAPH_IMPORT_SETTING_REQUEST,
-} from '@cmail/shared/graph-import';
+} from '@stanchion/shared/graph-import';
 import { runGraphMirrorTick, type GraphMirrorDeps } from './run';
 
 // "Import older mail" (docs/exchange-mirror.md#import-older-mail) against every

@@ -17,15 +17,15 @@ Use the public Stanchion repository as the reusable product, and keep organisati
 Use a **private downstream repository** when you need to change application code. Start from Stanchion, keep the public repository as a read-only `upstream` remote, and use your private repository as `origin`:
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git cmail-private
-cd cmail-private
+git clone https://github.com/RME-Solutions-Technology/cmail.git stanchion-private
+cd stanchion-private
 git remote rename origin upstream
-git remote add origin git@github.com:YOUR-ORG/cmail-private.git
+git remote add origin git@github.com:YOUR-ORG/stanchion-private.git
 git remote set-url --push upstream no_push
 git push -u origin main
 ```
 
-Create `YOUR-ORG/cmail-private` as a new private repository — not a standard GitHub fork of the public one — before the last command above. If your enterprise offers isolated private forks, verify that policy before relying on it. The invalid `upstream` push URL is a local guard against publishing a private commit by accident; fetching still uses the public URL.
+Create `YOUR-ORG/stanchion-private` as a new private repository — not a standard GitHub fork of the public one — before the last command above. If your enterprise offers isolated private forks, verify that policy before relying on it. The invalid `upstream` push URL is a local guard against publishing a private commit by accident; fetching still uses the public URL.
 
 Use a **thin private overlay** when the application itself doesn't need to diverge. The private repository pins a Stanchion tag or commit and holds only:
 
@@ -79,18 +79,18 @@ Use an independent OAuth registration for each environment. Stanchion requests `
 
 ## Isolate every environment
 
-Give development, staging, and production distinct Cloudflare resources and credentials — for example, `cmail-web-staging`, `cmail-email-worker-staging`, `cmail-db-staging`, and `cmail-storage-staging`, with matching `-production` names. Never point a development process at production D1 (Cloudflare's hosted database) or R2 (Cloudflare's object storage).
+Give development, staging, and production distinct Cloudflare resources and credentials — for example, `stanchion-web-staging`, `stanchion-email-worker-staging`, `stanchion-db-staging`, and `stanchion-storage-staging`, with matching `-production` names. Never point a development process at production D1 (Cloudflare's hosted database) or R2 (Cloudflare's object storage).
 
 Generate each environment's ignored Wrangler files from the committed examples, and set its own resource names, D1 ID, public variables, and OAuth origin. Configure both applications with the same environment-specific D1 database and R2 bucket. Keep production configuration in the deployment platform or a private infrastructure repository — don't edit and commit the public examples.
 
 Store sensitive values with Cloudflare, not in Wrangler `[vars]` or source:
 
 ```sh
-pnpm exec wrangler pages secret put SESSION_SECRET --project-name cmail-web-staging
-pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name cmail-web-staging
-pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name cmail-web-staging
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name cmail-web-staging
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name cmail-web-staging
+pnpm exec wrangler pages secret put SESSION_SECRET --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name stanchion-web-staging
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY --config apps/email-worker/wrangler.toml
 ```
 

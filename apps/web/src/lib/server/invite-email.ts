@@ -1,5 +1,5 @@
 // Invite email templates — onboarding into the host organisation, not into "an app"
-import type { AuthProvider } from '@cmail/shared/types';
+import type { AuthProvider } from '@stanchion/shared/types';
 
 export interface InviteEmailOptions {
   email: string;

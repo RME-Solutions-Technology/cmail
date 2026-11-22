@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { createFixture, type Fixture } from './mcp/testing/harness';
 import { SoftAuthenticator } from './testing/soft-authenticator';
 import { PASSKEY_SETTING_ENABLED, relyingParty, listPasskeys, startRegistration, type RelyingParty } from './passkeys';

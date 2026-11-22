@@ -210,11 +210,11 @@ async function dumpDatabase(env: BackupEnv, day: string): Promise<number> {
     };
     for (;;) {
       // rowid paging stays correct even if rows are deleted mid-dump; every Stanchion table has a rowid.
-      const page = await env.DB.prepare(`SELECT rowid AS "__cmail_rowid", * FROM ${quoted} WHERE rowid > ? ORDER BY rowid LIMIT ?`)
+      const page = await env.DB.prepare(`SELECT rowid AS "__stanchion_rowid", * FROM ${quoted} WHERE rowid > ? ORDER BY rowid LIMIT ?`)
         .bind(Number.isFinite(lastRowid) ? lastRowid : -9007199254740991, ROWS_PER_QUERY).all<Record<string, unknown>>();
       for (const row of page.results) {
-        lastRowid = Number(row.__cmail_rowid);
-        const { __cmail_rowid: _rowid, ...values } = row;
+        lastRowid = Number(row.__stanchion_rowid);
+        const { __stanchion_rowid: _rowid, ...values } = row;
         lines.push(JSON.stringify(values));
         if (lines.length >= ROWS_PER_PART) await flush();
       }

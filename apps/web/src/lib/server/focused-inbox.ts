@@ -1,7 +1,7 @@
 // Focused Inbox in the web app (docs/focused-inbox.md): the switches, the
 // Focused and Other views of the Inbox, moving and learning, and the one-off
 // sort of recent mail. The classifier itself is shared with the email Worker
-// (@cmail/shared/focused-inbox).
+// (@stanchion/shared/focused-inbox).
 //
 // Off by default. With the organisation switch off, loadFocusScope returns
 // null after one settings read and every caller renders and queries exactly
@@ -20,8 +20,8 @@ import {
   senderDomain,
   type FocusClass,
   type FocusDecision,
-} from '@cmail/shared/focused-inbox';
-import { loadOrgDomainsCache, usableOrgDomainsCache } from '@cmail/shared/org-domains';
+} from '@stanchion/shared/focused-inbox';
+import { loadOrgDomainsCache, usableOrgDomainsCache } from '@stanchion/shared/org-domains';
 import { messageOwnershipPredicate } from './message-access';
 
 export { focusedInboxOrgEnabled };

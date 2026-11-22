@@ -1,16 +1,16 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { Attachment, Mailbox, Message, MessageImportance } from '@cmail/shared/types';
-import { sendNewMailNotifications } from '@cmail/shared/push';
-import { normalizeMessageImportance } from '@cmail/shared/message-importance';
-import { sanitizeParticipantName } from '@cmail/shared/message-participants';
-import { contactUpsertStatements } from '@cmail/shared/contacts';
+import type { Attachment, Mailbox, Message, MessageImportance } from '@stanchion/shared/types';
+import { sendNewMailNotifications } from '@stanchion/shared/push';
+import { normalizeMessageImportance } from '@stanchion/shared/message-importance';
+import { sanitizeParticipantName } from '@stanchion/shared/message-participants';
+import { contactUpsertStatements } from '@stanchion/shared/contacts';
 import { buildReplyRecipients } from '#lib/server/reply-recipients.js';
 import {
   releaseMailboxStorageReservations,
   reserveMailboxStorage,
   type MailboxStorageReservation,
-} from '@cmail/shared/mailbox-storage';
+} from '@stanchion/shared/mailbox-storage';
 import {
   draftSaveRatePerHour,
   maxDraftsPerMailboxUser,
@@ -65,7 +65,7 @@ import {
   unblockRecipient,
 } from '#lib/server/suppressions.js';
 import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from '#lib/server/recipient-delivery.js';
-import { addressDomain, orgDomains, sendingDomainRefusal, type OrgDomains } from '@cmail/shared/org-domains';
+import { addressDomain, orgDomains, sendingDomainRefusal, type OrgDomains } from '@stanchion/shared/org-domains';
 import {
   deriveReplyThreading,
   safeMessageId,
@@ -85,7 +85,7 @@ import {
 import { formatQuoteDate } from '#lib/dates.js';
 import { appendSignatureToAuthoredHtml, getEffectiveSignature } from '#lib/server/signatures.js';
 import { getComposeDefaults } from '#lib/server/compose-preferences.js';
-import { wrapWithComposeDefaults } from '@cmail/shared/compose-style';
+import { wrapWithComposeDefaults } from '@stanchion/shared/compose-style';
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 
 const BLOCKED_EXTENSIONS = new Set([

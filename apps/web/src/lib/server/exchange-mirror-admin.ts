@@ -16,7 +16,7 @@ import {
   mirrorDay,
   type AliasSyncState,
   type ExchangeMirrorDay,
-} from '@cmail/shared/exchange-mirror';
+} from '@stanchion/shared/exchange-mirror';
 import {
   GRAPH_IMPORT_SETTING_ESTIMATE,
   GRAPH_IMPORT_SETTING_JOB,
@@ -30,7 +30,7 @@ import {
   type GraphImportEstimate,
   type GraphImportFigures,
   type GraphImportJob,
-} from '@cmail/shared/graph-import';
+} from '@stanchion/shared/graph-import';
 import {
   GRAPH_MIRROR_FOLDERS,
   GRAPH_MIRROR_SETTING_ENABLED,
@@ -38,8 +38,8 @@ import {
   loadGraphMirrorSwitch,
   type GraphMirrorFolder,
   type GraphMirrorStatus,
-} from '@cmail/shared/graph-mirror';
-import { loadM365SyncSwitch } from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/graph-mirror';
+import { loadM365SyncSwitch } from '@stanchion/shared/m365-sync';
 import { audit } from './db';
 
 export type ExchangeMirrorWorkerConfig =

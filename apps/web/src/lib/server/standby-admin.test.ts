@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadStandbySwitch } from '@cmail/shared/standby';
+import { loadStandbySwitch } from '@stanchion/shared/standby';
 import { createTestDatabase } from './mcp/testing/harness';
 import { applyStandbyAdminAction, loadStandbyOverview, parseStandbyAdminAction, standbyWorkerConfig } from './standby-admin';
 

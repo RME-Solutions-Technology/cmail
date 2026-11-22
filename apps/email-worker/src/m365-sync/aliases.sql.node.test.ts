@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadAliasSyncState } from '@cmail/shared/exchange-mirror';
+import { loadAliasSyncState } from '@stanchion/shared/exchange-mirror';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { ALIAS_USERS_URL } from './graph';
 import { runAliasSyncTick, smtpAliases } from './aliases';

@@ -14,7 +14,7 @@ import {
   m365PermsStatusView,
   type M365PermsStatusView,
   type M365PermsSwitch,
-} from '@cmail/shared/m365-perms';
+} from '@stanchion/shared/m365-perms';
 import { audit } from './db';
 
 export type M365PermsConfigStatus =

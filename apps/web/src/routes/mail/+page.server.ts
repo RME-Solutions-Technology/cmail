@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import type { Message } from '@cmail/shared/types';
+import type { Message } from '@stanchion/shared/types';
 import { escapeLike } from '#lib/server/validation.js';
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 import { loadDeliveryBadges } from '#lib/server/delivery-badges.js';

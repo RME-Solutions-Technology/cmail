@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import type { MailTrace } from '@cmail/shared/types';
+import type { MailTrace } from '@stanchion/shared/types';
 import { adminLoaderFailure } from '#lib/server/admin-loader-error.js';
 import type { DeliveryEventView } from '#lib/mail/delivery-status.js';
 

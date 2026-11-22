@@ -137,7 +137,7 @@ Configure the same values on both the Pages application and inbound email Worker
 Put the public key and subject in `[vars]` in both local Wrangler files. For local Worker testing, put only `VAPID_PRIVATE_KEY` in the ignored `apps/email-worker/.dev.vars` — don't copy unrelated web credentials into the Worker. For production, set the private key separately in Pages and the inbound Worker:
 
 ```sh
-pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name cmail-web
+pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name stanchion-web
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY --config apps/email-worker/wrangler.toml
 ```
 

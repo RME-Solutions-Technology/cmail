@@ -3,7 +3,8 @@
 # Copy this file to `wrangler.toml` and fill in YOUR Cloudflare tenant values.
 # `wrangler.toml` is gitignored so your IDs never leak to forks/clones.
 
-name = "cmail-web"
+# Default resource names are stanchion-*; existing instances keep their cmail-* names.
+name = "stanchion-web"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = ".svelte-kit/cloudflare"
@@ -11,20 +12,20 @@ pages_build_output_dir = ".svelte-kit/cloudflare"
 # D1 binding — run `pnpm d1:create` then paste the returned database_id here.
 [[d1_databases]]
 binding = "DB"
-database_name = "cmail-db"
+database_name = "stanchion-db"
 database_id = "YOUR_D1_DATABASE_ID"
 migrations_dir = "../../packages/shared/migrations"
 
 # R2 binding — run `pnpm r2:create` first.
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "cmail-storage"
+bucket_name = "stanchion-storage"
 
-# Private outbound path. Deploy cmail-email-worker first; it owns the native
+# Private outbound path. Deploy stanchion-email-worker first; it owns the native
 # Email Service send binding and is not exposed on workers.dev.
 [[services]]
 binding = "EMAIL_SERVICE"
-service = "cmail-email-worker"
+service = "stanchion-email-worker"
 
 # Public, non-secret variables. Override per environment as needed.
 # Anything sensitive (OAuth secrets, SESSION_SECRET, outbound API tokens, etc.)
@@ -43,7 +44,7 @@ ORG_SHORT_NAME = "Your Org"
 ORG_URL = "https://example.com"
 SUPPORT_EMAIL = "desk@example.com"
 UPDATE_SUPPORT_EMAIL = "" # Optional update service desk; blank uses site support.
-LANDING_URL = "https://cmail.example.com"
+LANDING_URL = "https://stanchion.example.com"
 POLICY_URL = "https://mail.example.com/policy"
 REPO_URL = "https://github.com/RME-Solutions-Technology/cmail" # Upstream for manager update notices; use your fork if you deploy one.
 UPDATE_CHECK = "on" # "off" stops the console contacting GitHub.
@@ -148,17 +149,17 @@ PUSH_ENDPOINT_HOSTS = ""
 # the Pages dashboard. OUTBOUND_PROVIDER remains disabled here by design.
 [[env.preview.d1_databases]]
 binding = "DB"
-database_name = "cmail-db-preview"
+database_name = "stanchion-db-preview"
 database_id = "YOUR_PREVIEW_D1_DATABASE_ID"
 migrations_dir = "../../packages/shared/migrations"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "cmail-storage-preview"
+bucket_name = "stanchion-storage-preview"
 
 [[env.preview.services]]
 binding = "EMAIL_SERVICE"
-service = "cmail-email-worker-preview"
+service = "stanchion-email-worker-preview"
 
 [env.preview.vars]
 APP_NAME = "Stanchion preview"
