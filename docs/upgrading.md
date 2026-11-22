@@ -116,7 +116,7 @@ as a queue consumer, by eye. New secrets are listed in the changelog and in the
 Use this when you keep your own changes in a private repository.
 
 1. Keep upstream as a second remote:
-   `git remote add upstream https://github.com/RME-Solutions-Technology/cmail.git`.
+   `git remote add upstream https://github.com/RME-Solutions-Technology/stanchion.git`.
 2. Fetch and bring your changes on top:
    `git fetch upstream && git rebase upstream/main` (or merge, if your team
    prefers).

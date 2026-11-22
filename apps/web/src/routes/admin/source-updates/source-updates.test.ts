@@ -38,7 +38,7 @@ describe('manager update endpoint', () => {
     await GET(event);
     await GET(event);
     expect(checkSourceUpdates).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(checkSourceUpdates).mock.calls[0][1]).toBe('https://github.com/RME-Solutions-Technology/cmail');
+    expect(vi.mocked(checkSourceUpdates).mock.calls[0][1]).toBe('https://github.com/RME-Solutions-Technology/stanchion');
   });
 
   it('uses a configured fork', async () => {

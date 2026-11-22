@@ -3,13 +3,13 @@
   "version": "0.9.0-beta.2",
   "private": true,
   "description": "Open-source email platform on Cloudflare — Google/Microsoft SSO, D1, R2, Email Routing",
-  "homepage": "https://github.com/RME-Solutions-Technology/cmail#readme",
+  "homepage": "https://github.com/RME-Solutions-Technology/stanchion#readme",
   "bugs": {
-    "url": "https://github.com/RME-Solutions-Technology/cmail/issues"
+    "url": "https://github.com/RME-Solutions-Technology/stanchion/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RME-Solutions-Technology/cmail.git"
+    "url": "git+https://github.com/RME-Solutions-Technology/stanchion.git"
   },
   "scripts": {
     "setup": "node scripts/setup.mjs",

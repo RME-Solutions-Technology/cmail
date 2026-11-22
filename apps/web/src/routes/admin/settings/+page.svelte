@@ -73,7 +73,7 @@
         <button type="submit" class="btn {data.focusedInbox.enabled ? 'btn-outline-danger' : 'btn-primary'}">
           {data.focusedInbox.enabled ? 'Turn off Focused Inbox' : 'Turn on Focused Inbox'}
         </button>
-        <small>Sorting uses the sender and standard mail headers only, inside Stanchion. <a class="text-link" href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
+        <small>Sorting uses the sender and standard mail headers only, inside Stanchion. <a class="text-link" href="https://github.com/RME-Solutions-Technology/stanchion/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
       </form>
     </section>
   {/if}

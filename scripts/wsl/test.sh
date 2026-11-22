@@ -7,7 +7,7 @@
 # NOT covered here: CodeQL (needs GitHub's hosted analysis; it stays a GitHub check, and is blocked while Actions is).
 set -euo pipefail
 REF=${1:?usage: test.sh <ref> [--only ...] [--nodes ...]}; shift || true
-ONLY=all; NODES="22 24 26"; REPO=${CMAIL_REPO_URL:-https://github.com/RME-Solutions-Technology/cmail.git}
+ONLY=all; NODES="22 24 26"; REPO=${CMAIL_REPO_URL:-https://github.com/RME-Solutions-Technology/stanchion.git}
 while [ $# -gt 0 ]; do case "$1" in --only) ONLY=$2; shift 2;; --nodes) NODES=$2; shift 2;; --repo) REPO=$2; shift 2;; *) echo "unknown $1"; exit 2;; esac; done
 case "$ONLY" in all|validate|collector|e2e) ;; *) echo "bad --only $ONLY (all|validate|collector|e2e)"; exit 2;; esac
 [ -n "${NODES// }" ] || { echo "empty --nodes"; exit 2; }

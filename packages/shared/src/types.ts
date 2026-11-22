@@ -261,7 +261,7 @@ export interface Env {
   UPDATE_SUPPORT_EMAIL?: string; // Optional update service desk; otherwise use site support.
   LANDING_URL?: string;       // e.g. "https://mail.example.com"
   POLICY_URL?: string;        // e.g. "https://mail.example.com/policy"
-  REPO_URL?: string;          // Upstream for manager update checks; default https://github.com/RME-Solutions-Technology/cmail
+  REPO_URL?: string;          // Upstream for manager update checks; default https://github.com/RME-Solutions-Technology/stanchion
   UPDATE_CHECK?: string;      // "off" disables manager update checks
   SYSTEM_EMAIL?: string;      // sender used for invites/system mail
   SYSTEM_FROM_NAME?: string;

@@ -44,7 +44,7 @@ change must meet see [CONTRIBUTING.md](../CONTRIBUTING.md) and
 ## 1. Run it locally
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git
+git clone https://github.com/RME-Solutions-Technology/stanchion.git
 cd cmail
 corepack enable
 pnpm install --frozen-lockfile

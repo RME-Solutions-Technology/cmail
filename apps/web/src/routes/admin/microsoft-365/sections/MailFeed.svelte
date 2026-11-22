@@ -246,7 +246,7 @@
       <div class="switch-head">
         <div>
           <h3 id="feed-colleague-heading">Send colleague mail through Exchange</h3>
-          <p class="muted">On: mail from {appName} to a colleague on the mail domain goes out through the outbound provider, so Exchange delivers it and it shows in Outlook; the {appName} copy comes from the mirror. Off: it goes straight into their {appName} mailbox only. Prove it with one test message first (<a href="https://github.com/RME-Solutions-Technology/cmail/blob/main/docs/exchange-mirror.md#prove-it-with-one-message">how</a>).</p>
+          <p class="muted">On: mail from {appName} to a colleague on the mail domain goes out through the outbound provider, so Exchange delivers it and it shows in Outlook; the {appName} copy comes from the mirror. Off: it goes straight into their {appName} mailbox only. Prove it with one test message first (<a href="https://github.com/RME-Solutions-Technology/stanchion/blob/main/docs/exchange-mirror.md#prove-it-with-one-message">how</a>).</p>
         </div>
         <span class="state-badge" class:on={overview.colleagueSend && overview.enabled}>{overview.colleagueSend ? (overview.enabled ? 'On' : 'On (mirror off: not in effect)') : 'Off'}</span>
       </div>
