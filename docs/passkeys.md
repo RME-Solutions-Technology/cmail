@@ -135,6 +135,53 @@ happens, and earlier when the person signs out, when the passkey is removed
 (by them or a manager), when the account is paused or offboarded, and when a
 manager turns the feature off.
 
+## Add a phone
+
+On Mail > Settings > Passkeys, **Add a phone** shows a QR code. Scan it with the
+phone camera and the phone creates its own passkey for the same account. Nothing
+is typed and nobody signs in on the phone. Do it before you need it: if the
+normal sign-in is down, a passkey you already have (for example on your PC)
+signs you in at `/auth/passkey`, and you can add more phones from there.
+
+Needs migration `0034_passkey_pairings.sql` (one new table, additive). Until it
+is applied the card is hidden. It is also hidden while passkey sign-in is off.
+
+1. You press **Add a phone** (same rule as adding a passkey: an ordinary
+   session opened in the last 15 minutes, never a passkey session). The server
+   makes a random 256-bit token, stores only its SHA-256 hash with your account
+   and session, and shows `https://<host>/auth/passkey/pair#<token>` as an
+   inline SVG QR code, the same link as text with Copy, and a 10 minute
+   countdown. The token is in the URL fragment, so no server log or referrer
+   ever holds it. Starting a new offer cancels the old one.
+2. The phone opens the page (no sign-in needed). Its script reads the fragment,
+   removes it from the address bar and posts it. One conditional update moves
+   the offer from `offered` to `joined` and returns a second random secret that
+   only that phone holds. The server records a friendly label from the user
+   agent (for example "iPhone (Safari)"). The label is for you to read and is
+   never trusted.
+3. The page you are signed in on (polling every 2 seconds, announced to screen
+   readers) says "iPhone (Safari) wants to join" with **Approve this phone** and
+   **Deny**. This step stops someone who photographed the QR code from adding
+   their own phone. Only the session that made the offer can approve or deny.
+4. After approval the phone gets registration options (the same options and
+   checks as adding a passkey: discoverable credential, user verification
+   required, origin and RP ID exactly `APP_URL`) and presses **Create passkey**.
+   The server claims the offer (`approved` to `consumed`), verifies and stores
+   the passkey, and sends the usual "Passkey added" notices. A failed attempt
+   puts the offer back to `approved` while it lasts.
+
+Every state change is one conditional `UPDATE`, so two simultaneous requests
+cannot both win. The token is single use and valid 10 minutes; the creator's
+session must still be live at every step; the options and verify steps need the
+phone's own secret as well as the token. Rate limits: offers per person per
+hour, joins per address, failed token or secret guesses per address (IPv6 per
+/64), polls per address and per person. Every refusal on the phone side gives
+the same answer. Without JavaScript the card says so and points to adding the
+passkey on the phone itself.
+
+Audit events: `auth.passkey_pair_started`, `_joined`, `_approved`, `_denied`,
+`_expired`. The passkey itself is audited as `auth.passkey_registered`.
+
 ## Threat model
 
 | Threat | What stops it |
@@ -315,6 +362,7 @@ kept for when it is turned on again.
 |---|---|
 | `auth.passkey_registered` | A passkey was added (with its name) |
 | `auth.passkey_register_failed` | A registration response failed verification |
+| `auth.passkey_pair_started` / `_joined` / `_approved` / `_denied` / `_expired` | The steps of Add a phone (see above) |
 | `auth.passkey_removed` | A person removed a passkey, or a manager removed all of someone's |
 | `auth.sign_in` | "Signed in via passkey ..." for every passkey sign-in, with the session id |
 | `auth.passkey_manager_sign_in` | A manager signed in with a passkey (managers are emailed) |
@@ -333,6 +381,10 @@ kept for when it is turned on again.
 - `apps/web/src/routes/auth/passkey/`: the page, `client.js`, `options` and
   `verify`.
 - `apps/web/src/routes/api/passkeys/register/`: registration endpoints.
+- `apps/web/src/lib/server/passkey-pairing.ts`, `passkey-pair-page.ts` and
+  `apps/web/src/routes/auth/passkey/pair/`: Add a phone, phone side.
+  `apps/web/src/routes/mail/passkeys/pair/`: Add a phone, signed-in side.
+  `apps/web/src/lib/qr.ts`: the QR code (MIT `qrcode-generator` 2.0.4, pinned).
 - `apps/web/src/routes/mail/passkeys/`: Mail > Settings > Passkeys.
 - `apps/web/src/routes/admin/passkeys/`: Admin > Passkey sign-in.
 - `apps/web/src/hooks.server.ts`: passkey sessions and the Access bridge.

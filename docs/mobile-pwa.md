@@ -70,6 +70,8 @@ These steps follow Google's current [Android Home Screen guide](https://support.
 
 Both Chrome's site permission and Android's app notification permission need to allow this; see Chrome's [Android notification guide](https://support.google.com/chrome/answer/3220216?co=GENIE.Platform%3DAndroid&hl=en-GB). Battery optimisation, data saver, Do Not Disturb, and manufacturer-specific background restrictions can all delay notifications. If alerts do not appear, check both permissions, then allow background activity for Chrome (or the installed app) if your device offers that setting.
 
+To sign in on a phone without Microsoft, add a passkey to it with **Add a phone** on Mail > Settings > Passkeys (see [passkeys](passkeys.md#add-a-phone)).
+
 ## Turn alerts off
 
 Select **Turn off** under **New-mail alerts** on that device. This removes the subscription from cmail and cancels it locally. You can also revoke notification permission in your device or browser settings.
