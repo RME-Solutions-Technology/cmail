@@ -17,7 +17,7 @@ Use the public Stanchion repository as the reusable product, and keep organisati
 Use a **private downstream repository** when you need to change application code. Start from Stanchion, keep the public repository as a read-only `upstream` remote, and use your private repository as `origin`:
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git stanchion-private
+git clone https://github.com/RME-Solutions-Technology/stanchion.git stanchion-private
 cd stanchion-private
 git remote rename origin upstream
 git remote add origin git@github.com:YOUR-ORG/stanchion-private.git

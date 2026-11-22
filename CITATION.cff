@@ -5,7 +5,7 @@ type: software
 version: 0.9.0-beta.2
 date-released: 2026-11-17
 license: Apache-2.0
-repository-code: "https://github.com/RME-Solutions-Technology/cmail"
+repository-code: "https://github.com/RME-Solutions-Technology/stanchion"
 abstract: "Open-source organisational email on Cloudflare with personal and shared mailboxes, built on Workers, Pages, D1, R2 and Email Routing."
 keywords:
   - cloudflare

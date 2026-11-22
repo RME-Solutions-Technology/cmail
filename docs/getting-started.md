@@ -58,7 +58,7 @@ Choose these values before creating resources:
 ## Install
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git
+git clone https://github.com/RME-Solutions-Technology/stanchion.git
 cd cmail
 corepack enable
 pnpm install --frozen-lockfile

@@ -13,7 +13,7 @@ Keep deployments, credentials, customer information, and organisation-specific m
 ## Local setup
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git
+git clone https://github.com/RME-Solutions-Technology/stanchion.git
 cd cmail
 corepack enable
 pnpm install --frozen-lockfile
