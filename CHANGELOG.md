@@ -6,6 +6,20 @@ Notable changes to Stanchion are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.9.0-beta.3] - 2026-11-23
+
+**Highlights**
+
+- The product is now called Stanchion (formerly cMail). Repo: RME-Solutions-Technology/stanchion; old links redirect.
+- Passkeys: Add a phone with a QR code (migration 0034, additive).
+- A busy hour no longer bounces real mail: rate limits now hold mail in Junk instead of a permanent rejection.
+- One Microsoft 365 admin page.
+
+Migrations: 0034 (additive). Details below.
+
+### Security
+- Inbound rate limits (messages or bytes per hour, messages per sender) no longer end in a permanent SMTP rejection. A tripped limit files the message to Junk with the reason "held: too much mail arrived at once"; a known correspondent (someone you wrote to, or whose mail you read) with a DMARC pass keeps the Inbox. A missing or malformed `INBOUND_SENDER_HASH_KEY` now skips only the per-sender limit (logged) instead of rejecting all mail. Only the storage quota still rejects. No migration.
+
 ### Added
 - Passkeys: **Add a phone** on Mail > Settings > Passkeys. Show a QR code, scan it with the phone camera, approve the phone on the page you are signed in on, and the phone creates its own passkey for your account (no sign-in or typing on the phone). One-time 10 minute offer, token in the URL fragment and stored only as a hash, approval by matching a two-digit number shown on the phone (three wrong picks cancel it), the offer needs a session under 5 minutes old, one open offer per person, the registration challenge bound to the offer, every step audited and rate limited, QR drawn as inline SVG with the MIT `qrcode-generator` 2.0.4 (pinned). Needs migration `0034` (one new table, additive). Details: docs/passkeys.md.
 
