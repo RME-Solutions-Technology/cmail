@@ -43,4 +43,21 @@ describe('investigation loader query wiring', () => {
       expect((call.sql.match(/\?/g) || []).length).toBe(call.binds.length);
     }
   });
+
+  it('records each search in the audit log: the filters and a hash, never the text typed (contractor review S14)', async () => {
+    const calls: QueryCall[] = [];
+    await load({
+      url: new URL('https://mail.example.com/admin/investigate?q=secret-name&source=trace'),
+      platform: { env: { DB: fakeDb(calls) } as never },
+      locals: { user: { id: 'manager-1', role: 'manager' } },
+    } as never);
+    const logged = calls.find((call) => call.sql.includes('INSERT INTO audit_log'));
+    expect(logged).toBeTruthy();
+    expect(logged!.binds.join(' ')).toContain('admin.investigate_search');
+    expect(logged!.binds.join(' ')).not.toContain('secret-name');
+    // A bare page view (no filters) is not logged.
+    const quiet: QueryCall[] = [];
+    await load({ url: new URL('https://mail.example.com/admin/investigate'), platform: { env: { DB: fakeDb(quiet) } as never }, locals: { user: { id: 'manager-1', role: 'manager' } } } as never);
+    expect(quiet.some((call) => call.sql.includes('INSERT INTO audit_log'))).toBe(false);
+  });
 });

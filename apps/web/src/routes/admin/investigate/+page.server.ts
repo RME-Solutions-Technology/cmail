@@ -1,5 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { adminLoaderFailure } from '#lib/server/admin-loader-error.js';
+import { audit } from '#lib/server/db.js';
+import { hashToken } from '#lib/server/session.js';
 
 /**
  * Unified investigation view: message trace and the audit log in one timeline.
@@ -81,7 +83,7 @@ function isoDate(value: string | null): string {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
 }
 
-export const load: PageServerLoad = async ({ platform, url }) => {
+export const load: PageServerLoad = async ({ platform, url, locals }) => {
   const env = platform?.env;
   const empty = {
     events: [] as UnifiedEvent[],
@@ -110,6 +112,18 @@ export const load: PageServerLoad = async ({ platform, url }) => {
   const pageSize = PAGE_SIZES.includes(Number(url.searchParams.get('pageSize')))
     ? Number(url.searchParams.get('pageSize'))
     : 50;
+
+  // Message trace shows who writes to whom and about what, so every search is on the record
+  // (contractor review S14): the filters, and a short hash of the text typed, never the text.
+  if (locals?.user && (q || source !== 'all' || direction || status || event || outcome !== 'all' || from || to)) {
+    const qHash = q ? (await hashToken(q)).slice(0, 12) : '';
+    await audit(env.DB, {
+      event_type: 'admin.investigate_search',
+      actor_id: locals.user.id,
+      actor_role: locals.user.role,
+      detail: `source=${source} direction=${direction} status=${status} event=${event} outcome=${outcome} from=${from} to=${to} q=${qHash}`,
+    });
+  }
 
   const where: string[] = [];
   const binds: (string | number)[] = [];

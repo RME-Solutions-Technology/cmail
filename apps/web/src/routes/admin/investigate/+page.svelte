@@ -77,7 +77,7 @@
       <h1 id="investigate-heading">Investigate</h1>
       <p class="intro">
         Search mail trace and the audit log together, by address, subject, Message-ID, IP,
-        or event detail.
+        or event detail. Each search is recorded in the audit log.
       </p>
     </div>
   </header>
