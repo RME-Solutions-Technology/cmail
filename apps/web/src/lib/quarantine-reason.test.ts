@@ -6,6 +6,10 @@ describe('quarantineReasonPhrase', () => {
     expect(quarantineReasonPhrase('blocked-sender')).toBe('blocked sender');
   });
 
+  it('describes a rate-limit hold', () => {
+    expect(quarantineReasonPhrase('rate-limit')).toBe('held: too much mail arrived at once');
+  });
+
   it('describes a spam score, keeping the stored precision', () => {
     expect(quarantineReasonPhrase('spam-score:7.5')).toBe('spam score 7.5');
     expect(quarantineReasonPhrase('spam-score:10')).toBe('spam score 10');

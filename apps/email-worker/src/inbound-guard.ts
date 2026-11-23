@@ -263,3 +263,62 @@ export async function releaseInboundReservation(db: D1Database, reservationId: s
      WHERE id = ?`,
   ).bind(reservationId).run();
 }
+
+export type InboundHoldResult =
+  | { status: 'accepted'; reservationId: string | null; senderLimitSkipped?: boolean }
+  | { status: 'held'; reservationId: string | null; senderLimitSkipped?: boolean }
+  | { status: 'duplicate'; reservationId: null }
+  | { status: 'rejected'; reservationId: null }
+  | { status: 'unavailable'; reservationId: null };
+
+const RATE_LIMITS_OFF = {
+  INBOUND_MAILBOX_MESSAGES_PER_HOUR: 0,
+  INBOUND_MAILBOX_BYTES_PER_HOUR: 0,
+  INBOUND_SENDER_MESSAGES_PER_HOUR: 0,
+} as const;
+
+/**
+ * The reservation the receiving Worker uses. A rate limit (messages per hour,
+ * bytes per hour, messages per sender) must never bounce real mail with a
+ * permanent SMTP error: a small flood would then cut a person off. So when
+ * only a rate limit trips, the message is still reserved (the storage quota
+ * is still enforced) and returned as `held`, and the caller files it to Junk
+ * with a reason instead. Only the storage quota, which cannot be waived, still
+ * rejects. A missing or malformed sender hash key skips the per-sender limit
+ * (`senderLimitSkipped`) instead of rejecting every message.
+ */
+export async function reserveInboundDeliveryHolding(
+  env: InboundGuardEnv,
+  input: InboundReservationInput,
+): Promise<InboundHoldResult> {
+  const first = await reserveInboundDelivery(env, input);
+  if (first.status === 'accepted' || first.status === 'duplicate') return first;
+
+  const configuration = inboundGuardConfiguration(env);
+  const keyBroken = first.status === 'unavailable'
+    && configuration.senderMessagesPerHour > 0
+    && decodeSenderHashKey(env.INBOUND_SENDER_HASH_KEY) === null;
+
+  if (keyBroken) {
+    // Keep the other limits; drop only the per-sender one.
+    const retry = await reserveInboundDelivery({ ...env, INBOUND_SENDER_MESSAGES_PER_HOUR: 0 }, input);
+    if (retry.status === 'accepted') return { status: 'accepted', reservationId: retry.reservationId, senderLimitSkipped: true };
+    if (retry.status === 'duplicate') return retry;
+    if (retry.status !== 'rejected') return { status: 'unavailable', reservationId: null };
+    // A remaining rate limit tripped: fall through to hold.
+  } else if (first.status !== 'rejected') {
+    return { status: 'unavailable', reservationId: null };
+  }
+
+  // Keep the storage quota on (the hard maximum when it was switched off) so a ledger row and the
+  // delivery key are still recorded; with every limit at 0 the guard would write nothing.
+  const held = await reserveInboundDelivery(
+    { ...env, ...RATE_LIMITS_OFF, MAILBOX_STORAGE_QUOTA_BYTES: configuration.mailboxStorageBytes || MAX_MAILBOX_STORAGE_QUOTA_BYTES },
+    input,
+  );
+  if (held.status === 'accepted') {
+    return { status: 'held', reservationId: held.reservationId, ...(keyBroken ? { senderLimitSkipped: true } : {}) };
+  }
+  if (held.status === 'duplicate') return held;
+  return held.status === 'rejected' ? { status: 'rejected', reservationId: null } : { status: 'unavailable', reservationId: null };
+}

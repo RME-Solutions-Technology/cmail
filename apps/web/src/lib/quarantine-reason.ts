@@ -6,6 +6,7 @@
 export function quarantineReasonPhrase(reason: string | null | undefined): string | null {
   if (!reason) return null;
   if (reason === 'blocked-sender') return 'blocked sender';
+  if (reason === 'rate-limit') return 'held: too much mail arrived at once';
   const scoreMatch = /^spam-score:(.+)$/.exec(reason);
   if (scoreMatch) return `spam score ${scoreMatch[1]}`;
   return null;

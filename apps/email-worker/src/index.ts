@@ -56,12 +56,13 @@ import {
   pickSenderRule,
   readSpamScore,
   spamQuarantineThreshold,
+  applyRateHold,
 } from '@stanchion/shared/inbound-risk';
 import { parseAuthenticationResults } from './authentication-results';
 import { applyCalendarWrites, extractCalendarText } from './calendar';
 import {
   releaseInboundReservation,
-  reserveInboundDelivery,
+  reserveInboundDeliveryHolding,
   type InboundGuardEnv,
 } from './inbound-guard';
 import { runRetention, type RetentionEnv } from './retention';
@@ -72,6 +73,7 @@ export {
   hashInboundSender,
   inboundGuardConfiguration,
   reserveInboundDelivery,
+  reserveInboundDeliveryHolding,
 } from './inbound-guard';
 
 interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, GraphMirrorEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
@@ -532,6 +534,38 @@ export async function stableInboundId(mailboxId: string, messageIdHeader: string
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
   return `inbound-${hex}`;
+}
+
+/**
+ * Stricter than isFirstContact: true only when someone in this mailbox has
+ * written to the address, or has read mail from it that was not filed to Junk.
+ * Used to let a rate-held message keep the Inbox, so an attacker with their
+ * own authenticated domain cannot become "known" just by getting one message
+ * stored. A lookup failure resolves to false (the message is held).
+ */
+async function isKnownCorrespondent(
+  db: D1Database,
+  mailboxId: string,
+  senderAddress: string,
+): Promise<boolean> {
+  if (!mailboxId || !senderAddress) return false;
+  try {
+    const prior = await db.prepare(
+      `SELECT 1 AS seen FROM messages
+       WHERE mailbox_id = ?
+         AND (
+           (direction = 'inbound' AND from_address = ? AND is_read = 1 AND folder <> 'spam')
+           OR (
+             direction IN ('outbound', 'internal')
+             AND EXISTS (SELECT 1 FROM json_each(messages.to_addresses) WHERE json_each.value = ?)
+           )
+         )
+       LIMIT 1`,
+    ).bind(mailboxId, senderAddress, senderAddress).first<{ seen: number }>();
+    return !!prior;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1142,7 +1176,7 @@ export default {
       return;
     }
 
-    const reservation = await reserveInboundDelivery(env, {
+    const reservation = await reserveInboundDeliveryHolding(env, {
       mailboxId: mailbox.id,
       senderAddress,
       deliveryKey: messageId,
@@ -1151,7 +1185,8 @@ export default {
     if (reservation.status === 'duplicate') {
       return;
     }
-    if (reservation.status !== 'accepted') {
+    if (reservation.status !== 'accepted' && reservation.status !== 'held') {
+      // Only the storage quota (or a failing database) refuses mail now.
       // Policy and dependency failures deliberately have the same generic,
       // non-diagnostic SMTP response. Do not persist attacker-controlled PII
       // in trace/audit rows for guardrail denials.
@@ -1162,6 +1197,14 @@ export default {
           : 'Inbound protection unavailable; delivery failed closed',
       );
       return;
+    }
+    // A rate limit never bounces real mail: the message is kept and filed to
+    // Junk with a reason (unless it is from someone this mailbox already
+    // corresponds with and passed DMARC; see below).
+    const rateHeld = reservation.status === 'held';
+    if (rateHeld) console.warn('Inbound rate limit reached; message held in Junk, not rejected');
+    if (reservation.senderLimitSkipped) {
+      console.warn('INBOUND_SENDER_HASH_KEY is missing or malformed; per-sender limit skipped');
     }
 
     const reservationId = reservation.reservationId;
@@ -1332,13 +1375,15 @@ export default {
     // identity the reader is shown and the one a warning has to be about.
     const spamScore = readSpamScore(message.headers);
     const senderRule = await lookupSenderRule(env.DB, headerFrom);
-    const placement = decideInboundPlacement({
+    const firstContact = await isFirstContact(env.DB, mailbox.id, headerFrom);
+    // Only a held message needs the stricter check (someone wrote to them or read their mail).
+    const knownCorrespondent = rateHeld ? await isKnownCorrespondent(env.DB, mailbox.id, headerFrom) : false;
+    const placement = applyRateHold(decideInboundPlacement({
       spamScore,
       threshold: spamQuarantineThreshold(env.SPAM_QUARANTINE_SCORE),
       senderRule,
-    });
+    }), { held: rateHeld, senderAuthenticated: auth.dmarc === 'pass', firstContact: !knownCorrespondent });
     const quarantined = placement.folder === 'spam';
-    const firstContact = await isFirstContact(env.DB, mailbox.id, headerFrom);
     // Inbox rules only see mail the organisation filed to the Inbox: a
     // mailbox rule never pulls quarantined mail back out of Junk.
     const ruleOutcome = quarantined ? null : await inboundRuleOutcome(env.DB, mailbox.id, {
@@ -1497,7 +1542,7 @@ export default {
       // Spam, not discarded. Nothing here ever drops mail.
       status: quarantined ? 'quarantined' : 'delivered',
       status_detail: quarantined
-        ? (placement.reason === 'blocked-sender' ? 'Filed to Spam by sender rule' : 'Filed to Spam by spam score')
+        ? (placement.reason === 'blocked-sender' ? 'Filed to Spam by sender rule' : placement.reason === 'rate-limit' ? 'Held in Spam: hourly receiving limit reached (not rejected)' : 'Filed to Spam by spam score')
         : ruleOutcome ? inboxRuleTraceDetail(ruleOutcome) : 'OK',
       spf_result: auth.spf,
       dkim_result: auth.dkim,
