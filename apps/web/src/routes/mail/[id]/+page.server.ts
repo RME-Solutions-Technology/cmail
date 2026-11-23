@@ -87,6 +87,7 @@ async function loadInvite(
   messageId: string,
   myAddress: string,
   icsAttachment: Attachment,
+  canSend: boolean,
 ): Promise<InviteViewModel | null> {
   const event = await db.prepare('SELECT * FROM calendar_events WHERE message_id = ?')
     .bind(messageId).first<CalendarEventRow>();
@@ -111,7 +112,7 @@ async function loadInvite(
       rrule: event.rrule,
       attendees: attendees.map((row) => ({ address: row.address, name: row.display_name, partstat: row.partstat })),
       myPartstat: mine?.partstat ?? null,
-      canRespond: event.status !== 'cancelled' && event.organizer_self === 0 && Boolean(mine),
+      canRespond: canSend && event.status !== 'cancelled' && event.organizer_self === 0 && Boolean(mine),
     };
   }
 
@@ -222,7 +223,7 @@ export const load: PageServerLoad = async ({ locals, platform, params, url }) =>
 
   const icsAttachment = allAttachments.find((attachment) => isIcsAttachment(attachment.content_type));
   const invite = icsAttachment
-    ? await loadInvite(env.DB, env.STORAGE, message.id, message.mailbox_address, icsAttachment)
+    ? await loadInvite(env.DB, env.STORAGE, message.id, message.mailbox_address, icsAttachment, message.mailbox_permissions !== 'read')
     : null;
 
   // Focused Inbox (docs/focused-inbox.md): only for a received Inbox message
@@ -287,6 +288,7 @@ export const actions: Actions = {
        INNER JOIN mailbox_assignments ma ON m.mailbox_id = ma.mailbox_id
        INNER JOIN mailboxes mb ON mb.id = m.mailbox_id
        WHERE m.id = ? AND ma.user_id = ? AND mb.status = 'active'
+         AND ma.permissions IN ('send-as', 'full')
          AND ${messageOwnershipPredicate('m')}`,
     ).bind(params.id, locals.user.id, locals.user.id).first<{
       id: string;

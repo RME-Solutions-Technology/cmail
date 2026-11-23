@@ -211,6 +211,21 @@ describe('calendar/new create action', () => {
 });
 
 describe('mail/[id] rsvp action', () => {
+  it('refuses a read-only assignee: the access lookup requires send-as or full (contractor review S11)', async () => {
+    const { db, calls } = mockDb([]);
+    const formData = new FormData();
+    formData.set('partstat', 'accepted');
+    await expect((messageActions.rsvp as any)({
+      request: new Request('https://mail.example.com/mail/message-1?/rsvp', { method: 'POST', body: formData }),
+      locals: locals(),
+      platform: platform(db),
+      params: { id: 'message-1' },
+    })).rejects.toMatchObject({ status: 404 });
+    const lookup = calls.find((call) => call.sql.includes('FROM messages m'));
+    expect(lookup?.sql).toContain("ma.permissions IN ('send-as', 'full')");
+    expect(calls.some((call) => /calendar_(events|attendees)/.test(call.sql) && /(INSERT|UPDATE)/.test(call.sql))).toBe(false);
+  });
+
   it('rejects an invalid partstat', async () => {
     const { db } = mockDb([]);
     const formData = new FormData();

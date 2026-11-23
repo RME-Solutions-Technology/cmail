@@ -520,7 +520,22 @@ export function parsedAuthenticationFacts(
   headers: Array<{ key: string; value: string }> | undefined,
   env?: { INBOUND_AUTHSERV_ID?: string },
 ): { sourceIp: string | null; spf: string | null; dkim: string | null; dmarc: string | null } {
-  const first = headers?.find((header) => header.key.toLowerCase() === 'authentication-results')?.value;
+  const records = (headers ?? []).filter((header) => header.key.toLowerCase() === 'authentication-results');
+  const first = records[0]?.value;
+  // The boundary stamps exactly one record with its own id. A second record
+  // that claims the same id was written by the sender (a forgery attempt), so
+  // no verdict from this message can be trusted (contractor review S5).
+  const trustedId = env?.INBOUND_AUTHSERV_ID?.trim().toLowerCase();
+  if (trustedId) {
+    const claimingTrusted = records.filter((record) => {
+      // Leading RFC 5322 comments before the id do not hide a record from this count.
+      const id = record.value.replace(/^(?:\s|\([^)]*\))+/, '').split(/[\s;(]/, 1)[0]?.toLowerCase();
+      return id === trustedId;
+    });
+    if (claimingTrusted.length > 1) {
+      return { sourceIp: null, spf: null, dkim: null, dmarc: null };
+    }
+  }
   const facts = parseAuthenticationResults(first ?? null, env?.INBOUND_AUTHSERV_ID);
   return { sourceIp: facts.sourceIp, spf: facts.spf, dkim: facts.dkim, dmarc: facts.dmarc };
 }
@@ -1212,8 +1227,9 @@ export default {
 
     try {
       let parsed;
+      let rawEmail: ArrayBuffer | null = null;
       try {
-      const rawEmail = await new Response(message.raw).arrayBuffer();
+      rawEmail = await new Response(message.raw).arrayBuffer();
       const parser = new PostalMime();
       parsed = await parser.parse(rawEmail);
       } catch {
@@ -1230,20 +1246,20 @@ export default {
         return;
       }
 
-    const preparedBody = prepareInboundBody(
+    let preparedBody = prepareInboundBody(
       parsed.html,
       parsed.text,
       getDecodedBodyLimit(env),
     );
+    // A body that is too large or too deep to display is never bounced
+    // (contractor review C2): show the plain-text part if there is one, else a
+    // short notice, and keep the original message as an attachment when it fits.
+    const bodyDegraded = !preparedBody.ok;
     if (!preparedBody.ok) {
-      message.setReject('Message body exceeds the configured processing limit');
-      await logTrace(env.DB, {
-        direction: 'inbound',
-        status: 'rejected',
-        status_detail: 'Decoded body complexity limit exceeded',
-        size_bytes: messageSize,
-      });
-      return;
+      const textOnly = parsed.text ? prepareInboundBody(undefined, parsed.text, getDecodedBodyLimit(env)) : null;
+      preparedBody = textOnly && textOnly.ok
+        ? textOnly
+        : { ok: true, html: '<p>This message is too large or too complex to show here. The original message is attached as original-message.eml when it fits within the attachment limit.</p>' };
     }
 
     // Recorded verdicts come from the parsed header list, not the joined value.
@@ -1304,6 +1320,25 @@ export default {
         source_ip: sourceIp,
       });
       return;
+    }
+
+    // Degraded body: keep the original as an attachment so nothing is lost,
+    // but only when it fits the same limits every other attachment obeys.
+    if (
+      bodyDegraded
+      && rawEmail
+      && preparedAttachments.length < getAttachmentLimit(env)
+      && totalAttachmentBytes + rawEmail.byteLength <= attachmentByteLimit
+    ) {
+      preparedAttachments.push({
+        id: generateId(),
+        filename: 'original-message.eml',
+        contentType: 'message/rfc822',
+        contentId: null,
+        disposition: 'attachment' as const,
+        content: rawEmail,
+        size: rawEmail.byteLength,
+      } as (typeof preparedAttachments)[number]);
     }
 
     const blockedAttachment = preparedAttachments.some(
@@ -1382,6 +1417,7 @@ export default {
       spamScore,
       threshold: spamQuarantineThreshold(env.SPAM_QUARANTINE_SCORE),
       senderRule,
+      senderAuthenticated: auth.dmarc === 'pass',
     }), { held: rateHeld, senderAuthenticated: auth.dmarc === 'pass', firstContact: !knownCorrespondent });
     const quarantined = placement.folder === 'spam';
     // Inbox rules only see mail the organisation filed to the Inbox: a
@@ -1543,7 +1579,7 @@ export default {
       status: quarantined ? 'quarantined' : 'delivered',
       status_detail: quarantined
         ? (placement.reason === 'blocked-sender' ? 'Filed to Spam by sender rule' : placement.reason === 'rate-limit' ? 'Held in Spam: hourly receiving limit reached (not rejected)' : 'Filed to Spam by spam score')
-        : ruleOutcome ? inboxRuleTraceDetail(ruleOutcome) : 'OK',
+        : ruleOutcome ? inboxRuleTraceDetail(ruleOutcome) : (placement.allowIgnored ? 'OK (allow rule ignored: sender not authenticated)' : 'OK'),
       spf_result: auth.spf,
       dkim_result: auth.dkim,
       dmarc_result: auth.dmarc,

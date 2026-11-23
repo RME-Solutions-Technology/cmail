@@ -6,6 +6,14 @@ Notable changes to Stanchion are recorded here. The project follows
 
 ## [Unreleased]
 
+### Security
+- A sender **allow** rule now applies only when the message passed DMARC at the trusted boundary; otherwise the spam score still decides (a **block** rule always applies). Instances without `INBOUND_AUTHSERV_ID` set record no DMARC verdict, so their allow rules stop applying until it is set (all three production instances have it). The trace notes "allow rule ignored" when it happens.
+- A message carrying a second `Authentication-Results` record that claims the boundary's own id is treated as forged: no SPF, DKIM or DMARC verdict from it is trusted.
+- A read-only delegate can no longer send a calendar reply (RSVP) as the mailbox, and no longer sees the RSVP buttons.
+
+### Changed
+- Mail whose HTML is too large or too deep to display is no longer bounced: it is delivered showing its plain-text part (or a short notice), with the original message attached as `original-message.eml` when it fits the attachment limit.
+
 ## [0.9.0-beta.3] - 2026-11-23
 
 **Highlights**
