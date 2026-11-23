@@ -553,12 +553,14 @@ describe('Exchange mirror: hourly inbound guard', () => {
     expect(t.messages().filter((row) => row.mailbox_id === 'mbx-bob')).toHaveLength(3);
     const kinds = t.sqlite.prepare(`SELECT DISTINCT reservation_type FROM mailbox_reservations`).all();
     expect(kinds).toEqual([{ reservation_type: 'storage' }]);
-    // The normal path still has its allowance of one, and enforces it.
+    // The normal path still has its allowance of one; beyond it, mail is held in Junk, never bounced.
     const first = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n1@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
     expect(first.message.setReject).not.toHaveBeenCalled();
     const second = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n2@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
-    expect(second.message.setReject).toHaveBeenCalled();
-    expect(t.messages().filter((row) => row.mailbox_id === 'mbx-bob')).toHaveLength(4);
+    expect(second.message.setReject).not.toHaveBeenCalled();
+    const bobRows = t.messages().filter((row) => row.mailbox_id === 'mbx-bob');
+    expect(bobRows).toHaveLength(5);
+    expect(bobRows.filter((row) => row.folder === 'spam')).toHaveLength(1);
   });
 });
 
