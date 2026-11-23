@@ -60,6 +60,7 @@ vi.mock('#lib/server/session.js', () => ({
   SESSION_COOKIE: 'cmail_session',
   SESSION_COOKIE_MAX_AGE_SECONDS: 3600,
   createSessionToken: mocks.createSessionToken,
+  sqlDateTime: (moment: Date) => moment.toISOString().slice(0, 19).replace('T', ' '),
 }));
 vi.mock('#lib/server/travel.js', () => ({
   COUNTRY_PENDING_MESSAGE: 'Sign-in from this country needs approval.',
