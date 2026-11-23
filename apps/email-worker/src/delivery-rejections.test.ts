@@ -122,6 +122,9 @@ describe('inbound refusals after parsing', () => {
     expect(written.some((value: unknown) => typeof value === 'string' && value.includes('too large or too complex'))).toBe(true);
     // The original is kept as an attachment, so nothing is lost.
     expect(written).toHaveLength(2);
+    const attachmentInserts = db.batched.filter((statement) => statement.query.includes('INSERT INTO attachments'));
+    expect(attachmentInserts).toHaveLength(1);
+    expect(attachmentInserts[0].values).toContain('original-message.eml');
   });
 
   it('a too-large HTML part falls back to the plain-text part', async () => {

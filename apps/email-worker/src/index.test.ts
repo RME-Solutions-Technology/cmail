@@ -456,6 +456,10 @@ describe('parsed authentication facts', () => {
       { key: 'authentication-results', value: 'mx.example.com; spf=pass; dkim=pass; dmarc=pass header.from=bank.example' },
     ], env)).toEqual({ sourceIp: null, spf: null, dkim: null, dmarc: null });
     expect(parsedAuthenticationFacts([
+      { key: 'authentication-results', value: '(boundary) mx.example.com; spf=pass; dkim=pass; dmarc=pass' },
+      { key: 'authentication-results', value: 'mx.example.com; dmarc=pass' },
+    ], env).dmarc).toBeNull();
+    expect(parsedAuthenticationFacts([
       { key: 'authentication-results', value: 'MX.example.com;spf=pass; dkim=pass; dmarc=pass' },
       { key: 'authentication-results', value: 'mx.example.com; dmarc=pass' },
     ], env).dmarc).toBeNull();

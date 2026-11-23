@@ -528,7 +528,8 @@ export function parsedAuthenticationFacts(
   const trustedId = env?.INBOUND_AUTHSERV_ID?.trim().toLowerCase();
   if (trustedId) {
     const claimingTrusted = records.filter((record) => {
-      const id = record.value.trim().split(/[\s;]/, 1)[0]?.toLowerCase();
+      // Leading RFC 5322 comments before the id do not hide a record from this count.
+      const id = record.value.replace(/^(?:\s|\([^)]*\))+/, '').split(/[\s;(]/, 1)[0]?.toLowerCase();
       return id === trustedId;
     });
     if (claimingTrusted.length > 1) {
