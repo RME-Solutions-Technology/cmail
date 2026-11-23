@@ -187,3 +187,14 @@ describe('holding instead of bouncing (real migrations)', () => {
     expect(await reserve('d2')).toEqual({ status: 'duplicate', reservationId: null });
   });
 });
+
+describe('holding with a broken hash key and a tripped mailbox limit', () => {
+  it('holds (and notes the skipped sender limit) rather than rejecting', async () => {
+    const { d1, sqlite } = migratedDatabase();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-1', 'mailbox@example.test', 'shared')").run();
+    const env = { DB: d1, ...LIMITS_OFF, INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1, INBOUND_SENDER_MESSAGES_PER_HOUR: 5, INBOUND_SENDER_HASH_KEY: undefined } as InboundGuardEnv;
+    const input = { mailboxId: 'mailbox-1', senderAddress: 'a@example.test', messageBytes: 10 };
+    expect(await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k1' })).toMatchObject({ status: 'accepted', senderLimitSkipped: true });
+    expect(await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k2' })).toMatchObject({ status: 'held', senderLimitSkipped: true });
+  });
+});

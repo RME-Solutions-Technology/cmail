@@ -537,6 +537,38 @@ export async function stableInboundId(mailboxId: string, messageIdHeader: string
 }
 
 /**
+ * Stricter than isFirstContact: true only when someone in this mailbox has
+ * written to the address, or has read mail from it that was not filed to Junk.
+ * Used to let a rate-held message keep the Inbox, so an attacker with their
+ * own authenticated domain cannot become "known" just by getting one message
+ * stored. A lookup failure resolves to false (the message is held).
+ */
+async function isKnownCorrespondent(
+  db: D1Database,
+  mailboxId: string,
+  senderAddress: string,
+): Promise<boolean> {
+  if (!mailboxId || !senderAddress) return false;
+  try {
+    const prior = await db.prepare(
+      `SELECT 1 AS seen FROM messages
+       WHERE mailbox_id = ?
+         AND (
+           (direction = 'inbound' AND from_address = ? AND is_read = 1 AND folder <> 'spam')
+           OR (
+             direction IN ('outbound', 'internal')
+             AND EXISTS (SELECT 1 FROM json_each(messages.to_addresses) WHERE json_each.value = ?)
+           )
+         )
+       LIMIT 1`,
+    ).bind(mailboxId, senderAddress, senderAddress).first<{ seen: number }>();
+    return !!prior;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True when this mailbox has no prior correspondence with the sender in either
  * direction. Outbound counts deliberately: someone you have written to is not
  * a stranger, and badging their reply as first contact would train the reader
@@ -1344,11 +1376,13 @@ export default {
     const spamScore = readSpamScore(message.headers);
     const senderRule = await lookupSenderRule(env.DB, headerFrom);
     const firstContact = await isFirstContact(env.DB, mailbox.id, headerFrom);
+    // Only a held message needs the stricter check (someone wrote to them or read their mail).
+    const knownCorrespondent = rateHeld ? await isKnownCorrespondent(env.DB, mailbox.id, headerFrom) : false;
     const placement = applyRateHold(decideInboundPlacement({
       spamScore,
       threshold: spamQuarantineThreshold(env.SPAM_QUARANTINE_SCORE),
       senderRule,
-    }), { held: rateHeld, senderAuthenticated: auth.dmarc === 'pass', firstContact });
+    }), { held: rateHeld, senderAuthenticated: auth.dmarc === 'pass', firstContact: !knownCorrespondent });
     const quarantined = placement.folder === 'spam';
     // Inbox rules only see mail the organisation filed to the Inbox: a
     // mailbox rule never pulls quarantined mail back out of Junk.

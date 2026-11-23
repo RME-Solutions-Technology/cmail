@@ -310,7 +310,12 @@ export async function reserveInboundDeliveryHolding(
     return { status: 'unavailable', reservationId: null };
   }
 
-  const held = await reserveInboundDelivery({ ...env, ...RATE_LIMITS_OFF }, input);
+  // Keep the storage quota on (the hard maximum when it was switched off) so a ledger row and the
+  // delivery key are still recorded; with every limit at 0 the guard would write nothing.
+  const held = await reserveInboundDelivery(
+    { ...env, ...RATE_LIMITS_OFF, MAILBOX_STORAGE_QUOTA_BYTES: configuration.mailboxStorageBytes || MAX_MAILBOX_STORAGE_QUOTA_BYTES },
+    input,
+  );
   if (held.status === 'accepted') {
     return { status: 'held', reservationId: held.reservationId, ...(keyBroken ? { senderLimitSkipped: true } : {}) };
   }
