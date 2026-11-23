@@ -21,7 +21,7 @@ import type { Env, User } from '@stanchion/shared/types';
 import type { AccessIdentity } from './access-jwt';
 import { audit } from './db';
 import { maxSessionsPerUser, sessionTtlMs } from './config';
-import { buildSessionCookie, createSessionToken, hashToken } from './session';
+import { buildSessionCookie, createSessionToken, hashToken, sqlDateTime } from './session';
 import { loadOrgSettings } from './org-settings';
 import { consumeRateLimit } from './rate-limit';
 import { countryAllowed, recordTravelRequest, requestCountry, signInCountryGate } from './travel';
@@ -361,7 +361,7 @@ export async function establishAccessSession(
   await db.prepare(
     `INSERT INTO sessions (id, user_id, token_hash, issued_at, expires_at, ip_address, revoked)
      VALUES (?, ?, ?, datetime('now'), ?, ?, 0)`,
-  ).bind(sessionId, user.id, hash, expiresAt.toISOString(), clientIp).run();
+  ).bind(sessionId, user.id, hash, sqlDateTime(expiresAt), clientIp).run();
   await db.prepare(
     `UPDATE sessions SET revoked = 1
      WHERE user_id = ? AND revoked = 0 AND id NOT IN (
