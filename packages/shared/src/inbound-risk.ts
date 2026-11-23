@@ -154,3 +154,20 @@ export function decideInboundPlacement(input: InboundPlacementInput): InboundPla
   }
   return { folder: 'inbox', reason: null };
 }
+
+/**
+ * Applies a rate-limit hold to a placement. A message the inbound guard held
+ * (an hourly limit tripped) goes to Junk with reason `rate-limit`, so nothing
+ * is bounced and nothing is lost. The exception: a correspondent this mailbox
+ * already knows, whose DMARC result is a pass recorded by the trusted
+ * boundary, keeps the normal placement, so a flood of made-up senders cannot
+ * push real conversations out of the Inbox. An existing Junk decision wins.
+ */
+export function applyRateHold(
+  placement: InboundPlacementResult,
+  input: { held: boolean; senderAuthenticated: boolean; firstContact: boolean },
+): InboundPlacementResult {
+  if (!input.held || placement.folder === 'spam') return placement;
+  if (input.senderAuthenticated && !input.firstContact) return placement;
+  return { folder: 'spam', reason: 'rate-limit' };
+}

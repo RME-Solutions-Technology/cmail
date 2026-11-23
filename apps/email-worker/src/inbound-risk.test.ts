@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyRateHold,
   decideInboundPlacement,
   parseSpamScore,
   pickSenderRule,
@@ -218,5 +219,23 @@ describe('decideInboundPlacement', () => {
   it('delivers to Inbox when the score is below the threshold', () => {
     expect(decideInboundPlacement({ spamScore: 7.9, threshold: 8, senderRule: null }))
       .toEqual({ folder: 'inbox', reason: null });
+  });
+});
+
+describe('applyRateHold', () => {
+  const inbox = { folder: 'inbox', reason: null } as const;
+  it('does nothing when nothing was held', () => {
+    expect(applyRateHold(inbox, { held: false, senderAuthenticated: false, firstContact: true })).toEqual(inbox);
+  });
+  it('files held mail from an unknown or unauthenticated sender to Junk with a reason', () => {
+    expect(applyRateHold(inbox, { held: true, senderAuthenticated: false, firstContact: false })).toEqual({ folder: 'spam', reason: 'rate-limit' });
+    expect(applyRateHold(inbox, { held: true, senderAuthenticated: true, firstContact: true })).toEqual({ folder: 'spam', reason: 'rate-limit' });
+  });
+  it('keeps a known correspondent who passed DMARC in the Inbox', () => {
+    expect(applyRateHold(inbox, { held: true, senderAuthenticated: true, firstContact: false })).toEqual(inbox);
+  });
+  it('keeps an existing Junk decision and its reason', () => {
+    const spam = { folder: 'spam', reason: 'blocked-sender' } as const;
+    expect(applyRateHold(spam, { held: true, senderAuthenticated: false, firstContact: true })).toEqual(spam);
   });
 });
