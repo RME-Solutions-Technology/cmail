@@ -48,11 +48,11 @@ function withAttachments(files: Array<{ name: string; content: string }>): strin
 
 async function accept(raw: string, extraEnv: Record<string, unknown> = {}, envelope: Parameters<typeof deliverInbound>[3] = {}) {
   const db = deliveryDatabase();
-  const { storage } = memoryStorage();
+  const { storage, putValues } = memoryStorage();
   const { error, message } = await deliverInbound(worker, raw, { DB: db.database, STORAGE: storage, ...GUARDS_OFF, ...extraEnv }, envelope);
   expect(error).toBeNull();
   expect(message.setReject).not.toHaveBeenCalled();
-  return { db, storage };
+  return { db, storage, putValues };
 }
 
 async function refuse(raw: string, extraEnv: Record<string, unknown> = {}, envelope: Parameters<typeof deliverInbound>[3] = {}, mailboxFound = true) {
@@ -116,10 +116,27 @@ describe('inbound refusals after parsing', () => {
     expect(trace).toMatchObject({ status: 'rejected', status_detail: 'Message parsing failed' });
   });
 
-  it('refuses a body over the decoded processing limit', async () => {
-    const { reason, trace } = await refuse(mail({ body: ['x'.repeat(200)] }), { MAX_INBOUND_DECODED_BODY_BYTES: '64' });
-    expect(reason).toBe('Message body exceeds the configured processing limit');
-    expect(trace).toMatchObject({ status: 'rejected', status_detail: 'Decoded body complexity limit exceeded' });
+  it('a body over the decoded processing limit is delivered reduced, not bounced (contractor review C2)', async () => {
+    const { db, putValues: written } = await accept(mail({ body: ['x'.repeat(200)] }), { MAX_INBOUND_DECODED_BODY_BYTES: '64' });
+    expect(insertedRow(db.batched, 'messages')).toMatchObject({ has_attachments: 1 });
+    expect(written.some((value: unknown) => typeof value === 'string' && value.includes('too large or too complex'))).toBe(true);
+    // The original is kept as an attachment, so nothing is lost.
+    expect(written).toHaveLength(2);
+  });
+
+  it('a too-large HTML part falls back to the plain-text part', async () => {
+    const raw = mail({
+      headers: ['MIME-Version: 1.0'],
+      contentType: 'multipart/alternative; boundary="alt1"',
+      body: [
+        '--alt1', 'Content-Type: text/plain; charset=utf-8', '', 'Short plain note',
+        '--alt1', 'Content-Type: text/html; charset=utf-8', '', '<p>' + 'y'.repeat(500) + '</p>',
+        '--alt1--',
+      ],
+    });
+    const { putValues: written } = await accept(raw, { MAX_INBOUND_DECODED_BODY_BYTES: '200' });
+    expect(written.some((value: unknown) => typeof value === 'string' && value.includes('Short plain note'))).toBe(true);
+    expect(written.some((value: unknown) => typeof value === 'string' && value.includes('yyyy'))).toBe(false);
   });
 
   it('refuses more attachments than the configured count', async () => {

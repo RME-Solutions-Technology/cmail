@@ -60,17 +60,19 @@ export function deliveryDatabase(hooks: DeliveryDatabaseHooks = {}) {
 /** An R2 stand-in that records keys; `failPut` decides per key (in write order) whether a put throws. */
 export function memoryStorage(failPut: (key: string, index: number) => boolean = () => false) {
   const putKeys: string[] = [];
+  const putValues: unknown[] = [];
   const deletedKeys: string[] = [];
   const storage = {
-    put: vi.fn(async (key: string) => {
+    put: vi.fn(async (key: string, value?: unknown) => {
       putKeys.push(key);
+      putValues.push(value);
       if (failPut(key, putKeys.length - 1)) throw new Error('R2 put failed');
     }),
     delete: vi.fn(async (key: string) => {
       deletedKeys.push(key);
     }),
   };
-  return { storage, putKeys, deletedKeys };
+  return { storage, putKeys, putValues, deletedKeys };
 }
 
 /** Inbound guards off: no reservation, no quota. */

@@ -639,7 +639,7 @@ export async function fileMirrorCopies(
   const threadId = referencesHeader?.split(' ')[0] || inReplyTo || messageIdHeader;
   const snippet = tools.extractInboundSnippet(inner.text, bodyHtml);
   const hasAttachments = prepared.some((attachment) => attachment.disposition === 'attachment') ? 1 : 0;
-  const decided = decideInboundPlacement({ spamScore: null, threshold: null, senderRule: await tools.lookupSenderRule(env.DB, headerFrom) });
+  const decided = decideInboundPlacement({ spamScore: null, threshold: null, senderRule: await tools.lookupSenderRule(env.DB, headerFrom), senderAuthenticated: true });
   // A copy the person had already archived in Exchange goes to Archive,
   // unless an organisation block rule sends it to Spam.
   const placement = options.archive && decided.folder === 'inbox' ? { ...decided, folder: 'archive' as const } : decided;
