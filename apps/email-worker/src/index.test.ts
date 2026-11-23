@@ -450,7 +450,7 @@ describe('parsed authentication facts', () => {
     ], env)).toEqual({ sourceIp: null, spf: 'pass', dkim: 'pass', dmarc: 'fail' });
   });
 
-  it('trusts nothing when a second record claims the boundary's own id (a forged header, S5)', () => {
+  it('trusts nothing when a second record claims the boundary own id (a forged header, S5)', () => {
     expect(parsedAuthenticationFacts([
       { key: 'authentication-results', value: 'mx.example.com; spf=fail; dkim=none; dmarc=fail' },
       { key: 'authentication-results', value: 'mx.example.com; spf=pass; dkim=pass; dmarc=pass header.from=bank.example' },
