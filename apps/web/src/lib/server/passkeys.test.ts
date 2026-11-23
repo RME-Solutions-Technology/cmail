@@ -568,7 +568,15 @@ async function invokeHooks(
     locals: { user: null as User | null, sessionId: null as string | null, passkeySession: false as boolean | undefined },
     platform: { env: { ...env, ...extraEnv }, context: { waitUntil: vi.fn() }, caches: {} },
   };
-  const response: Response = await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => resolveResponse() });
+  // The hooks run a 1% random maintenance sweep that deletes revoked and expired sessions. Pin it off so a
+  // revoked row is still there to count (this made the suite fail about 1 run in 100).
+  const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  let response: Response;
+  try {
+    response = await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => resolveResponse() });
+  } finally {
+    random.mockRestore();
+  }
   return { response, locals: event.locals };
 }
 
