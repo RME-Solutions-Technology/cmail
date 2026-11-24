@@ -42,11 +42,11 @@ describe('conditional OAuth providers', () => {
     // An unset tenant no longer defaults to 'common': the audience has to be chosen (S13).
     expect(getEnabledProviders(base)).toEqual([]);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'common' })).toEqual(['microsoft']);
-    expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'fc21902f-c839-419c-9567-079c44c3e99c' })).toEqual(['microsoft']);
+    expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: '11111111-1111-4111-8111-111111111111' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'organizations' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'not/a/tenant' })).toEqual([]);
     // The documented sync setup sets only M365_TENANT_ID: a tenant GUID there is the audience; anything else is not.
-    expect(getEnabledProviders({ ...base, M365_TENANT_ID: 'fc21902f-c839-419c-9567-079c44c3e99c' })).toEqual(['microsoft']);
+    expect(getEnabledProviders({ ...base, M365_TENANT_ID: '11111111-1111-4111-8111-111111111111' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, M365_TENANT_ID: 'organizations' })).toEqual([]);
   });
 
