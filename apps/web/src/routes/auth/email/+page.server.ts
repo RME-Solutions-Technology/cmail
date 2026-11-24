@@ -39,7 +39,7 @@ import {
 import { loadOrgSettings } from '#lib/server/org-settings.js';
 import { detectProvider, sendEmail } from '#lib/server/outbound.js';
 import { consumeRateLimit } from '#lib/server/rate-limit.js';
-import { SESSION_COOKIE, SESSION_COOKIE_MAX_AGE_SECONDS, createSessionToken } from '#lib/server/session.js';
+import { SESSION_COOKIE, SESSION_COOKIE_MAX_AGE_SECONDS, createSessionToken, sqlDateTime } from '#lib/server/session.js';
 import {
   COUNTRY_PENDING_MESSAGE,
   countryAllowed,
@@ -418,7 +418,7 @@ export const actions: Actions = {
     await env.DB.prepare(
       `INSERT INTO sessions (id, user_id, token_hash, issued_at, expires_at, ip_address, revoked)
        VALUES (?, ?, ?, datetime('now'), ?, ?, 0)`,
-    ).bind(sessionId, user.id, hash, expiresAt.toISOString(), clientIp).run();
+    ).bind(sessionId, user.id, hash, sqlDateTime(expiresAt), clientIp).run();
 
     // Same sliding-eviction rule as the OAuth callback: keep the
     // most-recently-renewed sessions, not the most-recently-issued ones.

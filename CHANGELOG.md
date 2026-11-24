@@ -7,6 +7,10 @@ Notable changes to Stanchion are recorded here. The project follows
 ## [Unreleased]
 
 ### Security
+- Sessions created by OAuth, email-code and Access sign-in now store their expiry in the same 'YYYY-MM-DD HH:MM:SS' form SQLite compares against, so a session ends at its expiry time instead of at the end of that day (existing sessions end on their own schedule; no migration).
+- Admin > Investigate: every search is recorded in the audit log (`admin.investigate_search`: the filters and a short hash of the text typed, never the text).
+
+### Security
 - A sender **allow** rule now applies only when the message passed DMARC at the trusted boundary; otherwise the spam score still decides (a **block** rule always applies). Instances without `INBOUND_AUTHSERV_ID` set record no DMARC verdict, so their allow rules stop applying until it is set (all three production instances have it). The trace notes "allow rule ignored" when it happens.
 - A message carrying a second `Authentication-Results` record that claims the boundary's own id is treated as forged: no SPF, DKIM or DMARC verdict from it is trusted.
 - A read-only delegate can no longer send a calendar reply (RSVP) as the mailbox, and no longer sees the RSVP buttons.

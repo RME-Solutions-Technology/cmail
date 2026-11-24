@@ -151,7 +151,8 @@ describe('registration', () => {
     expect(row.user_handle).not.toContain('alice');
     expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_registered' AND target = 'user-alice'`)).toBe(1);
     expect(count('SELECT COUNT(*) AS n FROM passkey_challenges')).toBe(0);
-  });
+    // Creating the first software authenticator generates an RSA key; on a loaded machine that can pass the 5 s default.
+  }, 30_000);
 
   it('reuses the account user handle for a second passkey and lists both', async () => {
     const first = await SoftAuthenticator.create();

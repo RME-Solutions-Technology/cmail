@@ -21,6 +21,16 @@ export const SESSION_COOKIE_MAX_AGE_SECONDS = MAX_TOKEN_AGE_MS / 1000; // 34,560
 const ENCODER = new TextEncoder();
 export const SESSION_COOKIE = 'cmail_session';
 
+/**
+ * A moment in the format SQLite's datetime() writes ('YYYY-MM-DD HH:MM:SS', UTC). The
+ * sessions table compares expires_at against datetime('now') as text, and an ISO string
+ * ('...T...Z') sorts after any same-day datetime value, which kept a session alive until
+ * the end of its expiry day. Always store session expiry through this.
+ */
+export function sqlDateTime(moment: Date): string {
+  return moment.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 export async function createSessionToken(
   userId: string,
   secret: string,
