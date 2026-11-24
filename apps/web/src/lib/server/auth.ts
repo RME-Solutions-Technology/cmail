@@ -91,7 +91,10 @@ export function getProviderConfig(provider: AuthProvider, env: Record<string, st
   if (provider === 'microsoft' && microsoftClientId && microsoftClientSecret) {
     // No silent default: an unset tenant used to mean 'common' (any Microsoft account in the world).
     // The audience must be chosen on purpose: a tenant id, or organizations/common/consumers (contractor review S13).
-    const tenantId = configuredValue(env.MICROSOFT_TENANT_ID, 100);
+    // The documented Microsoft 365 sync setup sets only M365_TENANT_ID, so a tenant GUID there is the audience.
+    const syncTenant = configuredValue(env.M365_TENANT_ID, 100);
+    const tenantId = configuredValue(env.MICROSOFT_TENANT_ID, 100)
+      || (syncTenant && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(syncTenant) ? syncTenant : '');
     if (!tenantId || !validMicrosoftTenant(tenantId)) return null;
     return getMicrosoftConfig(
       microsoftClientId,
