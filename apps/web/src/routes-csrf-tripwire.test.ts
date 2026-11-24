@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 // is meant to be called without a cookie, that it is listed in the guard's exemptions.
 
 const ROUTES = join(__dirname, 'routes');
-const MUTATING = /export\s+(?:async\s+)?(?:const|function)\s+(POST|PUT|PATCH|DELETE)\b|export\s+const\s+actions\b/;
+const MUTATING = /export\s+(?:async\s+)?(?:const|function)\s+(POST|PUT|PATCH|DELETE)\b|export\s+const\s+actions\b|export\s*\{[^}]*\b(?:POST|PUT|PATCH|DELETE|actions)\b/;
 
 function walk(dir: string, out: string[]): string[] {
   for (const name of readdirSync(dir)) {
