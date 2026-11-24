@@ -99,7 +99,7 @@ describe('conditional OAuth providers', () => {
   it.each(['google', 'microsoft'] as const)('allows %s session reuse without weakening the OAuth request', (provider) => {
     const env = {
       GOOGLE_CLIENT_ID: 'google-id', GOOGLE_CLIENT_SECRET: 'google-secret',
-      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret',
+      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret', MICROSOFT_TENANT_ID: 'common',
     };
     const callback = getOAuthCallbackUrl(AUTH_RUNTIME.APP_URL, provider)!;
     const regular = new URL(buildAuthorizationUrl(provider, env, callback, 'state', 'challenge'));
