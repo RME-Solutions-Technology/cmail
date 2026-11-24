@@ -16,7 +16,7 @@ function loginEvent(provider = 'google', search = '?sso=1', cookieValues: Record
       APP_URL: 'https://mail.example.com',
       SESSION_SECRET: String(crypto.randomUUID()),
       GOOGLE_CLIENT_ID: 'google-id', GOOGLE_CLIENT_SECRET: 'google-secret',
-      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret',
+      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret', MICROSOFT_TENANT_ID: 'common',
     } },
     cookies: {
       get: vi.fn((name: string) => cookieValues[name]),

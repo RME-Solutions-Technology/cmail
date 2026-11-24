@@ -39,7 +39,10 @@ describe('conditional OAuth providers', () => {
       MICROSOFT_CLIENT_ID: 'microsoft-id',
       MICROSOFT_CLIENT_SECRET: 'microsoft-secret',
     };
-    expect(getEnabledProviders(base)).toEqual(['microsoft']);
+    // An unset tenant no longer defaults to 'common': the audience has to be chosen (S13).
+    expect(getEnabledProviders(base)).toEqual([]);
+    expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'common' })).toEqual(['microsoft']);
+    expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'fc21902f-c839-419c-9567-079c44c3e99c' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'organizations' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'not/a/tenant' })).toEqual([]);
   });

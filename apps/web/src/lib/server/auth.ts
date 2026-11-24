@@ -89,8 +89,10 @@ export function getProviderConfig(provider: AuthProvider, env: Record<string, st
   const microsoftClientId = configuredValue(env.MICROSOFT_CLIENT_ID);
   const microsoftClientSecret = configuredValue(env.MICROSOFT_CLIENT_SECRET);
   if (provider === 'microsoft' && microsoftClientId && microsoftClientSecret) {
-    const tenantId = configuredValue(env.MICROSOFT_TENANT_ID, 100) || 'common';
-    if (!validMicrosoftTenant(tenantId)) return null;
+    // No silent default: an unset tenant used to mean 'common' (any Microsoft account in the world).
+    // The audience must be chosen on purpose: a tenant id, or organizations/common/consumers (contractor review S13).
+    const tenantId = configuredValue(env.MICROSOFT_TENANT_ID, 100);
+    if (!tenantId || !validMicrosoftTenant(tenantId)) return null;
     return getMicrosoftConfig(
       microsoftClientId,
       microsoftClientSecret,

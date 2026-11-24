@@ -166,6 +166,8 @@ export interface InboundRateLimitBinding {
 const BLOCKED_EXTENSIONS = new Set([
   '.exe', '.bat', '.cmd', '.scr', '.js', '.vbs', '.ps1', '.msi',
   '.com', '.pif', '.hta', '.cpl', '.reg', '.inf', '.wsf',
+  // Added after the contractor review (S15): shortcuts, disk images and other Windows script or installer types.
+  '.lnk', '.iso', '.img', '.vhd', '.vhdx', '.jar', '.vbe', '.jse', '.wsh', '.msc', '.chm', '.scf', '.url', '.appx', '.msix',
 ]);
 
 function generateId(): string {

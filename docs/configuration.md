@@ -66,7 +66,7 @@ Configure at least one complete provider:
 | `GOOGLE_CLIENT_SECRET` | Google sign-in is enabled | Yes |
 | `MICROSOFT_CLIENT_ID` | Microsoft sign-in is enabled | Treat as configuration |
 | `MICROSOFT_CLIENT_SECRET` | Microsoft sign-in is enabled | Yes |
-| `MICROSOFT_TENANT_ID` | Optional for Microsoft; defaults to `common` | Treat as configuration |
+| `MICROSOFT_TENANT_ID` | Required for Microsoft: a tenant GUID, `organizations`, `common` or `consumers`; with none set, Microsoft sign-in stays off | Treat as configuration |
 
 A provider's button appears only when its client ID and secret are present, `APP_URL` is a safe callback origin, and `SESSION_SECRET` passes the minimum-strength check. An invalid Microsoft tenant value, or any missing shared prerequisite, fails closed and keeps the button off.
 

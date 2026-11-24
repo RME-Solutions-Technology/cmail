@@ -157,7 +157,7 @@ describe('inbound refusals after parsing', () => {
     expect(trace).toMatchObject({ status_detail: 'Attachment byte limit exceeded' });
   });
 
-  it.each(['setup.exe', 'SETUP.EXE', 'invoice.pdf.js', 'Run.Ps1'])('refuses a blocked attachment type (%j) without echoing the name', async (name) => {
+  it.each(['setup.exe', 'SETUP.EXE', 'invoice.pdf.js', 'Run.Ps1', 'invoice.pdf.lnk', 'disk.ISO', 'tool.jar', 'help.chm', 'pkg.msix', 'link.url'])('refuses a blocked attachment type (%j) without echoing the name', async (name) => {
     const { reason, trace } = await refuse(withAttachments([{ name: 'notes.txt', content: 'fine' }, { name, content: 'MZ' }]));
     expect(reason).toBe('Attachment type not allowed');
     expect(trace).toMatchObject({ status_detail: 'Blocked attachment type' });

@@ -20,6 +20,6 @@
   },
   "dependencies": {
     "@stanchion/shared": "workspace:*",
-    "postal-mime": "^4.2.1"
+    "postal-mime": "4.2.1"
   }
 }
