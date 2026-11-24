@@ -81,9 +81,9 @@ MAX_SESSIONS_PER_USER = "5"
 MCP_SEND_RATE_PER_HOUR = "10"
 
 # Invitation-scoped email one-time-code sign-in, for invitees hosted by
-# neither Google nor Microsoft. See docs/configuration.md. Set to "false" to
-# disable it entirely (the landing-page link and /auth/email both disappear).
-EMAIL_OTP_ENABLED = "true"
+# neither Google nor Microsoft. See docs/configuration.md. Off by default: set
+# to "true" to turn it on (otherwise the landing-page link and /auth/email are hidden).
+EMAIL_OTP_ENABLED = "false"
 # Optional Cloudflare Turnstile bot check on the code-request form. Both this
 # public site key and the matching TURNSTILE_SECRET_KEY (a Pages secret —
 # never put it here) must be set for the widget to appear; leave both blank

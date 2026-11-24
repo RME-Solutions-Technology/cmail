@@ -8,6 +8,7 @@ Notable changes to Stanchion are recorded here. The project follows
 
 ### Security
 - Microsoft sign-in no longer defaults to the `common` audience when `MICROSOFT_TENANT_ID` is unset: with none set the Microsoft button stays off, so the audience is always chosen on purpose (a tenant GUID, `organizations`, `common` or `consumers`). Instances that already set it are unchanged, and the documented Microsoft 365 sync setup that sets only a tenant GUID in `M365_TENANT_ID` keeps working (that GUID is then the audience).
+- Email one-time-code sign-in is now **off by default**: set `EMAIL_OTP_ENABLED="true"` to turn it on. Instances that used it under the old default must set it explicitly before deploying this version.
 - More attachment types are refused at delivery: `.lnk`, `.iso`, `.img`, `.vhd`, `.vhdx`, `.jar`, `.vbe`, `.jse`, `.wsh`, `.msc`, `.chm`, `.scf`, `.url`, `.appx`, `.msix`.
 - A failed audit write now leaves one structured `audit_write_failed` log line (event type and error only) that Workers Logs can alert on.
 - `postal-mime` and `mimetext`, which parse hostile input, are pinned to exact versions.

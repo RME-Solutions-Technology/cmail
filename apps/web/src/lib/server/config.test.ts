@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertStrongSessionSecret,
   draftSaveRatePerHour,
+  emailOtpEnabled,
   maxDraftsPerMailboxUser,
   maxRecipientsPerMessage,
   maxSessionsPerUser,
@@ -12,6 +13,15 @@ import {
 } from './config';
 
 describe('runtime configuration', () => {
+  it('keeps email-code sign-in off unless EMAIL_OTP_ENABLED is the literal "true"', () => {
+    expect(emailOtpEnabled({})).toBe(false);
+    expect(emailOtpEnabled({ EMAIL_OTP_ENABLED: '' })).toBe(false);
+    expect(emailOtpEnabled({ EMAIL_OTP_ENABLED: 'false' })).toBe(false);
+    expect(emailOtpEnabled({ EMAIL_OTP_ENABLED: '1' })).toBe(false);
+    expect(emailOtpEnabled({ EMAIL_OTP_ENABLED: 'true' })).toBe(true);
+    expect(emailOtpEnabled({ EMAIL_OTP_ENABLED: ' TRUE ' })).toBe(true);
+  });
+
   it('exposes only validated public branding values', () => {
     expect(publicRuntimeConfig({
       APP_NAME: ' Example Mail ',

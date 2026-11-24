@@ -162,7 +162,7 @@
     <div class="tiles summary">
       <div class="tile">
         <span class="tile-head"><Icon name="activity" size={14} /> Records matched</span>
-        <span class="tile-value">{d.total.toLocaleString()}</span>
+        <span class="tile-value">{d.total.toLocaleString()}{d.totalCapped ? '+' : ''}</span>
         <span class="tile-note">{hasFilters ? 'in this filter' : 'all records'}</span>
       </div>
       <div class="tile">
@@ -253,7 +253,7 @@
         <a href={pageHref(d.filters.page - 1)} class="btn btn-sm" aria-disabled={d.filters.page <= 1}>
           <Icon name="chevronLeft" size={14} /> Newer
         </a>
-        <span>Page {d.filters.page} of {totalPages} · {d.total.toLocaleString()} records</span>
+        <span>Page {d.filters.page} of {totalPages}{d.totalCapped ? '+' : ''} · {d.total.toLocaleString()}{d.totalCapped ? '+' : ''} records</span>
         <a href={pageHref(d.filters.page + 1)} class="btn btn-sm" aria-disabled={d.filters.page >= totalPages}>
           Older <Icon name="chevronRight" size={14} />
         </a>

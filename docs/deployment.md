@@ -275,8 +275,8 @@ Stanchion binds an account to the provider plus the immutable `sub` (subject ID)
 
 A third sign-in method needs no provider registration at all: an
 invitation-scoped email one-time code, for invitees whose mail isn't hosted
-by Google or Microsoft. It's on by default; set `EMAIL_OTP_ENABLED=false` to
-remove it entirely. To add a bot check on the code-request form, create a
+by Google or Microsoft. It's off by default; set `EMAIL_OTP_ENABLED=true` to
+turn it on. To add a bot check on the code-request form, create a
 Cloudflare Turnstile widget for `APP_URL`, set `TURNSTILE_SITE_KEY` as a
 Pages variable, and store `TURNSTILE_SECRET_KEY` as a Pages secret — both
 must be present for the widget to appear. See [Email one-time-code

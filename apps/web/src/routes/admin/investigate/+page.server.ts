@@ -17,6 +17,7 @@ import { hashToken } from '#lib/server/session.js';
  */
 
 const PAGE_SIZES = [25, 50, 100, 200];
+const COUNT_CAP = 10000;
 const SOURCES = ['all', 'trace', 'audit'] as const;
 const DIRECTIONS = ['inbound', 'outbound'] as const;
 const STATUSES = ['delivered', 'sent', 'bounced', 'rejected', 'quarantined', 'deferred'] as const;
@@ -88,6 +89,7 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
   const empty = {
     events: [] as UnifiedEvent[],
     total: 0,
+    totalCapped: false,
     summary: { trace: 0, audit: 0, failures: 0, quarantined: 0 },
     eventTypes: [] as string[],
     filters: {
@@ -170,7 +172,8 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
 
   const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const scoped = `WITH unified AS (${UNIFIED}) SELECT * FROM unified ${filter}`;
-  const counted = `WITH unified AS (${UNIFIED}) SELECT COUNT(*) AS total FROM unified ${filter}`;
+  // Counting stops at COUNT_CAP + 1 rows so a broad filter never scans the whole history (review C6).
+  const counted = `WITH unified AS (${UNIFIED}) SELECT COUNT(*) AS total FROM (SELECT 1 FROM unified ${filter} LIMIT ${COUNT_CAP + 1})`;
 
   try {
     const [rows, totalRow, summaryRow, types] = await Promise.all([
@@ -193,7 +196,8 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
 
     return {
       events: rows.results || [],
-      total: totalRow?.total ?? 0,
+      total: Math.min(totalRow?.total ?? 0, COUNT_CAP),
+      totalCapped: (totalRow?.total ?? 0) > COUNT_CAP,
       summary: {
         trace: summaryRow?.trace ?? 0,
         audit: summaryRow?.audit ?? 0,
