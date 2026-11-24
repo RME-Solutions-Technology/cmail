@@ -7,10 +7,13 @@ Notable changes to Stanchion are recorded here. The project follows
 ## [Unreleased]
 
 ### Security
+- Microsoft sign-in no longer defaults to the `common` audience when `MICROSOFT_TENANT_ID` is unset: with none set the Microsoft button stays off, so the audience is always chosen on purpose (a tenant GUID, `organizations`, `common` or `consumers`). Instances that already set it are unchanged, and the documented Microsoft 365 sync setup that sets only a tenant GUID in `M365_TENANT_ID` keeps working (that GUID is then the audience).
+- More attachment types are refused at delivery: `.lnk`, `.iso`, `.img`, `.vhd`, `.vhdx`, `.jar`, `.vbe`, `.jse`, `.wsh`, `.msc`, `.chm`, `.scf`, `.url`, `.appx`, `.msix`.
+- A failed audit write now leaves one structured `audit_write_failed` log line (event type and error only) that Workers Logs can alert on.
+- `postal-mime` and `mimetext`, which parse hostile input, are pinned to exact versions.
 - Sessions created by OAuth, email-code and Access sign-in now store their expiry in the same 'YYYY-MM-DD HH:MM:SS' form SQLite compares against, so a session ends at its expiry time instead of at the end of that day (existing sessions end on their own schedule; no migration).
 - Admin > Investigate: every search is recorded in the audit log (`admin.investigate_search`: the filters and a short hash of the text typed, never the text).
 
-### Security
 - A sender **allow** rule now applies only when the message passed DMARC at the trusted boundary; otherwise the spam score still decides (a **block** rule always applies). Instances without `INBOUND_AUTHSERV_ID` set record no DMARC verdict, so their allow rules stop applying until it is set (all three production instances have it). The trace notes "allow rule ignored" when it happens.
 - A message carrying a second `Authentication-Results` record that claims the boundary's own id is treated as forged: no SPF, DKIM or DMARC verdict from it is trusted.
 - A read-only delegate can no longer send a calendar reply (RSVP) as the mailbox, and no longer sees the RSVP buttons.

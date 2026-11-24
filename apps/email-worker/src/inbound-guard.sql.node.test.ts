@@ -58,13 +58,21 @@ describe('inbound reservation SQL (real migrations)', () => {
   }
 
   it('counts the last hour exactly: 3599 seconds ago counts, 3600 does not', async () => {
-    const inside = setup({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
-    earlier(inside.sqlite, 3599);
-    expect((await inside.reserve('fresh')).status).toBe('rejected');
-
-    const outside = setup({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
-    earlier(outside.sqlite, 3600);
-    expect((await outside.reserve('fresh')).status).toBe('accepted');
+    // The earlier row's age is measured in whole seconds by the database, so if the clock ticks to the
+    // next second between inserting it and reserving, 3599 becomes 3600 and the case flips (a rare flake).
+    // Retry with a fresh database until both happen inside one second.
+    async function statusAt(age: number): Promise<string> {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const run = setup({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
+        const before = Math.floor(Date.now() / 1000);
+        earlier(run.sqlite, age);
+        const result = await run.reserve('fresh');
+        if (Math.floor(Date.now() / 1000) === before) return result.status;
+      }
+      throw new Error('the clock kept ticking over a second boundary');
+    }
+    expect(await statusAt(3599)).toBe('rejected');
+    expect(await statusAt(3600)).toBe('accepted');
   });
 
   it('stops charging an abandoned pending delivery once its hold expires', async () => {

@@ -44,13 +44,16 @@ export async function audit(
       event.session_id ?? null,
     ).run();
   } catch (e) {
-    // ✅ Log to console but don't throw (audit failures shouldn't crash requests)
-    console.error('Audit logging failed:', {
-      event: event.event_type,
+    // Don't throw (an audit failure should not crash a request), but leave a structured line that
+    // Workers Logs can search and alert on: this is the only record that the action was not audited
+    // (contractor review S16). Never put the actor, target or detail here.
+    console.error(JSON.stringify({
+      level: 'error',
+      kind: 'audit_write_failed',
+      event_type: event.event_type,
       error: (e as Error).message,
       timestamp: new Date().toISOString(),
-    });
-    // Note: In production, consider sending to external logging service (Datadog, Sentry, etc.)
+    }));
   }
 }
 
