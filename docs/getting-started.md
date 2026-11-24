@@ -164,8 +164,8 @@ ID-token claims.
 
 A third sign-in method, an invitation-scoped email one-time code for
 invitees hosted by neither Google nor Microsoft, needs no callback
-registration and is on by default. Set `EMAIL_OTP_ENABLED=false` in
-`.dev.vars` to turn it off locally, or add `TURNSTILE_SITE_KEY` and
+registration and is off by default. Set `EMAIL_OTP_ENABLED=true` in
+`.dev.vars` to try it locally, or add `TURNSTILE_SITE_KEY` and
 `TURNSTILE_SECRET_KEY` to try the optional bot check on its request form.
 See [Email one-time-code sign-in](configuration.md#email-one-time-code-sign-in).
 

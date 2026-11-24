@@ -116,9 +116,9 @@ export function maxSessionsPerUser(env: Record<string, unknown>): number {
   return boundedInteger(env.MAX_SESSIONS_PER_USER, 5, 1, 20);
 }
 
-/** EMAIL_OTP_ENABLED defaults ON; only the literal string "false" disables it. */
+/** EMAIL_OTP_ENABLED defaults OFF; only the literal string "true" enables it (review S8). */
 export function emailOtpEnabled(env: Record<string, unknown>): boolean {
-  return envString(env, 'EMAIL_OTP_ENABLED').toLowerCase() !== 'false';
+  return envString(env, 'EMAIL_OTP_ENABLED').toLowerCase() === 'true';
 }
 
 /**

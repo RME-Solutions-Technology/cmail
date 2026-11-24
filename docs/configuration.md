@@ -86,11 +86,11 @@ Every successful sign-in, Google and Microsoft included, is also checked against
 
 ## Email one-time-code sign-in
 
-A third, invitation-scoped sign-in method for people whose mail is hosted by neither Google nor Microsoft — never self-serve. It's on by default; set `EMAIL_OTP_ENABLED=false` to remove it entirely (the landing-page link disappears and `/auth/email` redirects away).
+A third, invitation-scoped sign-in method for people whose mail is hosted by neither Google nor Microsoft — never self-serve. It's off by default; set `EMAIL_OTP_ENABLED=true` to turn it on (when off, the landing-page link is hidden and `/auth/email` redirects away). Instances that relied on the old default must now set `true` explicitly before deploying this version.
 
 | Variable | Required | Secret | Description |
 |---|---:|---:|---|
-| `EMAIL_OTP_ENABLED` | No | No | `false` disables the whole method; any other value (including unset) enables it |
+| `EMAIL_OTP_ENABLED` | No | No | `true` enables the method; any other value (including unset) leaves it off |
 | `TURNSTILE_SITE_KEY` | No | No | Public Cloudflare Turnstile site key for the code-request form's optional bot check |
 | `TURNSTILE_SECRET_KEY` | No | Yes | Matching Turnstile secret; both must be present for the widget to appear |
 | `OTP_SESSION_TTL_HOURS` | No | No | Hard cap, in hours, on an email-OTP session's lifetime regardless of `SESSION_TTL_HOURS`. Default 168 (7 days); accepted range 1-9600 |
