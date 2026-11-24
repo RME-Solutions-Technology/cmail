@@ -1198,6 +1198,7 @@ export default {
       senderAddress,
       deliveryKey: messageId,
       messageBytes: messageSize,
+      mailboxType: mailbox.type,
     });
     if (reservation.status === 'duplicate') {
       return;

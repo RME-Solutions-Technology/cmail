@@ -29,6 +29,8 @@ export interface InboundReservationInput {
   senderAddress: string;
   deliveryKey: string;
   messageBytes: number;
+  /** The mailbox type ('shared' gets a higher default message limit). */
+  mailboxType?: string;
 }
 
 export type InboundReservationResult =
@@ -43,6 +45,9 @@ export const INBOUND_GUARD_DEFAULTS: Readonly<InboundGuardConfiguration> = Objec
   senderMessagesPerHour: 30,
   mailboxStorageBytes: DEFAULT_MAILBOX_STORAGE_QUOTA_BYTES,
 });
+
+/** Default hourly message limit for a shared mailbox (a team inbox gets more mail than a person); an explicit setting still wins. */
+export const SHARED_MAILBOX_MESSAGES_PER_HOUR = 600;
 
 export const INBOUND_GUARD_HARD_MAX: Readonly<InboundGuardConfiguration> = Object.freeze({
   mailboxMessagesPerHour: 10_000,
@@ -90,11 +95,11 @@ function parseBoundedLimit(value: unknown, fallback: number, hardMax: number): n
   return Math.min(integer, hardMax);
 }
 
-export function inboundGuardConfiguration(env: Partial<InboundGuardEnv>): InboundGuardConfiguration {
+export function inboundGuardConfiguration(env: Partial<InboundGuardEnv>, mailboxType?: string): InboundGuardConfiguration {
   return {
     mailboxMessagesPerHour: parseBoundedLimit(
       env.INBOUND_MAILBOX_MESSAGES_PER_HOUR,
-      INBOUND_GUARD_DEFAULTS.mailboxMessagesPerHour,
+      mailboxType === 'shared' ? SHARED_MAILBOX_MESSAGES_PER_HOUR : INBOUND_GUARD_DEFAULTS.mailboxMessagesPerHour,
       INBOUND_GUARD_HARD_MAX.mailboxMessagesPerHour,
     ),
     mailboxBytesPerHour: parseBoundedLimit(
@@ -205,7 +210,7 @@ export async function reserveInboundDelivery(
     return { status: 'unavailable', reservationId: null };
   }
 
-  const configuration = inboundGuardConfiguration(env);
+  const configuration = inboundGuardConfiguration(env, input.mailboxType);
   if (guardDisabled(configuration)) {
     return { status: 'accepted', reservationId: null };
   }
@@ -294,7 +299,7 @@ export async function reserveInboundDeliveryHolding(
   const first = await reserveInboundDelivery(env, input);
   if (first.status === 'accepted' || first.status === 'duplicate') return first;
 
-  const configuration = inboundGuardConfiguration(env);
+  const configuration = inboundGuardConfiguration(env, input.mailboxType);
   const keyBroken = first.status === 'unavailable'
     && configuration.senderMessagesPerHour > 0
     && decodeSenderHashKey(env.INBOUND_SENDER_HASH_KEY) === null;

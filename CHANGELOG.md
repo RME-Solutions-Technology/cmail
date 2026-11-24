@@ -20,6 +20,7 @@ Notable changes to Stanchion are recorded here. The project follows
 - A read-only delegate can no longer send a calendar reply (RSVP) as the mailbox, and no longer sees the RSVP buttons.
 
 ### Changed
+- A shared mailbox now allows 600 incoming messages an hour by default (other mailboxes stay at 120). An explicit `INBOUND_MAILBOX_MESSAGES_PER_HOUR` still wins.
 - Mail whose HTML is too large or too deep to display is no longer bounced: it is delivered showing its plain-text part (or a short notice), with the original message attached as `original-message.eml` when it fits the attachment limit.
 
 ## [0.9.0-beta.3] - 2026-11-23
