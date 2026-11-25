@@ -61,7 +61,9 @@ import {
 import { parseAuthenticationResults } from './authentication-results';
 import { applyCalendarWrites, extractCalendarText } from './calendar';
 import {
+  recordInboundRateLimitAudit,
   releaseInboundReservation,
+  rekeyInboundSenderToFrom,
   reserveInboundDeliveryHolding,
   type InboundGuardEnv,
 } from './inbound-guard';
@@ -1219,8 +1221,11 @@ export default {
     // A rate limit never bounces real mail: the message is kept and filed to
     // Junk with a reason (unless it is from someone this mailbox already
     // corresponds with and passed DMARC; see below).
-    const rateHeld = reservation.status === 'held';
-    if (rateHeld) console.warn('Inbound rate limit reached; message held in Junk, not rejected');
+    let rateHeld = reservation.status === 'held';
+    if (rateHeld) {
+      console.warn('Inbound rate limit reached; message held in Junk, not rejected');
+      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'a mailbox limit was reached');
+    }
     if (reservation.senderLimitSkipped) {
       console.warn('INBOUND_SENDER_HASH_KEY is missing or malformed; per-sender limit skipped');
     }
@@ -1414,6 +1419,20 @@ export default {
     const spamScore = readSpamScore(message.headers);
     const senderRule = await lookupSenderRule(env.DB, headerFrom);
     const firstContact = await isFirstContact(env.DB, mailbox.id, headerFrom);
+    // The per-sender limit was keyed on the envelope sender, which a sender can
+    // change on every message. After a DMARC pass, count against the From
+    // address instead (S2); any problem leaves the envelope key in force.
+    if (!rateHeld && await rekeyInboundSenderToFrom(env, {
+      reservationId,
+      mailboxId: mailbox.id,
+      fromAddress: headerFrom,
+      dmarc: auth.dmarc,
+      mailboxType: mailbox.type,
+    }) === 'over') {
+      rateHeld = true;
+      console.warn('Inbound per-sender limit reached for the From address; message held in Junk, not rejected');
+      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'a sender limit was reached');
+    }
     // Only a held message needs the stricter check (someone wrote to them or read their mail).
     const knownCorrespondent = rateHeld ? await isKnownCorrespondent(env.DB, mailbox.id, headerFrom) : false;
     const placement = applyRateHold(decideInboundPlacement({
