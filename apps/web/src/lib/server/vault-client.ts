@@ -9,7 +9,7 @@ import {
   type VaultRpcOperation,
   type VaultSecretName,
   type VaultStatus,
-} from '@cmail/shared/secret-vault';
+} from '@stanchion/shared/secret-vault';
 
 export type VaultCallResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
 

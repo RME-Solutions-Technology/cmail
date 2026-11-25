@@ -3,7 +3,7 @@
 // ciphertext is bound to its row by additional authenticated data (AAD), so
 // it cannot be swapped between rows, names, versions or purposes. Error
 // messages are fixed codes: no value, key or ciphertext ever reaches a log.
-import type { VaultErrorCode, VaultKeyState } from '@cmail/shared/secret-vault';
+import type { VaultErrorCode, VaultKeyState } from '@stanchion/shared/secret-vault';
 
 export interface VaultKeyEnv {
   /** 32 random bytes, base64 or base64url. The client keeps a copy in its password manager. */

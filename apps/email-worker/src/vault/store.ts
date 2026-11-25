@@ -7,7 +7,7 @@ import {
   type VaultSecretName,
   type VaultSecretStatus,
   type VaultStatus,
-} from '@cmail/shared/secret-vault';
+} from '@stanchion/shared/secret-vault';
 import { VaultError, additionalData, loadKeyring, open, seal, type VaultKeyEnv, type VaultKeyring } from './crypto';
 
 export interface VaultEnv extends VaultKeyEnv {

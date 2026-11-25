@@ -11,7 +11,7 @@ import {
   isVaultSecretName,
   type VaultErrorCode,
   type VaultRpcOperation,
-} from '@cmail/shared/secret-vault';
+} from '@stanchion/shared/secret-vault';
 import { VaultError } from './crypto';
 import { auditVaultRefusal, putSecret, retireSecret, rewrapVault, vaultStatus, type VaultEnv } from './store';
 
