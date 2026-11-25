@@ -339,6 +339,11 @@ export type InboundSenderRekeyResult = 'ok' | 'over' | 'skipped';
  * cannot be rotated that cheaply. The first key stays the safe default: this
  * runs only after a DMARC pass, and any problem (no key, no limit, no From, a
  * database error) leaves the row on its envelope key, never unlimited.
+ * A replayed, validly signed message from a real sender can push that sender's
+ * address over the limit; only first-contact mail is then held (applyRateHold
+ * lets an authenticated known correspondent through).
+ * A retried delivery makes a second reservation and counts twice, like any
+ * other attempt in the ledger.
  * It is an address, not a domain, so one big provider (gmail.com) is never
  * one bucket. `over` means this message is past the per-sender hourly limit;
  * the caller holds it in Junk like any other rate limit, never bounces it.
@@ -348,26 +353,33 @@ export async function rekeyInboundSenderToFrom(
   input: { reservationId: string | null; mailboxId: string; fromAddress: string; dmarc: string | null; mailboxType?: string },
 ): Promise<InboundSenderRekeyResult> {
   if (!input.reservationId || input.dmarc !== 'pass') return 'skipped';
-  const fromAddress = (input.fromAddress || '').trim().toLowerCase();
+  // Plus-addressing (a+1@, a+2@) is one sender: without this a rotating tag would give every message its own bucket.
+  const fromAddress = (input.fromAddress || '').trim().toLowerCase().replace(/\+[^@]*@/, '@');
   if (!fromAddress || !fromAddress.includes('@')) return 'skipped';
   const limit = inboundGuardConfiguration(env, input.mailboxType).senderMessagesPerHour;
   if (limit <= 0) return 'skipped';
   try {
     const hash = await hashInboundSender(input.mailboxId, `from:${fromAddress}`, env.INBOUND_SENDER_HASH_KEY);
     if (!hash) return 'skipped';
-    const [, counted] = await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE mailbox_reservations SET sender_hash = ?
-         WHERE id = ? AND mailbox_id = ? AND reservation_type = 'inbound'`,
-      ).bind(hash, input.reservationId, input.mailboxId),
-      env.DB.prepare(
-        `SELECT COUNT(*) AS total FROM mailbox_reservations
-         WHERE mailbox_id = ? AND reservation_type = 'inbound' AND sender_hash = ?
-           AND created_epoch > unixepoch() - 3600`,
-      ).bind(input.mailboxId, hash),
-    ]);
-    const total = Number((counted.results?.[0] as { total?: number } | undefined)?.total ?? 0);
-    return total > limit ? 'over' : 'ok';
+    await env.DB.prepare(
+      `UPDATE mailbox_reservations SET sender_hash = ?
+       WHERE id = ? AND mailbox_id = ? AND reservation_type = 'inbound'`,
+    ).bind(hash, input.reservationId, input.mailboxId).run();
+    const counted = await env.DB.prepare(
+      `SELECT COUNT(*) AS total FROM mailbox_reservations
+       WHERE mailbox_id = ? AND reservation_type = 'inbound' AND sender_hash = ?
+         AND created_epoch > unixepoch() - 3600`,
+    ).bind(input.mailboxId, hash).first<{ total: number }>();
+    const total = Number(counted?.total ?? 0);
+    if (total > limit) {
+      // A held message must not keep charging its sender (the envelope path writes held rows with no
+      // sender key too), or a sender above the limit would stay held until its rate drops below it.
+      await env.DB.prepare(
+        `UPDATE mailbox_reservations SET sender_hash = '' WHERE id = ? AND mailbox_id = ? AND reservation_type = 'inbound'`,
+      ).bind(input.reservationId, input.mailboxId).run();
+      return 'over';
+    }
+    return 'ok';
   } catch {
     return 'skipped';
   }
@@ -394,7 +406,7 @@ export async function recordInboundRateLimitAudit(db: D1Database, mailboxId: str
       crypto.randomUUID(),
       INBOUND_RATE_LIMIT_AUDIT_EVENT,
       mailboxId,
-      `Inbound mail is being held in Junk: ${why}`.slice(0, 200),
+      `An inbound mail limit was reached (${why}); matching mail is filed to Junk instead of bounced`.slice(0, 200),
       INBOUND_RATE_LIMIT_AUDIT_EVENT,
       mailboxId,
     ).run();

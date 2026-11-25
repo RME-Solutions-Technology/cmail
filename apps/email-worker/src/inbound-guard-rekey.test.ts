@@ -19,18 +19,27 @@ const HASH_KEY = base64Url(new Uint8Array(32).fill(9));
 class LedgerDb {
   readonly rows: Array<{ id: string; mailboxId: string; senderHash: string }> = [];
   failBatch = false;
-  readonly batch = vi.fn(async (statements: Array<{ query: string; values: unknown[] }>) => {
-    if (this.failBatch) throw new Error('D1 unavailable');
-    const [update, count] = statements;
-    const [hash, id, mailboxId] = update.values as [string, string, string];
-    const row = this.rows.find((candidate) => candidate.id === id && candidate.mailboxId === mailboxId);
-    if (row) row.senderHash = hash;
-    const [countMailbox, countHash] = count.values as [string, string];
-    const total = this.rows.filter((candidate) => candidate.mailboxId === countMailbox && candidate.senderHash === countHash).length;
-    return [{ results: [], meta: { changes: row ? 1 : 0 } }, { results: [{ total }], meta: {} }];
-  });
+  readonly batch = vi.fn();
   readonly prepare = vi.fn((query: string) => ({
-    bind: (...values: unknown[]) => ({ query, values }),
+    bind: (...values: unknown[]) => ({
+      run: async () => {
+        if (this.failBatch) throw new Error('D1 unavailable');
+        const [first, id, mailboxId] = values as [string, string, string];
+        if (query.includes("SET sender_hash = ''")) {
+          const held = this.rows.find((candidate) => candidate.id === first && candidate.mailboxId === id);
+          if (held) held.senderHash = '';
+          return { meta: { changes: held ? 1 : 0 } };
+        }
+        const row = this.rows.find((candidate) => candidate.id === id && candidate.mailboxId === mailboxId);
+        if (row) row.senderHash = first;
+        this.batch();
+        return { meta: { changes: row ? 1 : 0 } };
+      },
+      first: async () => {
+        const [mailboxId, hash] = values as [string, string];
+        return { total: this.rows.filter((candidate) => candidate.mailboxId === mailboxId && candidate.senderHash === hash).length };
+      },
+    }),
   }));
 
   /** One accepted delivery, keyed (as the first reservation is) on a rotating envelope sender. */
@@ -57,6 +66,19 @@ describe('per-sender limit keyed on the DMARC-passed From address', () => {
     }
     expect(results.slice(0, 30).every((result) => result === 'ok')).toBe(true);
     expect(results[30]).toBe('over');
+  });
+
+  it('does not keep charging a held message, and treats plus-addressing as one sender', async () => {
+    const db = new LedgerDb();
+    let last = 'ok';
+    for (let index = 0; index < 32; index += 1) {
+      last = await rekeyInboundSenderToFrom(env(db), {
+        reservationId: db.accept('mb1', `e${index}@evil.example`), mailboxId: 'mb1', fromAddress: `boss+${index}@example.com`, dmarc: 'pass',
+      });
+    }
+    expect(last).toBe('over');
+    // 30 stay counted; the two held ones were released from the sender's count.
+    expect(db.rows.filter((row) => row.senderHash === '').length).toBe(2);
   });
 
   it('does not put every sender at one big provider in one bucket', async () => {
@@ -125,7 +147,7 @@ describe('one audit row per mailbox per hour when a limit holds mail', () => {
 
   it('writes to the existing audit_log table only, guarded so a flood writes one row an hour', async () => {
     const { db, prepare, bind } = auditDb(1);
-    expect(await recordInboundRateLimitAudit(db, 'mb1', 'a mailbox limit was reached')).toBe(true);
+    expect(await recordInboundRateLimitAudit(db, 'mb1', 'mailbox')).toBe(true);
     const sql = String(prepare.mock.calls[0][0]);
     expect(sql).toContain('INSERT INTO audit_log');
     expect(sql).toContain('NOT EXISTS');

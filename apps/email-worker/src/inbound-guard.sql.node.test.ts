@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { releaseInboundReservation, reserveInboundDelivery, reserveInboundDeliveryHolding, type InboundGuardEnv } from './inbound-guard';
+import { INBOUND_RATE_LIMIT_AUDIT_EVENT, recordInboundRateLimitAudit, rekeyInboundSenderToFrom, releaseInboundReservation, reserveInboundDelivery, reserveInboundDeliveryHolding, type InboundGuardEnv } from './inbound-guard';
 import { migratedDatabase } from './testing/sqlite-d1';
 
 // The inbound limits are enforced by the BEFORE INSERT trigger on
@@ -204,5 +204,56 @@ describe('holding with a broken hash key and a tripped mailbox limit', () => {
     const input = { mailboxId: 'mailbox-1', senderAddress: 'a@example.test', messageBytes: 10 };
     expect(await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k1' })).toMatchObject({ status: 'accepted', senderLimitSkipped: true });
     expect(await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k2' })).toMatchObject({ status: 'held', senderLimitSkipped: true });
+  });
+});
+
+
+describe('From-address sender limit and audit row (real migrations)', () => {
+  function rig(limit = 3) {
+    const { d1, sqlite } = migratedDatabase();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-1', 'mailbox@example.test', 'shared')").run();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-2', 'other@example.test', 'shared')").run();
+    const env = { DB: d1, INBOUND_SENDER_HASH_KEY: HASH_KEY, INBOUND_SENDER_MESSAGES_PER_HOUR: limit, INBOUND_MAILBOX_MESSAGES_PER_HOUR: 0, INBOUND_MAILBOX_BYTES_PER_HOUR: 0 } as InboundGuardEnv;
+    return { d1, sqlite, env };
+  }
+
+  it('holds the message over the limit even when each message has a new envelope sender, and does not keep charging it', async () => {
+    const { env, sqlite } = rig(3);
+    const results: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const reserved = await reserveInboundDelivery(env, { mailboxId: 'mailbox-1', senderAddress: `bounce-${index}@evil.test`, deliveryKey: `k${index}`, messageBytes: 10 });
+      expect(reserved.status).toBe('accepted');
+      results.push(await rekeyInboundSenderToFrom(env, { reservationId: reserved.reservationId, mailboxId: 'mailbox-1', fromAddress: 'Boss+x@Example.test', dmarc: 'pass' }));
+    }
+    expect(results).toEqual(['ok', 'ok', 'ok', 'over', 'over']);
+    const keyed = sqlite.prepare("SELECT COUNT(*) AS n FROM mailbox_reservations WHERE sender_hash != ''").get() as { n: number };
+    expect(keyed.n).toBe(3);
+  });
+
+  it('never touches another mailbox, a row it was not given, or a message that did not pass DMARC', async () => {
+    const { env, sqlite } = rig(1);
+    const one = await reserveInboundDelivery(env, { mailboxId: 'mailbox-1', senderAddress: 'a@evil.test', deliveryKey: 'a1', messageBytes: 10 });
+    const two = await reserveInboundDelivery(env, { mailboxId: 'mailbox-2', senderAddress: 'b@evil.test', deliveryKey: 'b1', messageBytes: 10 });
+    const before = sqlite.prepare('SELECT id, sender_hash FROM mailbox_reservations ORDER BY id').all();
+    expect(await rekeyInboundSenderToFrom(env, { reservationId: one.reservationId, mailboxId: 'mailbox-1', fromAddress: 'ceo@victim.test', dmarc: 'fail' })).toBe('skipped');
+    // Wrong mailbox for the id: the UPDATE matches nothing, the count is for the other mailbox.
+    expect(await rekeyInboundSenderToFrom(env, { reservationId: two.reservationId, mailboxId: 'mailbox-1', fromAddress: 'ceo@victim.test', dmarc: 'pass' })).toBe('ok');
+    const after = sqlite.prepare('SELECT id, sender_hash FROM mailbox_reservations ORDER BY id').all();
+    expect(after).toEqual(before);
+  });
+
+  it('writes one audit row per mailbox per hour into the existing audit_log', async () => {
+    const { d1, sqlite } = rig();
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-1', 'sender')).toBe(true);
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-1', 'mailbox')).toBe(false);
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-2', 'mailbox')).toBe(true);
+    const rows = sqlite.prepare('SELECT event_type, target, actor_role FROM audit_log ORDER BY target').all();
+    expect(rows).toEqual([
+      { event_type: INBOUND_RATE_LIMIT_AUDIT_EVENT, target: 'mailbox-1', actor_role: 'system' },
+      { event_type: INBOUND_RATE_LIMIT_AUDIT_EVENT, target: 'mailbox-2', actor_role: 'system' },
+    ]);
+    // An hour later it writes again.
+    sqlite.prepare("UPDATE audit_log SET timestamp = datetime('now', '-61 minutes')").run();
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-1', 'sender')).toBe(true);
   });
 });

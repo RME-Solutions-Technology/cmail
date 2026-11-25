@@ -1224,7 +1224,7 @@ export default {
     let rateHeld = reservation.status === 'held';
     if (rateHeld) {
       console.warn('Inbound rate limit reached; message held in Junk, not rejected');
-      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'a mailbox limit was reached');
+      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'mailbox');
     }
     if (reservation.senderLimitSkipped) {
       console.warn('INBOUND_SENDER_HASH_KEY is missing or malformed; per-sender limit skipped');
@@ -1431,7 +1431,7 @@ export default {
     }) === 'over') {
       rateHeld = true;
       console.warn('Inbound per-sender limit reached for the From address; message held in Junk, not rejected');
-      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'a sender limit was reached');
+      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'sender');
     }
     // Only a held message needs the stricter check (someone wrote to them or read their mail).
     const knownCorrespondent = rateHeld ? await isKnownCorrespondent(env.DB, mailbox.id, headerFrom) : false;
