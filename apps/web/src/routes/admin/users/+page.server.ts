@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { AuthProvider, Env, User, UserRole, UserStatus } from '@cmail/shared/types';
-import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
+import type { AuthProvider, Env, User, UserRole, UserStatus } from '@stanchion/shared/types';
+import { pausedAccountLockoutStatements } from '@stanchion/shared/account-lockout';
 import { audit, generateId } from '#lib/server/db.js';
 import { detectProvider, sendEmail } from '#lib/server/outbound.js';
 import { generateInviteEmail } from '#lib/server/invite-email.js';
@@ -21,6 +21,8 @@ import {
   textField,
 } from '#lib/server/validation.js';
 import { managerIdentityAllowed, managerInviteProviderAllowed } from './users-security';
+import { chooseOrgDomain, orgDomainsForDisplay } from '#lib/server/org-domains.js';
+import { orgDomains, type OrgDomains } from '@stanchion/shared/org-domains';
 
 const PAGE_SIZE = 25;
 const USER_ROLES: readonly UserRole[] = ['standard', 'manager'];
@@ -49,7 +51,7 @@ function logAdminFailure(action: string, error: unknown): void {
   });
 }
 
-// Managers can invite any address cmail can actually authenticate: a Google
+// Managers can invite any address Stanchion can actually authenticate: a Google
 // or Microsoft identity, resolved by well-known consumer domains then an MX
 // lookup for custom/business domains — or, when neither hosts the address
 // and email one-time-code sign-in is enabled on this deployment, the
@@ -168,7 +170,7 @@ async function deliverInvite(
 
   try {
     const result = await sendEmail(
-      { from: fromAddress, fromName: settings.systemFromName, to: user.email, subject, html, text },
+      { from: fromAddress, fromName: settings.systemFromName, to: user.email, subject, html, text, system: true },
       envRecord,
     );
     if (!result.success) {
@@ -187,7 +189,7 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
   if (!env) {
     return {
       users: [], search: '', page: 1, total: 0, totalPages: 1,
-      mailDomain: '', currentUserId: '', inviteAvailable: false,
+      mailDomain: '', mailDomains: [] as string[], currentUserId: '', inviteAvailable: false,
       roleFilter: '', statusFilter: '', providerFilter: '', configurationUnavailable: true,
     };
   }
@@ -271,6 +273,7 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
     total,
     totalPages,
     mailDomain: runtime.mailDomain,
+    mailDomains: (await orgDomainsForDisplay(env)).domains,
     currentUserId: locals.user?.id || '',
     inviteAvailable:
       !!absoluteAppUrl(settings.appUrl || runtime.appUrl) &&
@@ -298,7 +301,16 @@ export const actions: Actions = {
       : '';
     const mailboxLocal = rawMailboxLocal ? normalizeMailboxLocalPart(rawMailboxLocal) : '';
     const sendInvite = data.get('send_invite') === 'on';
-    const mailDomain = normalizeDomain(env.MAIL_DOMAIN);
+    let domains: OrgDomains;
+    try {
+      domains = await orgDomains(env, env.DB);
+    } catch (error) {
+      logAdminFailure('create', error);
+      return fail(503, { error: 'Mail domains are temporarily unavailable. Try again shortly.' });
+    }
+    // One of the organisation's own domains (docs/multi-domain.md), the
+    // primary unless the manager picked another.
+    const mailDomain = chooseOrgDomain(data.get('mailbox_domain'), domains);
 
     if (!email) return fail(400, { error: 'Enter a valid sign-in email address' });
     if (displayName === null) return fail(400, { error: 'Display name must be 120 characters or fewer' });
@@ -309,8 +321,11 @@ export const actions: Actions = {
     if (!mailboxLocal) {
       return fail(400, { error: 'Every account needs a personal mailbox name' });
     }
-    if (!mailDomain) {
+    if (!domains.primary) {
       return fail(503, { error: 'Set MAIL_DOMAIN before creating mailboxes' });
+    }
+    if (!mailDomain) {
+      return fail(400, { error: 'Choose one of your organisation\'s mail domains' });
     }
     if (role === 'manager' && !sendInvite) {
       return fail(400, { error: 'Manager accounts must be invited with Google or Microsoft sign-in' });

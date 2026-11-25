@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadM365PermsState } from '@cmail/shared/m365-perms';
+import { loadM365PermsState } from '@stanchion/shared/m365-perms';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { MAX_BATCHES_PER_PASS, runM365PermsTick, type M365PermsDeps } from './sync';
 import { ORGANIZATION, TENANT_ID, fakeCollector, snapshotOf, type FakeOutcome } from './testing/fake-collector';
@@ -24,7 +24,9 @@ const GROUP = (n: number) => id('cccc', n);
 const grant = (trustee: string, fullAccess: boolean, sendAs: boolean, kind: SnapshotGrant['kind'] = 'user'): SnapshotGrant => ({ trustee, kind, fullAccess, sendAs });
 const mailbox = (n: number, grants: SnapshotGrant[], complete = true): SnapshotMailbox => ({ id: MBX(n), address: `shared${n}@example.test`, complete, grants });
 
-function fakeGraph(groups: Record<string, string[]>, options: { failGroups?: string[] } = {}) {
+type FakeUser = { id: string; mail: string; userType?: string; accountEnabled?: boolean; proxyAddresses?: string[] };
+
+function fakeGraph(groups: Record<string, string[]>, options: { failGroups?: string[]; users?: FakeUser[] } = {}) {
   const calls: string[] = [];
   const fetcher = (async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -35,15 +37,29 @@ function fakeGraph(groups: Record<string, string[]>, options: { failGroups?: str
       if (options.failGroups?.includes(match[1])) return new Response('{}', { status: 403 });
       return Response.json({ value: (groups[match[1]] ?? []).map((member) => ({ id: member })) });
     }
+    const byMail = /\/users\?\$filter=([^&]+)/.exec(url);
+    if (byMail) {
+      const wanted = /^mail eq '(.*)'$/.exec(decodeURIComponent(byMail[1]))?.[1].replace(/''/g, "'").toLowerCase();
+      const found = (options.users ?? []).filter((user) => user.mail.toLowerCase() === wanted);
+      // Graph's case is kept as stored (never lowered here).
+      return Response.json({ value: found.map((user) => ({
+        id: user.id,
+        mail: user.mail,
+        userType: user.userType ?? 'Member',
+        accountEnabled: user.accountEnabled ?? true,
+        proxyAddresses: user.proxyAddresses ?? [`SMTP:${user.mail}`],
+      })) });
+    }
     return new Response('{}', { status: 404 });
   }) as typeof fetch;
   return { fetcher, calls };
 }
 
-function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; mailboxes?: number; env?: Record<string, unknown>; groups?: Record<string, string[]>; failGroups?: string[]; personId?: (n: number) => string; mailboxId?: (n: number) => string } = {}) {
-  const { d1, sqlite } = migratedDatabase();
+function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; mailboxes?: number; env?: Record<string, unknown>; groups?: Record<string, string[]>; failGroups?: string[]; personId?: (n: number) => string; mailboxId?: (n: number) => string; users?: FakeUser[]; includeManagers?: boolean; wrapDb?: (db: D1Database) => D1Database } = {}) {
+  const { d1: rawD1, sqlite } = migratedDatabase();
+  const d1 = options.wrapDb ? options.wrapDb(rawD1) : rawD1;
   const collector = fakeCollector();
-  const graph = fakeGraph(options.groups ?? {}, { failGroups: options.failGroups });
+  const graph = fakeGraph(options.groups ?? {}, { failGroups: options.failGroups, users: options.users });
   let clock = T0;
   let ids = 0;
   const setting = (key: string, value: string) => sqlite.prepare(
@@ -51,6 +67,7 @@ function setup(options: { enabled?: boolean; dryRun?: boolean; people?: number; 
   ).run(key, value);
   setting('m365_perms_enabled', options.enabled === false ? 'false' : 'true');
   setting('m365_perms_dry_run', options.dryRun ? 'true' : 'false');
+  if (options.includeManagers) setting('m365_perms_include_managers', 'true');
 
   // A manager, people linked by the Microsoft 365 sync, and shared mailboxes.
   sqlite.prepare(`INSERT INTO users (id, email, display_name, role, status) VALUES ('mgr', 'boss@example.test', 'Boss', 'manager', 'active')`).run();
@@ -569,5 +586,281 @@ describe('Mailbox access sync: a pass in batches (snapshots made by collect.ps1)
     t.advance(15 * 60 * 1000);
     expect(await t.tick()).toEqual({ status: 'failed', code: 'bad_snapshot' });
     expect(t.assignments()).toEqual([]);
+  });
+});
+describe('Mailbox access sync: manager accounts matched by address (switch)', () => {
+  // The bootstrap manager ('mgr', boss@example.test) has no person link: the
+  // Microsoft 365 sync never adopts managers.
+  const BOSS = id('dddd', 1);
+  const bossUser: FakeUser = { id: BOSS, mail: 'Boss@example.test' };
+  type Setup = ReturnType<typeof setup>;
+  const usersCalls = (t: Setup) => t.graph.calls.filter((url) => url.includes('/users?'));
+  const mgrRows = (t: Setup, userId = 'mgr') => t.assignments().filter((row) => row.user_id === userId);
+  const report = async (t: Setup) => (await t.state()).lastRound!.report;
+  const addManager = (t: Setup, userId: string, email: string) =>
+    t.sqlite.prepare(`INSERT INTO users (id, email, display_name, role, status) VALUES (?, ?, ?, 'manager', 'active')`).run(userId, email, userId);
+  /** One round with Graph's users answer replaced. */
+  const roundWithUsersAnswer = async (t: Setup, outcome: FakeOutcome, answer: (url: string) => Response) => {
+    const base = t.graph.fetcher;
+    const deps: M365PermsDeps = {
+      fetcher: (async (input: RequestInfo | URL, init?: RequestInit) => (String(input).includes('/users?') ? answer(String(input)) : base(input, init))) as typeof fetch,
+    };
+    t.advance(25 * HOUR);
+    t.collector.setOutcome(outcome);
+    await t.tick(deps);
+    t.advance(5 * 60 * 1000);
+    return t.tick(deps);
+  };
+  /**
+   * A database that runs `change` right before the apply loop's first switch
+   * read, i.e. after the diff (and the manager lookup) and before any write.
+   */
+  const betweenDiffAndApply = (change: { run?: () => void }) => (db: D1Database): D1Database => {
+    let switchReads = 0;
+    return new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            if (sql.includes('FROM org_settings WHERE key IN')) {
+              switchReads += 1;
+              // Round one: 1 = collecting tick, 2 = start of the diff tick, 3 = first apply-loop check.
+              if (switchReads === 3 && change.run) change.run();
+            }
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  };
+
+  it('switch off (the default): a grant to the manager is skipped as before and Graph is not asked', async () => {
+    const t = setup({ users: [bossUser] });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(t.assignments()).toEqual([]);
+    expect(usersCalls(t)).toEqual([]);
+    expect((await t.state()).lastRound!.counts).toMatchObject({ trusteeNotLinked: 1, managerMatched: 0, added: 0 });
+  });
+
+  it('switch on: matches the manager by primary SMTP address and gives the access Exchange grants, without linking the account', async () => {
+    const t = setup({ users: [bossUser], includeManagers: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)]), mailbox(2, [grant(BOSS, true, false)])]));
+    expect(mgrRows(t)).toEqual([
+      { mailbox_id: 'sm1', user_id: 'mgr', permissions: 'full', assigned_by: null },
+      { mailbox_id: 'sm2', user_id: 'mgr', permissions: 'read', assigned_by: null },
+    ]);
+    expect(t.ledger()).toHaveLength(2);
+    expect(t.audits('mailbox.assigned')).toBe(2);
+    // Managers are never adopted: no person link for the manager.
+    expect(t.sqlite.prepare(`SELECT COUNT(*) AS n FROM m365_sync_links WHERE user_id = 'mgr'`).get()).toEqual({ n: 0 });
+    const last = (await t.state()).lastRound!;
+    expect(last.counts).toMatchObject({ managerMatched: 2, added: 2, trusteeNotLinked: 0 });
+    expect(last.report).toContainEqual({ action: 'manager_matched', mailbox: '', user: 'boss@example.test', reason: 'matched' });
+    expect(usersCalls(t)).toHaveLength(1);
+    expect(decodeURIComponent(usersCalls(t)[0])).toContain("mail eq 'boss@example.test'");
+    expect(decodeURIComponent(usersCalls(t)[0])).toContain('proxyAddresses');
+  });
+
+  it('matches whatever case Graph stores the address and proxy entry in', async () => {
+    const t = setup({ users: [{ id: BOSS.toUpperCase(), mail: 'BOSS@EXAMPLE.TEST', proxyAddresses: ['smtp:alias@example.test', 'SMTP:Boss@Example.Test'] }], includeManagers: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(t)).toEqual([{ mailbox_id: 'sm1', user_id: 'mgr', permissions: 'full', assigned_by: null }]);
+  });
+
+  it('also matches a manager who gets access through a group', async () => {
+    const t = setup({ users: [bossUser], includeManagers: true, groups: { [GROUP(1)]: [BOSS, PERSON(1)] } });
+    await t.round(t.snapshotAt([mailbox(1, [grant(GROUP(1), true, true, 'group')])]));
+    expect(t.assignments().map((row) => [row.user_id, row.permissions])).toEqual([['mgr', 'full'], ['u1', 'full']]);
+  });
+
+  it('refuses when more than one Entra user has the address', async () => {
+    const t = setup({ users: [bossUser, { id: id('dddd', 2), mail: 'boss@example.test' }], includeManagers: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(t)).toEqual([]);
+    expect(await report(t)).toContainEqual({ action: 'manager_not_matched', mailbox: '', user: 'boss@example.test', reason: 'ambiguous' });
+    expect((await t.state()).lastRound!.counts).toMatchObject({ managerMatched: 0, trusteeNotLinked: 1 });
+  });
+
+  it('refuses two manager accounts with the same address (case aside) without asking Graph', async () => {
+    const t = setup({ users: [bossUser], includeManagers: true });
+    addManager(t, 'mgr2', 'BOSS@example.test');
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(t.assignments()).toEqual([]);
+    expect(usersCalls(t)).toEqual([]);
+    expect((await report(t)).filter((item) => item.reason === 'ambiguous')).toHaveLength(2);
+  });
+
+  it('refuses two managers that resolve to one Entra user', async () => {
+    const t = setup({ includeManagers: true });
+    addManager(t, 'mgr2', 'boss2@example.test');
+    await roundWithUsersAnswer(t, t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]), (url) => {
+      const mail = /mail eq '(.*)'/.exec(decodeURIComponent(url))![1];
+      return Response.json({ value: [{ id: BOSS, mail, userType: 'Member', accountEnabled: true, proxyAddresses: [`SMTP:${mail}`] }] });
+    });
+    expect(t.assignments()).toEqual([]);
+    expect((await report(t)).filter((item) => item.reason === 'ambiguous').map((item) => item.user).sort()).toEqual(['boss2@example.test', 'boss@example.test']);
+  });
+
+  it('refuses when no Entra user has exactly the manager address', async () => {
+    const t = setup({ users: [{ id: BOSS, mail: 'boss.other@example.test' }], includeManagers: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(t)).toEqual([]);
+    expect(await report(t)).toContainEqual(expect.objectContaining({ user: 'boss@example.test', reason: 'no_entra_user' }));
+  });
+
+  it('refuses a returned user whose mail differs, a non-primary address, a guest, a disabled account, and a manager off MAIL_DOMAIN', async () => {
+    const odd = setup({ includeManagers: true });
+    await roundWithUsersAnswer(odd, odd.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]),
+      () => Response.json({ value: [{ id: BOSS, mail: 'boss@example.test.invalid', userType: 'Member', accountEnabled: true, proxyAddresses: [] }] }));
+    expect(mgrRows(odd)).toEqual([]);
+    expect(await report(odd)).toContainEqual(expect.objectContaining({ reason: 'address_mismatch' }));
+
+    const secondary = setup({ users: [{ ...bossUser, proxyAddresses: ['SMTP:other@example.test', 'smtp:boss@example.test'] }], includeManagers: true });
+    await secondary.round(secondary.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(secondary)).toEqual([]);
+    expect(await report(secondary)).toContainEqual(expect.objectContaining({ reason: 'not_primary_smtp' }));
+
+    const guest = setup({ users: [{ ...bossUser, userType: 'Guest' }], includeManagers: true });
+    await guest.round(guest.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(guest)).toEqual([]);
+    expect(await report(guest)).toContainEqual(expect.objectContaining({ reason: 'not_member' }));
+
+    const disabled = setup({ users: [{ ...bossUser, accountEnabled: false }], includeManagers: true });
+    await disabled.round(disabled.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(disabled)).toEqual([]);
+    expect(await report(disabled)).toContainEqual(expect.objectContaining({ reason: 'account_disabled' }));
+
+    const offDomain = setup({ users: [{ id: BOSS, mail: 'boss@elsewhere.test' }], includeManagers: true });
+    offDomain.sqlite.prepare(`UPDATE users SET email = 'boss@elsewhere.test' WHERE id = 'mgr'`).run();
+    await offDomain.round(offDomain.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(offDomain)).toEqual([]);
+    expect(usersCalls(offDomain)).toEqual([]);
+    expect(await report(offDomain)).toContainEqual(expect.objectContaining({ reason: 'not_on_mail_domain' }));
+  });
+
+  it('refuses an Entra user the Microsoft 365 sync already links, and never looks up a paused manager', async () => {
+    const linked = setup({ users: [{ id: PERSON(1), mail: 'boss@example.test' }], includeManagers: true });
+    await linked.round(linked.snapshotAt([mailbox(1, [grant(PERSON(1), true, true)])]));
+    // The linked person gets it; the manager does not.
+    expect(linked.assignments().map((row) => row.user_id)).toEqual(['u1']);
+    expect(await report(linked)).toContainEqual(expect.objectContaining({ reason: 'object_linked' }));
+
+    const paused = setup({ users: [bossUser], includeManagers: true });
+    paused.sqlite.prepare(`UPDATE users SET status = 'paused' WHERE id = 'mgr'`).run();
+    await paused.round(paused.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(paused)).toEqual([]);
+    expect(usersCalls(paused)).toEqual([]);
+  });
+
+  it('a failed Graph lookup leaves the manager unmatched for that round and stops further lookups', async () => {
+    const t = setup({ includeManagers: true });
+    addManager(t, 'mgr2', 'boss2@example.test');
+    let asked = 0;
+    const result = await roundWithUsersAnswer(t, t.snapshotAt([mailbox(1, [grant(BOSS, true, true), grant(PERSON(1), true, true)])]),
+      () => { asked += 1; return new Response('{}', { status: 403 }); });
+    expect(result).toMatchObject({ status: 'worked', finished: true });
+    expect(asked).toBe(1);
+    expect(t.assignments().map((row) => row.user_id)).toEqual(['u1']);
+    expect((await report(t)).filter((item) => item.reason === 'lookup_failed')).toHaveLength(2);
+  });
+
+  it('looks up at most 20 managers a round, reports the rest, and starts after the last one next round', async () => {
+    const t = setup({ users: [bossUser], includeManagers: true });
+    // 21 more managers: 22 in all ('mgr' sorts last).
+    for (let n = 1; n <= 21; n++) addManager(t, `m${String(n).padStart(2, '0')}`, `m${n}@example.test`);
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(usersCalls(t)).toHaveLength(20);
+    expect(await report(t)).toContainEqual({ action: 'manager_not_matched', mailbox: '', user: '', reason: 'too_many_managers' });
+    expect(mgrRows(t)).toEqual([]);
+    t.graph.calls.length = 0;
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    const asked = usersCalls(t).map((url) => /mail eq '(.*)'/.exec(decodeURIComponent(url))![1]);
+    expect(asked.slice(0, 2)).toEqual(['m21@example.test', 'boss@example.test']);
+    expect(mgrRows(t)).toEqual([{ mailbox_id: 'sm1', user_id: 'mgr', permissions: 'full', assigned_by: null }]);
+  });
+
+  it('a manager address change, a pause or the switch going off between diff and apply drops the manager additions only', async () => {
+    for (const change of [
+      (t: Setup) => t.sqlite.prepare(`UPDATE users SET email = 'boss.new@example.test' WHERE id = 'mgr'`).run(),
+      (t: Setup) => t.sqlite.prepare(`UPDATE users SET status = 'paused' WHERE id = 'mgr'`).run(),
+      (t: Setup) => t.setting('m365_perms_include_managers', 'false'),
+    ]) {
+      const hook: { run?: () => void } = {};
+      const t = setup({ users: [bossUser], includeManagers: true, wrapDb: betweenDiffAndApply(hook) });
+      hook.run = () => change(t);
+      await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true), grant(PERSON(1), true, true)])]));
+      expect(t.assignments().map((row) => row.user_id)).toEqual(['u1']);
+    }
+  });
+
+  it("a manager's own removal of sync-given access sticks while Exchange still grants it", async () => {
+    const t = setup({ users: [bossUser], includeManagers: true });
+    const granted = () => t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]);
+    await t.round(granted());
+    expect(mgrRows(t)).toHaveLength(1);
+    t.sqlite.prepare(`DELETE FROM mailbox_assignments WHERE mailbox_id = 'sm1' AND user_id = 'mgr'`).run();
+    await t.round(granted());
+    expect(mgrRows(t)).toEqual([]);
+    expect(await report(t)).toContainEqual(expect.objectContaining({ action: 'manager_removed', user: 'boss@example.test' }));
+  });
+
+  it("never lowers or removes a manager account's access, and reports it once the match is gone", async () => {
+    const t = setup({ users: [bossUser], includeManagers: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)]), mailbox(2, [grant(BOSS, true, false)])]));
+    expect(mgrRows(t).map((row) => row.permissions)).toEqual(['full', 'read']);
+    // Exchange lowers sm1 to Full Access only and takes sm2 away.
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, false)]), mailbox(2, [])]));
+    const kept = [['sm1', 'full'], ['sm2', 'read']];
+    expect(mgrRows(t).map((row) => [row.mailbox_id, row.permissions])).toEqual(kept);
+    let last = (await t.state()).lastRound!;
+    expect(last.counts).toMatchObject({ downgraded: 0, removed: 0, managerAccountKept: 2, managerKept: 0 });
+    expect(last.report).toContainEqual(expect.objectContaining({ action: 'manager_account_kept', reason: 'manager_account_not_lowered' }));
+    expect(last.report).toContainEqual(expect.objectContaining({ action: 'manager_account_kept', reason: 'manager_account_not_removed' }));
+    // The manager is renamed: no match any more. Kept, and reported for both rows.
+    t.sqlite.prepare(`UPDATE users SET email = 'boss.renamed@example.test' WHERE id = 'mgr'`).run();
+    await t.round(t.snapshotAt([mailbox(1, []), mailbox(2, [])]));
+    expect(mgrRows(t).map((row) => [row.mailbox_id, row.permissions])).toEqual(kept);
+    last = (await t.state()).lastRound!;
+    expect(last.counts).toMatchObject({ removed: 0, downgraded: 0, unlinkedKept: 2 });
+    expect(last.report).toContainEqual({ action: 'unlinked_kept', mailbox: 'shared1@example.test', user: 'boss.renamed@example.test', reason: 'manager_account_not_matched' });
+    // Switched off: still kept, still reported.
+    t.setting('m365_perms_include_managers', 'false');
+    await t.round(t.snapshotAt([mailbox(1, []), mailbox(2, [])]));
+    expect(mgrRows(t).map((row) => [row.mailbox_id, row.permissions])).toEqual(kept);
+    expect((await t.state()).lastRound!.counts).toMatchObject({ removed: 0, downgraded: 0, unlinkedKept: 2 });
+  });
+
+  it("raises a manager account's sync-made access when Exchange grants more", async () => {
+    const t = setup({ users: [bossUser], includeManagers: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, false)])]));
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(mgrRows(t)).toEqual([{ mailbox_id: 'sm1', user_id: 'mgr', permissions: 'full', assigned_by: null }]);
+    expect((await t.state()).lastRound!.counts.upgraded).toBe(1);
+  });
+
+  it('leaves standard users exactly as with the switch off', async () => {
+    const run = async (includeManagers: boolean) => {
+      const t = setup({ users: [bossUser], includeManagers });
+      await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, true), grant(PERSON(2), true, false)]), mailbox(2, [grant(PERSON(3), true, true)])]));
+      await t.round(t.snapshotAt([mailbox(1, [grant(PERSON(1), true, false)]), mailbox(2, [])]));
+      const last = (await t.state()).lastRound!;
+      return { rows: t.assignments(), counts: last.counts, changes: last.report.filter((item) => !item.action.startsWith('manager_')) };
+    };
+    const off = await run(false);
+    const on = await run(true);
+    expect(on).toEqual(off);
+    expect(off.rows).toEqual([{ mailbox_id: 'sm1', user_id: 'u1', permissions: 'read', assigned_by: null }]);
+  });
+
+  it('dry run reports what it would add for the manager and writes nothing', async () => {
+    const t = setup({ users: [bossUser], includeManagers: true, dryRun: true });
+    await t.round(t.snapshotAt([mailbox(1, [grant(BOSS, true, true)])]));
+    expect(t.assignments()).toEqual([]);
+    expect(t.ledger()).toEqual([]);
+    const last = (await t.state()).lastRound!;
+    expect(last.mode).toBe('dry_run');
+    expect(last.counts).toMatchObject({ managerMatched: 1, added: 1 });
+    expect(last.report).toContainEqual({ action: 'add', mailbox: 'shared1@example.test', user: 'boss@example.test', reason: 'full' });
   });
 });

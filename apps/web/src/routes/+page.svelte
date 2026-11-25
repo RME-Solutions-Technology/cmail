@@ -37,7 +37,7 @@
   const errorCode = $derived(page.url.searchParams.get('error'));
 </script>
 
-<svelte:head><title>Sign in · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Sign in · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <main id="main-content" class="login-page nb-quiet" tabindex="-1">
     <div class="login-card card">
@@ -48,7 +48,7 @@
       {#if errorCode && errorMessages[errorCode]}
         <div class="login-error" role="alert">
           {errorMessages[errorCode]}
-          {#if data.supportEmail}<a href={`mailto:${data.supportEmail}?subject=${encodeURIComponent(`${data.appName || 'cmail'} sign-in help (${errorCode})`)}`}>Contact support</a>{/if}
+          {#if data.supportEmail}<a href={`mailto:${data.supportEmail}?subject=${encodeURIComponent(`${data.appName || 'Stanchion'} sign-in help (${errorCode})`)}`}>Contact support</a>{/if}
         </div>
       {/if}
 
@@ -133,7 +133,7 @@
         {#if data.supportEmail}<a href={`mailto:${data.supportEmail}`}>Contact support</a>{/if}
       </nav>
 
-      <p class="product-credit">Powered by cmail · independent, Apache-2.0-licensed open-source email</p>
+      <p class="product-credit">Powered by Stanchion · independent, Apache-2.0-licensed open-source email</p>
     </div>
 </main>
 

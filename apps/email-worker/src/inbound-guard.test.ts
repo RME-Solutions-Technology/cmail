@@ -141,6 +141,19 @@ describe('inbound guard configuration', () => {
     })).toEqual(INBOUND_GUARD_DEFAULTS);
   });
 
+  it('gives a shared mailbox 600 messages an hour by default, and an explicit setting still wins', () => {
+    expect(inboundGuardConfiguration({}, 'shared').mailboxMessagesPerHour).toBe(600);
+    expect(inboundGuardConfiguration({}, 'personal').mailboxMessagesPerHour).toBe(INBOUND_GUARD_DEFAULTS.mailboxMessagesPerHour);
+    expect(inboundGuardConfiguration({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: '50' }, 'shared').mailboxMessagesPerHour).toBe(50);
+    expect(inboundGuardConfiguration({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 'bad' }, 'shared').mailboxMessagesPerHour).toBe(600);
+    expect(inboundGuardConfiguration({}, 'something-else').mailboxMessagesPerHour).toBe(INBOUND_GUARD_DEFAULTS.mailboxMessagesPerHour);
+    expect(inboundGuardConfiguration({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: Number.MAX_SAFE_INTEGER }, 'shared').mailboxMessagesPerHour)
+      .toBe(INBOUND_GUARD_HARD_MAX.mailboxMessagesPerHour);
+    // An explicit zero means the same for a shared mailbox as for any other.
+    expect(inboundGuardConfiguration({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: '0' }, 'shared').mailboxMessagesPerHour)
+      .toBe(inboundGuardConfiguration({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: '0' }, 'personal').mailboxMessagesPerHour);
+  });
+
   it('floors positive values, caps excessive values, and only disables on explicit zero', () => {
     expect(inboundGuardConfiguration({
       INBOUND_MAILBOX_MESSAGES_PER_HOUR: '12.9',

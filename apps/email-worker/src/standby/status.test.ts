@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { standbyConfig, standbyPrimaryAddress, standbyStatusView, type StandbyRun } from '@cmail/shared/standby';
+import { standbyConfig, standbyPrimaryAddress, standbyStatusView, type StandbyRun } from '@stanchion/shared/standby';
 import { probeTokenFrom } from './standby';
 
 const NOW = Date.parse('2026-11-15T12:00:00Z');

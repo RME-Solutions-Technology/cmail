@@ -105,11 +105,11 @@
 </script>
 
 <svelte:head>
-  <title>{page.data?.appName || 'cmail'}</title>
+  <title>{page.data?.appName || 'Stanchion'}</title>
   <meta name="theme-color" content={page.data?.brandPrimaryColor || '#0078d4'} />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content={page.data?.appName || 'cmail'} />
+  <meta name="apple-mobile-web-app-title" content={page.data?.appName || 'Stanchion'} />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="description" content={`Secure, open-source email for ${page.data?.orgName || 'your organisation'}.`} />
   <link rel="icon" href={page.data?.brandIconUrl || '/favicon.svg'} />

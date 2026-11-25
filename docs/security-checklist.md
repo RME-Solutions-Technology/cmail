@@ -1,6 +1,29 @@
+---
+title: "Security checklist"
+summary: "The security checklist to complete for every environment."
+applies_to: both
+audience: [operator, reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, operations-checklist.md]
+---
+
 # Security checklist
 
 This checklist replaces deployment-specific audit notes. It's a starting point, not a certification and not a substitute for independent review.
+
+**In this article**
+
+- [Source and supply chain](#source-and-supply-chain)
+- [Authentication and sessions](#authentication-and-sessions)
+- [Authorization](#authorization)
+- [Message and attachment handling](#message-and-attachment-handling)
+- [Data protection](#data-protection)
+- [Mail and DNS](#mail-and-dns)
+- [Cloudflare and provider controls](#cloudflare-and-provider-controls)
+- [Browser notifications, when enabled](#browser-notifications-when-enabled)
+- [AI agent (MCP) connections, when enabled](#ai-agent-mcp-connections-when-enabled)
+- [Release decision](#release-decision)
 
 ## Source and supply chain
 
@@ -83,7 +106,7 @@ See [Email authentication and sender requirements](email-authentication.md) for 
 - [ ] DMARC aggregate and any failure-report destinations, external authorisations, privacy, access, and retention are approved
 - [ ] Optional MTA-STS policy matches every legitimate MX and was tested with monitored TLS-RPT before enforcement
 - [ ] Major receiver policies and the deployment's sender-volume classifications reviewed against current official sources
-- [ ] cmail is not approved for bulk marketing without separate consent, RFC 8058 unsubscribe, suppression, reputation, abuse, and legal controls
+- [ ] Stanchion is not approved for bulk marketing without separate consent, RFC 8058 unsubscribe, suppression, reputation, abuse, and legal controls
 - [ ] Email Routing sends only intended traffic to the Worker
 - [ ] `INBOUND_SENDER_HASH_KEY` is a distinct 32-byte Worker secret and sender-HMAC values contain no raw address
 - [ ] Unknown and inactive recipients reject as expected

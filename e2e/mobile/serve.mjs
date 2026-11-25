@@ -1,4 +1,4 @@
-// Starts cmail for the mobile suite: a production build served by
+// Starts Stanchion for the mobile suite: a production build served by
 // `wrangler pages dev`, local-only D1 and R2 under .tmp/e2e-mobile, every real
 // migration applied, invented fixtures seeded, and a signed session per test
 // user written to .tmp/e2e-mobile/sessions.json for the specs to use.
@@ -51,7 +51,7 @@ const VARS = {
   ORG_URL: `https://www.${ORG.domain}`,
   SUPPORT_EMAIL: `help@${ORG.domain}`,
   POLICY_URL: `${ORIGIN}/policy`,
-  REPO_URL: `https://github.com/RME-Solutions-Technology/cmail`,
+  REPO_URL: `https://github.com/RME-Solutions-Technology/stanchion`,
   SYSTEM_EMAIL: `noreply@${ORG.domain}`,
   SYSTEM_FROM_NAME: `${ORG.shortName} Mail`,
   BRAND_PRIMARY_COLOR: `#0f6cbd`,
@@ -64,20 +64,20 @@ const VARS = {
 };
 const D1_ID = '00000000-0000-4000-8000-0000000000e2';
 const sessionSecret = randomBytes(32).toString('hex');
-writeFileSync(resolve(STATE, 'wrangler.toml'), `name = "cmail-e2e-mobile"
+writeFileSync(resolve(STATE, 'wrangler.toml'), `name = "stanchion-e2e-mobile"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "${posix(resolve(WEB, '.svelte-kit/cloudflare'))}"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "cmail-e2e"
+database_name = "stanchion-e2e"
 database_id = "${D1_ID}"
 migrations_dir = "${posix(resolve(ROOT, 'packages/shared/migrations'))}"
 
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "cmail-e2e-storage"
+bucket_name = "stanchion-e2e-storage"
 
 [vars]
 ${Object.entries(VARS).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join('\n')}
@@ -164,7 +164,7 @@ const server = spawn(process.execPath, [
   WRANGLER, 'pages', 'dev', resolve(WEB, '.svelte-kit/cloudflare'),
   '--ip', '127.0.0.1', '--port', String(PORT), '--local-protocol', 'https', '--persist-to', PERSIST,
   '--compatibility-date', '2026-08-01', '--compatibility-flags', 'nodejs_compat',
-  '--d1', `DB=${D1_ID}`, '--r2', 'STORAGE=cmail-e2e-storage', ...vars,
+  '--d1', `DB=${D1_ID}`, '--r2', 'STORAGE=stanchion-e2e-storage', ...vars,
   '--show-interactive-dev-session=false',
 ], {
   cwd: STATE,

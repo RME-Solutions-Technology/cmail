@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { releaseInboundReservation, reserveInboundDelivery, type InboundGuardEnv } from './inbound-guard';
+import { INBOUND_RATE_LIMIT_AUDIT_EVENT, recordInboundRateLimitAudit, rekeyInboundSenderToFrom, releaseInboundReservation, reserveInboundDelivery, reserveInboundDeliveryHolding, type InboundGuardEnv } from './inbound-guard';
 import { migratedDatabase } from './testing/sqlite-d1';
 
 // The inbound limits are enforced by the BEFORE INSERT trigger on
@@ -58,13 +58,21 @@ describe('inbound reservation SQL (real migrations)', () => {
   }
 
   it('counts the last hour exactly: 3599 seconds ago counts, 3600 does not', async () => {
-    const inside = setup({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
-    earlier(inside.sqlite, 3599);
-    expect((await inside.reserve('fresh')).status).toBe('rejected');
-
-    const outside = setup({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
-    earlier(outside.sqlite, 3600);
-    expect((await outside.reserve('fresh')).status).toBe('accepted');
+    // The earlier row's age is measured in whole seconds by the database, so if the clock ticks to the
+    // next second between inserting it and reserving, 3599 becomes 3600 and the case flips (a rare flake).
+    // Retry with a fresh database until both happen inside one second.
+    async function statusAt(age: number): Promise<string> {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const run = setup({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
+        const before = Math.floor(Date.now() / 1000);
+        earlier(run.sqlite, age);
+        const result = await run.reserve('fresh');
+        if (Math.floor(Date.now() / 1000) === before) return result.status;
+      }
+      throw new Error('the clock kept ticking over a second boundary');
+    }
+    expect(await statusAt(3599)).toBe('rejected');
+    expect(await statusAt(3600)).toBe('accepted');
   });
 
   it('stops charging an abandoned pending delivery once its hold expires', async () => {
@@ -119,5 +127,133 @@ describe('inbound reservation SQL (real migrations)', () => {
     const first = await reserve('retry-key');
     await releaseInboundReservation(d1, first.reservationId);
     expect((await reserve('retry-key')).status).toBe('accepted');
+  });
+});
+
+// A rate limit must never become a permanent bounce of real mail (contractor
+// review S2): it is held for Junk instead. Only the storage quota still rejects.
+describe('holding instead of bouncing (real migrations)', () => {
+  function holding(limits: Partial<InboundGuardEnv>) {
+    const { d1, sqlite } = migratedDatabase();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-1', 'mailbox@example.test', 'shared')").run();
+    const env = { DB: d1, INBOUND_SENDER_HASH_KEY: HASH_KEY, ...LIMITS_OFF, ...limits } as InboundGuardEnv;
+    const reserve = (deliveryKey: string, senderAddress = 'sender@example.test', messageBytes = 10) =>
+      reserveInboundDeliveryHolding(env, { mailboxId: 'mailbox-1', senderAddress, deliveryKey, messageBytes });
+    return { sqlite, reserve };
+  }
+
+  it('flood of 200 messages from made-up senders: none rejected, the rest held, a later one still gets in', async () => {
+    const { reserve, sqlite } = holding({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 120 });
+    const results = [];
+    for (let i = 0; i < 200; i += 1) results.push(await reserve(`flood-${i}`, `fake-${i}@spam.example`));
+    expect(results.filter((r) => r.status === 'rejected' || r.status === 'unavailable')).toHaveLength(0);
+    expect(results.filter((r) => r.status === 'accepted')).toHaveLength(120);
+    expect(results.filter((r) => r.status === 'held')).toHaveLength(80);
+    // The next real message is held (the caller files it to Junk unless sender is known and DMARC passes), never refused.
+    expect((await reserve('real-1', 'colleague@example.test')).status).toBe('held');
+    const stored = sqlite.prepare("SELECT COUNT(*) AS c FROM mailbox_reservations WHERE reservation_type = 'inbound'").get() as { c: number };
+    expect(stored.c).toBe(201);
+  });
+
+  it('holds a busy sender over the per-sender limit instead of bouncing it', async () => {
+    const { reserve } = holding({ INBOUND_SENDER_MESSAGES_PER_HOUR: 2 });
+    expect((await reserve('a1')).status).toBe('accepted');
+    expect((await reserve('a2')).status).toBe('accepted');
+    expect((await reserve('a3')).status).toBe('held');
+    expect((await reserve('b1', 'other@example.test')).status).toBe('accepted');
+  });
+
+  it('holds over the hourly byte budget', async () => {
+    const { reserve } = holding({ INBOUND_MAILBOX_BYTES_PER_HOUR: 100 });
+    expect((await reserve('x1', 'a@example.test', 100)).status).toBe('accepted');
+    expect((await reserve('x2', 'a@example.test', 50)).status).toBe('held');
+  });
+
+  it('still rejects when the storage quota is full (cannot be waived)', async () => {
+    const { reserve } = holding({ MAILBOX_STORAGE_QUOTA_BYTES: 100 });
+    expect((await reserve('q1', 'a@example.test', 100)).status).toBe('accepted');
+    expect((await reserve('q2', 'a@example.test', 1)).status).toBe('rejected');
+  });
+
+  it('a missing or malformed hash key skips the per-sender limit instead of rejecting all mail', async () => {
+    for (const key of [undefined, 'not-a-key']) {
+      const { d1, sqlite } = migratedDatabase();
+      sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-1', 'mailbox@example.test', 'shared')").run();
+      const env = { DB: d1, ...LIMITS_OFF, INBOUND_SENDER_MESSAGES_PER_HOUR: 1, INBOUND_SENDER_HASH_KEY: key } as InboundGuardEnv;
+      const input = { mailboxId: 'mailbox-1', senderAddress: 'a@example.test', messageBytes: 10 };
+      const one = await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k1' });
+      const two = await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k2' });
+      expect(one).toMatchObject({ status: 'accepted', senderLimitSkipped: true });
+      expect(two).toMatchObject({ status: 'accepted', senderLimitSkipped: true });
+    }
+  });
+
+  it('a duplicate delivery is still a duplicate, even while held', async () => {
+    const { reserve } = holding({ INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1 });
+    expect((await reserve('d1')).status).toBe('accepted');
+    expect((await reserve('d2')).status).toBe('held');
+    expect(await reserve('d2')).toEqual({ status: 'duplicate', reservationId: null });
+  });
+});
+
+describe('holding with a broken hash key and a tripped mailbox limit', () => {
+  it('holds (and notes the skipped sender limit) rather than rejecting', async () => {
+    const { d1, sqlite } = migratedDatabase();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-1', 'mailbox@example.test', 'shared')").run();
+    const env = { DB: d1, ...LIMITS_OFF, INBOUND_MAILBOX_MESSAGES_PER_HOUR: 1, INBOUND_SENDER_MESSAGES_PER_HOUR: 5, INBOUND_SENDER_HASH_KEY: undefined } as InboundGuardEnv;
+    const input = { mailboxId: 'mailbox-1', senderAddress: 'a@example.test', messageBytes: 10 };
+    expect(await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k1' })).toMatchObject({ status: 'accepted', senderLimitSkipped: true });
+    expect(await reserveInboundDeliveryHolding(env, { ...input, deliveryKey: 'k2' })).toMatchObject({ status: 'held', senderLimitSkipped: true });
+  });
+});
+
+
+describe('From-address sender limit and audit row (real migrations)', () => {
+  function rig(limit = 3) {
+    const { d1, sqlite } = migratedDatabase();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-1', 'mailbox@example.test', 'shared')").run();
+    sqlite.prepare("INSERT INTO mailboxes (id, address, type) VALUES ('mailbox-2', 'other@example.test', 'shared')").run();
+    const env = { DB: d1, INBOUND_SENDER_HASH_KEY: HASH_KEY, INBOUND_SENDER_MESSAGES_PER_HOUR: limit, INBOUND_MAILBOX_MESSAGES_PER_HOUR: 0, INBOUND_MAILBOX_BYTES_PER_HOUR: 0 } as InboundGuardEnv;
+    return { d1, sqlite, env };
+  }
+
+  it('holds the message over the limit even when each message has a new envelope sender, and does not keep charging it', async () => {
+    const { env, sqlite } = rig(3);
+    const results: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const reserved = await reserveInboundDelivery(env, { mailboxId: 'mailbox-1', senderAddress: `bounce-${index}@evil.test`, deliveryKey: `k${index}`, messageBytes: 10 });
+      expect(reserved.status).toBe('accepted');
+      results.push(await rekeyInboundSenderToFrom(env, { reservationId: reserved.reservationId, mailboxId: 'mailbox-1', fromAddress: 'Boss+x@Example.test', dmarc: 'pass' }));
+    }
+    expect(results).toEqual(['ok', 'ok', 'ok', 'over', 'over']);
+    const keyed = sqlite.prepare("SELECT COUNT(*) AS n FROM mailbox_reservations WHERE sender_hash != ''").get() as { n: number };
+    expect(keyed.n).toBe(3);
+  });
+
+  it('never touches another mailbox, a row it was not given, or a message that did not pass DMARC', async () => {
+    const { env, sqlite } = rig(1);
+    const one = await reserveInboundDelivery(env, { mailboxId: 'mailbox-1', senderAddress: 'a@evil.test', deliveryKey: 'a1', messageBytes: 10 });
+    const two = await reserveInboundDelivery(env, { mailboxId: 'mailbox-2', senderAddress: 'b@evil.test', deliveryKey: 'b1', messageBytes: 10 });
+    const before = sqlite.prepare('SELECT id, sender_hash FROM mailbox_reservations ORDER BY id').all();
+    expect(await rekeyInboundSenderToFrom(env, { reservationId: one.reservationId, mailboxId: 'mailbox-1', fromAddress: 'ceo@victim.test', dmarc: 'fail' })).toBe('skipped');
+    // Wrong mailbox for the id: the UPDATE matches nothing, the count is for the other mailbox.
+    expect(await rekeyInboundSenderToFrom(env, { reservationId: two.reservationId, mailboxId: 'mailbox-1', fromAddress: 'ceo@victim.test', dmarc: 'pass' })).toBe('ok');
+    const after = sqlite.prepare('SELECT id, sender_hash FROM mailbox_reservations ORDER BY id').all();
+    expect(after).toEqual(before);
+  });
+
+  it('writes one audit row per mailbox per hour into the existing audit_log', async () => {
+    const { d1, sqlite } = rig();
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-1', 'sender')).toBe(true);
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-1', 'mailbox')).toBe(false);
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-2', 'mailbox')).toBe(true);
+    const rows = sqlite.prepare('SELECT event_type, target, actor_role FROM audit_log ORDER BY target').all();
+    expect(rows).toEqual([
+      { event_type: INBOUND_RATE_LIMIT_AUDIT_EVENT, target: 'mailbox-1', actor_role: 'system' },
+      { event_type: INBOUND_RATE_LIMIT_AUDIT_EVENT, target: 'mailbox-2', actor_role: 'system' },
+    ]);
+    // An hour later it writes again.
+    sqlite.prepare("UPDATE audit_log SET timestamp = datetime('now', '-61 minutes')").run();
+    expect(await recordInboundRateLimitAudit(d1, 'mailbox-1', 'sender')).toBe(true);
   });
 });

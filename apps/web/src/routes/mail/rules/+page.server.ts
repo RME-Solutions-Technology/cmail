@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
-import { describeActions, describeConditions, MAX_RULES_PER_MAILBOX } from '@cmail/shared/inbox-rules';
+import { describeActions, describeConditions, MAX_RULES_PER_MAILBOX } from '@stanchion/shared/inbox-rules';
 import { audit } from '#lib/server/db.js';
 import {
   RUN_NOW_LIMIT,

@@ -62,7 +62,7 @@
     {
       label: 'External delivery',
       detail: data.readiness.outboundProvider === 'none'
-        ? 'No provider set; mail only sends between cmail mailboxes.'
+        ? 'No provider set; mail only sends between Stanchion mailboxes.'
         : `${data.readiness.outboundLabel} is selected.`,
       ready: data.readiness.outboundProvider !== 'none',
       optional: true,

@@ -8,9 +8,9 @@
 // - the audit row lands only with the change.
 // A write that matched nothing is counted as changedConcurrently. Personal
 // mailboxes are never written (the 0006 triggers would refuse anyway).
-import type { M365PermsRound } from '@cmail/shared/m365-perms';
-import { M365_PERMS_REPORT_LIMIT } from '@cmail/shared/m365-perms';
-import { key, type CmailLevel, type DiffOp, type LedgerRow, type LiveAssignment, type PersonLink, type SharedLink } from './diff';
+import type { M365PermsRound } from '@stanchion/shared/m365-perms';
+import { M365_PERMS_REPORT_LIMIT } from '@stanchion/shared/m365-perms';
+import { key, type StanchionLevel, type DiffOp, type LedgerRow, type LiveAssignment, type PersonLink, type SharedLink } from './diff';
 
 export interface PermsApplyContext {
   db: D1Database;
@@ -68,7 +68,7 @@ export async function loadAssignments(ctx: PermsApplyContext): Promise<Map<strin
   const map = new Map<string, LiveAssignment>();
   for (const row of results ?? []) {
     if (!LEVELS.has(row.permissions)) continue;
-    map.set(key(row.mailbox_id, row.user_id), { permissions: row.permissions as CmailLevel, assignedAt: row.assigned_at, assignedBy: row.assigned_by ?? null });
+    map.set(key(row.mailbox_id, row.user_id), { permissions: row.permissions as StanchionLevel, assignedAt: row.assigned_at, assignedBy: row.assigned_by ?? null });
   }
   return map;
 }
@@ -81,7 +81,7 @@ export async function loadLedger(ctx: PermsApplyContext): Promise<Map<string, Le
   const map = new Map<string, LedgerRow>();
   for (const row of results ?? []) {
     if (!LEVELS.has(row.level_written)) continue;
-    map.set(key(row.mailbox_id, row.user_id), { level: row.level_written as CmailLevel, assignedAt: row.assigned_at_written });
+    map.set(key(row.mailbox_id, row.user_id), { level: row.level_written as StanchionLevel, assignedAt: row.assigned_at_written });
   }
   return map;
 }

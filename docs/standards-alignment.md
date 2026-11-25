@@ -1,12 +1,22 @@
+---
+title: "Standards and service-management alignment"
+summary: "How Stanchion maps to ISO 27001, ISO 20000-1, ISO 27701 and ITIL, and what the operator must establish."
+applies_to: both
+audience: [reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [assurance.md]
+---
+
 # Standards and service-management alignment
 
 - **Document status:** public alignment guide
 - **Last reviewed:** 14 August 2026
-- **Scope:** the cmail product, an organisation operating a deployment, and any
+- **Scope:** the Stanchion product, an organisation operating a deployment, and any
   separately contracted support service
 
 This guide identifies the standards and service-management practices
-relevant to cmail. It is an implementation and evidence roadmap, not a claim
+relevant to Stanchion. It is an implementation and evidence roadmap, not a claim
 of certification, conformity, legal compliance, or endorsement.
 
 Certification applies to a defined organisation, management system, service,
@@ -22,13 +32,22 @@ They are licensed publications. The descriptions below are independently
 written summaries. An organisation seeking formal conformity must obtain the
 current standards and qualified advice.
 
+**In this article**
+
+- [Primary alignment targets](#primary-alignment-targets)
+- [Conditional and supporting references](#conditional-and-supporting-references)
+- [ITIL service-management practice map](#itil-service-management-practice-map)
+- [Support tiers and accountability](#support-tiers-and-accountability)
+- [Evidence an operator should retain](#evidence-an-operator-should-retain)
+- [Review triggers](#review-triggers)
+
 ## Primary alignment targets
 
-This table shows the standards most relevant to cmail: why each one matters,
-what cmail already provides, and what the operator or support provider must
+This table shows the standards most relevant to Stanchion: why each one matters,
+what Stanchion already provides, and what the operator or support provider must
 still establish.
 
-| Reference | Why it is relevant | What cmail contributes | What the operator or support provider must establish |
+| Reference | Why it is relevant | What Stanchion contributes | What the operator or support provider must establish |
 |---|---|---|---|
 | [ISO/IEC 27001:2022](https://www.iso.org/standard/27001) with Amendment 1:2024 and [ISO/IEC 27002:2022](https://www.iso.org/standard/75652.html) | Information-security management and control guidance | Server-side access checks, delegated identity, session controls, sanitisation, audit/trace records, secret and dependency checks, documented backup and release gates | A scoped ISMS (information security management system), risk and asset ownership, statement of applicability, provider assessment, administrative MFA (multi-factor authentication), monitoring, incident handling, control review, internal audit, and management review |
 | [ISO/IEC 20000-1:2018](https://www.iso.org/standard/70636.html) with Amendment 1:2024 | Service-management-system requirements for planning, transition, delivery, support, measurement, and improvement | Versioned releases, deployment and operations checklists, support documentation, audit/trace surfaces, and rollback guidance | Service scope and ownership, catalogue, support channels/hours, incident/request/problem/change records, service targets, supplier management, reporting, review, and continual improvement |
@@ -56,7 +75,7 @@ below.
 | [ISO 9001:2015](https://www.iso.org/standard/62085.html) with Amendment 1:2024 | A support or development organisation uses a general quality-management system. A replacement edition is under publication as of this review; ISO/IEC 20000-1 remains the more specific service-management target. |
 
 Cloudflare, Microsoft, Google, Postmark, or another supplier having a
-certificate does not transfer that certification to cmail or its operator.
+certificate does not transfer that certification to Stanchion or its operator.
 Record each supplier’s scope, current certificate, contract, data location,
 configuration, and shared-responsibility boundary separately.
 
@@ -67,7 +86,7 @@ descriptive mapping to [PeopleCert’s current ITIL practice
 modules](https://www.peoplecert.org/ITIL4-practices), not a reproduction of
 the licensed practice guides or a claim of PeopleCert endorsement.
 
-| ITIL practice | cmail operating application |
+| ITIL practice | Stanchion operating application |
 |---|---|
 | Service desk | One visible route for help, ownership from intake to closure, useful communications, and feedback. The organisation’s trained Level 1 contact is the user-facing desk. |
 | Incident management | Restore normal service quickly using recorded impact, urgency, severity, timestamps, owner, escalation, workaround, recovery, and communications. |

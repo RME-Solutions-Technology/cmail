@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import type { AuditRecord } from '@cmail/shared/types';
+import type { AuditRecord } from '@stanchion/shared/types';
 import { adminLoaderFailure } from '#lib/server/admin-loader-error.js';
 
 type AuditRow = AuditRecord & { actor_email?: string; actor_display_name?: string };

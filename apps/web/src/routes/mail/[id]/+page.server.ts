@@ -1,7 +1,7 @@
 import { redirect, error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { Message, Attachment } from '@cmail/shared/types';
-import { buildIcs, parseIcs } from '@cmail/shared/ics';
+import type { Message, Attachment } from '@stanchion/shared/types';
+import { buildIcs, parseIcs } from '@stanchion/shared/ics';
 import { sanitizeEmailHtmlWithLinkGuard, type RiskyLink } from '#lib/server/sanitize-email.js';
 import { linkSignature } from '#lib/server/link-check.js';
 import { resolveInlineImages } from '#lib/server/inline-images.js';
@@ -21,6 +21,8 @@ import { sanitizeSenderDisplayName, sendEmail } from '#lib/server/outbound.js';
 import { consumeCalendarOutboundLimits } from '#lib/server/calendar-outbound.js';
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 import { deliveryStatus, type DeliveryEventView, type DeliveryStatus } from '#lib/mail/delivery-status.js';
+import { mailboxFocusEnabled } from '#lib/server/focused-inbox.js';
+import { FOCUS_REASON_TEXT, isFocusReason } from '@stanchion/shared/focused-inbox';
 
 interface InviteViewModel {
   eventId: string | null;
@@ -34,7 +36,7 @@ interface InviteViewModel {
   status: 'confirmed' | 'cancelled';
   organizerAddress: string;
   organizerSelf: boolean;
-  /** Present when the invite carries a recurrence rule. Shown as-is; cmail does not expand occurrences. */
+  /** Present when the invite carries a recurrence rule. Shown as-is; Stanchion does not expand occurrences. */
   rrule: string | null;
   attendees: Array<{ address: string; name: string; partstat: string }>;
   myPartstat: string | null;
@@ -85,6 +87,7 @@ async function loadInvite(
   messageId: string,
   myAddress: string,
   icsAttachment: Attachment,
+  canSend: boolean,
 ): Promise<InviteViewModel | null> {
   const event = await db.prepare('SELECT * FROM calendar_events WHERE message_id = ?')
     .bind(messageId).first<CalendarEventRow>();
@@ -109,7 +112,7 @@ async function loadInvite(
       rrule: event.rrule,
       attendees: attendees.map((row) => ({ address: row.address, name: row.display_name, partstat: row.partstat })),
       myPartstat: mine?.partstat ?? null,
-      canRespond: event.status !== 'cancelled' && event.organizer_self === 0 && Boolean(mine),
+      canRespond: canSend && event.status !== 'cancelled' && event.organizer_self === 0 && Boolean(mine),
     };
   }
 
@@ -220,7 +223,17 @@ export const load: PageServerLoad = async ({ locals, platform, params, url }) =>
 
   const icsAttachment = allAttachments.find((attachment) => isIcsAttachment(attachment.content_type));
   const invite = icsAttachment
-    ? await loadInvite(env.DB, env.STORAGE, message.id, message.mailbox_address, icsAttachment)
+    ? await loadInvite(env.DB, env.STORAGE, message.id, message.mailbox_address, icsAttachment, message.mailbox_permissions !== 'read')
+    : null;
+
+  // Focused Inbox (docs/focused-inbox.md): only for a received Inbox message
+  // in a mailbox that is sorted now. null renders nothing.
+  const focus = message.folder === 'inbox' && message.direction !== 'outbound'
+    && await mailboxFocusEnabled(env.DB, message.mailbox_id)
+    ? {
+      current: message.focus_class === 'other' ? 'other' as const : 'focused' as const,
+      why: isFocusReason(message.focus_reason) ? FOCUS_REASON_TEXT[message.focus_reason] : 'Not sorted yet: it arrived before Focused Inbox was on.',
+    }
     : null;
 
   return {
@@ -252,6 +265,8 @@ export const load: PageServerLoad = async ({ locals, platform, params, url }) =>
       : '',
     returnSearch: (url.searchParams.get('q') || '').slice(0, 200),
     returnPage: Math.max(1, Math.min(10000, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1)),
+    returnView: url.searchParams.get('view') === 'other' ? 'other' : '',
+    focus,
   };
 };
 
@@ -273,6 +288,7 @@ export const actions: Actions = {
        INNER JOIN mailbox_assignments ma ON m.mailbox_id = ma.mailbox_id
        INNER JOIN mailboxes mb ON mb.id = m.mailbox_id
        WHERE m.id = ? AND ma.user_id = ? AND mb.status = 'active'
+         AND ma.permissions IN ('send-as', 'full')
          AND ${messageOwnershipPredicate('m')}`,
     ).bind(params.id, locals.user.id, locals.user.id).first<{
       id: string;

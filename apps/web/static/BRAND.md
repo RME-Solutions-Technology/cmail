@@ -1,4 +1,4 @@
-# cmail brand assets
+# Stanchion brand assets
 
 All assets are SVG — they scale perfectly, render inline, and add zero runtime
 weight. The two PNGs exist only because the PWA manifest requires raster icons.
@@ -45,7 +45,7 @@ sits on the mark, so the symbol and the word read as one family.
 > is degenerate — those glyphs disappear entirely.
 
 In the app the lockup is a component (`#lib/ui/Brand.svelte`), which draws the
-wordmark when `APP_NAME` is still `cmail` and falls back to the display face
+wordmark when `APP_NAME` is still the legacy name `cmail` and falls back to the display face
 with matching tracking for whitelabel deployments.
 
 ## Palette

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { handle, handleError } from './hooks.server';
 import { buildSessionCookie, createSessionToken } from './lib/server/session';
 
@@ -172,7 +172,7 @@ describe('session cookie checks', () => {
 });
 
 describe('central admin authorization', () => {
-  it('does not authenticate Access headers or an Access cookie as a cmail session', async () => {
+  it('does not authenticate Access headers or an Access cookie as a Stanchion session', async () => {
     const { response, resolve } = await invoke({
       path: '/admin',
       headers: {
@@ -279,6 +279,13 @@ describe('central ICT policy gate', () => {
       expect(resolve).toHaveBeenCalledOnce();
     },
   );
+
+  it.each(['/help/first-sign-in', '/help', '/help/getting-started'])('serves the public help page %s with no session: 200, not a redirect to sign-in', async (path) => {
+    const { response, resolve } = await invoke({ path });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('location')).toBeNull();
+    expect(resolve).toHaveBeenCalledOnce();
+  });
 });
 
 describe('Cloudflare edge rewriting', () => {

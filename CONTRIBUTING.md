@@ -1,4 +1,4 @@
-# Contributing to cmail
+# Contributing to Stanchion
 
 Contributions of code, tests, documentation, accessibility work, security hardening, and deployment experience are welcome. By participating, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -13,7 +13,7 @@ Keep deployments, credentials, customer information, and organisation-specific m
 ## Local setup
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git
+git clone https://github.com/RME-Solutions-Technology/stanchion.git
 cd cmail
 corepack enable
 pnpm install --frozen-lockfile

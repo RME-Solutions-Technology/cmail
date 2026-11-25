@@ -1,6 +1,31 @@
+---
+title: "Getting started"
+summary: "How to set up Stanchion locally and create its Cloudflare storage: the first step for primary mail."
+applies_to: primary
+audience: [operator, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [configuration.md, deployment.md, credentials.md]
+---
+
 # Getting started
 
-This guide takes a new cmail deployment from an empty Cloudflare account to local development. See [deployment.md](deployment.md) for the production rollout.
+This guide takes a new Stanchion deployment from an empty Cloudflare account to local development. See [deployment.md](deployment.md) for the production rollout.
+
+**In this article**
+
+- [Prerequisites](#prerequisites)
+- [Decide the deployment shape](#decide-the-deployment-shape)
+- [Install](#install)
+- [Create Cloudflare resources](#create-cloudflare-resources)
+- [Create local secret configuration](#create-local-secret-configuration)
+- [Initialise local storage](#initialise-local-storage)
+- [Register OAuth callbacks](#register-oauth-callbacks)
+- [Bootstrap local administration](#bootstrap-local-administration)
+- [Optional browser notifications](#optional-browser-notifications)
+- [Optional external outbound delivery](#optional-external-outbound-delivery)
+- [Start the applications](#start-the-applications)
+- [First useful checks](#first-useful-checks)
 
 ## Prerequisites
 
@@ -10,7 +35,7 @@ This guide takes a new cmail deployment from an empty Cloudflare account to loca
 - A Google OAuth client, Microsoft Entra application, or both
 - Cloudflare Email Service (recommended) or Postmark only when external outbound delivery is required
 
-Provider account setup changes over time. Use this guide for cmail's expected
+Provider account setup changes over time. Use this guide for Stanchion's expected
 values, but confirm the exact steps in each provider's own current
 documentation.
 
@@ -20,10 +45,10 @@ Choose these values before creating resources:
 
 | Setting | Example | Purpose |
 |---|---|---|
-| Pages project | `cmail-web` | Hosts the SvelteKit application |
-| Worker name | `cmail-email-worker` | Receives Email Routing events and privately submits native Cloudflare outbound mail |
-| D1 database | `cmail-db` | Stores users, mailbox metadata, messages, audit, and trace data |
-| R2 bucket | `cmail-storage` | Stores message bodies and attachments |
+| Pages project | `stanchion-web` | Hosts the SvelteKit application |
+| Worker name | `stanchion-email-worker` | Receives Email Routing events and privately submits native Cloudflare outbound mail |
+| D1 database | `stanchion-db` | Stores users, mailbox metadata, messages, audit, and trace data |
+| R2 bucket | `stanchion-storage` | Stores message bodies and attachments |
 | `APP_URL` | `https://mail.example.org` | Public origin and OAuth callback base |
 | `MAIL_DOMAIN` | `example.org` | Domain used for mailbox addresses |
 | `OUTBOUND_PROVIDER` | `cloudflare` | Selects Cloudflare Email Service; `postmark`, `auto`, and non-sending `none` are alternatives |
@@ -33,7 +58,7 @@ Choose these values before creating resources:
 ## Install
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git
+git clone https://github.com/RME-Solutions-Technology/stanchion.git
 cd cmail
 corepack enable
 pnpm install --frozen-lockfile
@@ -131,7 +156,7 @@ For Microsoft sign-in, `MICROSOFT_TENANT_ID=common` works for both Microsoft
 must support both account types. Use a tenant GUID instead if only one Entra
 tenant should be allowed.
 
-Both providers use only the `openid email profile` scope. cmail calls
+Both providers use only the `openid email profile` scope. Stanchion calls
 UserInfo with the access token (Microsoft's endpoint is
 `https://graph.microsoft.com/oidc/userinfo`), and stores the provider plus
 its permanent `sub` ID as the account's real identity — not email, UPN, or
@@ -139,8 +164,8 @@ ID-token claims.
 
 A third sign-in method, an invitation-scoped email one-time code for
 invitees hosted by neither Google nor Microsoft, needs no callback
-registration and is on by default. Set `EMAIL_OTP_ENABLED=false` in
-`.dev.vars` to turn it off locally, or add `TURNSTILE_SITE_KEY` and
+registration and is off by default. Set `EMAIL_OTP_ENABLED=true` in
+`.dev.vars` to try it locally, or add `TURNSTILE_SITE_KEY` and
 `TURNSTILE_SECRET_KEY` to try the optional bot check on its request form.
 See [Email one-time-code sign-in](configuration.md#email-one-time-code-sign-in).
 

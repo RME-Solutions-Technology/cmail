@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Standby switch: point a domain's mail at cmail (Cloudflare Email Routing)
+// Standby switch: point a domain's mail at Stanchion (Cloudflare Email Routing)
 // in one DNS change. DRY RUN unless --apply is given AND the domain is typed
 // at an interactive terminal. DNS changes are run by a person, after the
 // owner's yes. Runbook, limits and what is proven: docs/standby-switch.md.
@@ -49,12 +49,12 @@ const ID_RX = /^[A-Za-z0-9-]{1,64}$/;
 
 export const SWITCH_HELP = `Usage: node scripts/standby/switch.mjs --domain <apex> --worker <email-worker-name> [options]
 
-Points the domain's apex MX records at Cloudflare Email Routing (cmail) in one
+Points the domain's apex MX records at Cloudflare Email Routing (Stanchion) in one
 DNS change, after checks. Dry run unless --apply. Never run --apply without
 the owner's yes. Read docs/standby-switch.md first.
 
   --domain <apex>              The mail domain; must be a Cloudflare zone apex.
-  --worker <name>              The cmail email Worker the catch-all must send to.
+  --worker <name>              The Stanchion email Worker the catch-all must send to.
   --apply                      Make the change (asks you to type the domain).
   --max-ttl <seconds>          Refuse if an MX TTL is above this (default ${DEFAULT_MAX_TTL}).
   --probe-d1 <database-id>     Read the standby probe light from this D1
@@ -149,7 +149,7 @@ export async function runSwitch(argv, deps) {
     redact = client.redact;
     const now = deps.now();
 
-    out(`cmail standby switch: ${opts.apply ? 'APPLY (will change live DNS after you confirm)' : 'DRY RUN (nothing will change)'}`);
+    out(`Stanchion standby switch: ${opts.apply ? 'APPLY (will change live DNS after you confirm)' : 'DRY RUN (nothing will change)'}`);
     out(`Domain: ${opts.domain}`);
 
     const zoneCheck = checkZone(await client.findZones(opts.domain), opts.domain);
@@ -318,7 +318,7 @@ export async function runSwitch(argv, deps) {
 
     // Apply.
     out('');
-    out(`About to change the live MX records of ${opts.domain}. Mail will start arriving in cmail.`);
+    out(`About to change the live MX records of ${opts.domain}. Mail will start arriving in Stanchion.`);
     const answer = await deps.prompt(`Type the domain name (${opts.domain}) to go ahead, anything else to stop: `);
     if (String(answer ?? '').trim().toLowerCase() !== opts.domain) throw new Refusal('The confirmation did not match.');
 

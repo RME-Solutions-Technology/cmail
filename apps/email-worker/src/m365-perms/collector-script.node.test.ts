@@ -12,10 +12,16 @@ import { parseSnapshot } from './snapshot';
 
 const DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../container/m365-perms');
 const SCRIPT = readFileSync(join(DIR, 'collect.ps1'), 'utf8');
+// pwsh start-up alone can take several seconds on CI runners, far past
+// vitest's 5-second default. The harness process gets HARNESS_TIMEOUT_MS and
+// the test HARNESS_TEST_TIMEOUT_MS, so a slow run fails on the process limit
+// (with its output) before vitest gives up.
+const HARNESS_TIMEOUT_MS = 60_000;
+const HARNESS_TEST_TIMEOUT_MS = HARNESS_TIMEOUT_MS + 30_000;
 // collect.ps1 needs PowerShell 7.6 or later (#Requires). CI also runs the
 // harness in its own job with PowerShell 7.6.10 installed (ci.yml), so it is
 // never silently skipped there.
-const pwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '"$($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"'], { encoding: 'utf8' });
+const pwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '"$($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)"'], { encoding: 'utf8', timeout: 30_000 });
 const [major, minor] = (pwsh.status === 0 ? pwsh.stdout.trim() : '0.0').split('.').map(Number);
 const hasPwsh = major > 7 || (major === 7 && minor >= 6);
 if (!hasPwsh) console.warn('collect.ps1 harness skipped here: PowerShell 7.6 or later is not installed (the CI collector job runs it)');
@@ -51,7 +57,7 @@ describe.skipIf(!hasPwsh)('collect.ps1 harness (mocked cmdlets)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cmail-perms-'));
     try {
       const out = join(dir, 'snapshot.json');
-      const run = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', join(DIR, 'collect.Tests.ps1'), '-OutFile', out], { encoding: 'utf8', timeout: 120_000 });
+      const run = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', join(DIR, 'collect.Tests.ps1'), '-OutFile', out], { encoding: 'utf8', timeout: HARNESS_TIMEOUT_MS });
       expect(run.stderr).toBe('');
       expect(run.status).toBe(0);
       const text = readFileSync(out, 'utf8');
@@ -69,5 +75,5 @@ describe.skipIf(!hasPwsh)('collect.ps1 harness (mocked cmdlets)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, HARNESS_TEST_TIMEOUT_MS);
 });

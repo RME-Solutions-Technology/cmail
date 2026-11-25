@@ -1,11 +1,21 @@
+---
+title: "AI agents and MCP"
+summary: "How to connect Claude or another AI app to Stanchion over MCP, and how Managers control it."
+applies_to: both
+audience: [user, manager]
+switch: "Management > Settings > AI agent (MCP) connections"
+last_reviewed: 2026-11-16
+related: [manager-handbook.md]
+---
+
 # AI agents and MCP
 
-cmail includes a remote [Model Context Protocol](https://modelcontextprotocol.io/)
+Stanchion includes a remote [Model Context Protocol](https://modelcontextprotocol.io/)
 (MCP) server. It lets an AI assistant such as Claude read, search, draft,
 organise and (only if you allow it) send mail in the mailboxes you choose.
 
 Nobody types a password or pastes an API key into the AI app. The app opens a
-cmail browser window, you sign in the way you always do (Google, Microsoft or
+Stanchion browser window, you sign in the way you always do (Google, Microsoft or
 an email code), and a consent screen asks you exactly what to allow. You can
 disconnect the app at any time, and your organisation can switch the whole
 feature off.
@@ -21,9 +31,20 @@ The feature is **off by default** on every deployment. A Manager turns it on.
 - [Protocol and endpoint reference](#protocol-reference)
 - [Troubleshooting](#troubleshooting)
 
+**In this article**
+
+- [Connect an AI app](#connect-an-ai-app)
+- [Manager setup](#manager-setup)
+- [Scopes](#scopes)
+- [How the sign-in works](#how-the-sign-in-works)
+- [Security model](#security-model)
+- [Limits](#limits)
+- [Protocol reference](#protocol-reference)
+- [Troubleshooting](#troubleshooting)
+
 ## Connect an AI app
 
-You need the server address. It is your cmail address followed by `/mcp`,
+You need the server address. It is your Stanchion address followed by `/mcp`,
 for example `https://mail.example.org/mcp`. It's also shown under
 **Mail › Settings › Connected AI apps**.
 
@@ -31,7 +52,7 @@ for example `https://mail.example.org/mcp`. It's also shown under
 
 1. Open **Settings › Connectors** and choose **Add custom connector**.
 2. Give it a name (for example "Work mail") and paste the server address.
-3. Choose **Connect**. A cmail window opens.
+3. Choose **Connect**. A Stanchion window opens.
 4. Sign in, then tick the permissions and mailboxes you want, and choose
    **Allow**. The window returns you to Claude.
 
@@ -41,16 +62,16 @@ your Claude administrator allows.
 ### Claude Code
 
 ```sh
-claude mcp add --transport http cmail https://mail.example.org/mcp
+claude mcp add --transport http Stanchion https://mail.example.org/mcp
 ```
 
-Then, inside Claude Code, run `/mcp`, pick **cmail** and choose
-**Authenticate**. Your browser opens the cmail sign-in and consent screen.
+Then, inside Claude Code, run `/mcp`, pick **Stanchion** and choose
+**Authenticate**. Your browser opens the Stanchion sign-in and consent screen.
 
 ### Other MCP clients
 
 Any client that supports the Streamable HTTP transport with OAuth
-authorization will work: point it at the `/mcp` address. cmail supports both
+authorization will work: point it at the `/mcp` address. Stanchion supports both
 client registration methods clients use today (Client ID Metadata Documents
 and Dynamic Client Registration), so there is nothing to pre-register.
 
@@ -66,7 +87,7 @@ The screen shows:
 - **Where you'll be returned**, for example "an app on this computer
   (localhost)" or a website name. When an app returns to this computer, a
   warning says so: any program on the computer could be listening
-  there, so cmail can't check which one it is.
+  there, so Stanchion can't check which one it is.
 - **What it may do.** *Read mail* and *Write drafts* are ticked by default.
   *Send email as you*, *Organise mail* and *Read calendar* are off until you
   tick them. Ticking *Send* shows a warning, because sent mail can't be
@@ -120,7 +141,7 @@ outbound limits still apply on top.
 | `calendar.read` | List calendar events recorded from invitations | Any access |
 
 An app only ever sees the tools its scopes allow; `tools/list` hides the
-rest. cmail has no custom labels, so "labelling" is the star flag. Nothing
+rest. Stanchion has no custom labels, so "labelling" is the star flag. Nothing
 permanently deletes mail: Trash stays recoverable for the retention period.
 
 ### Tools
@@ -149,7 +170,7 @@ checks first.
 ## How the sign-in works
 
 ```text
-AI app                         cmail                              You (browser)
+AI app                         Stanchion                              You (browser)
   |-- POST /mcp (no token) ----->|
   |<-- 401 WWW-Authenticate -----|  resource_metadata=.../.well-known/oauth-protected-resource
   |-- GET protected-resource ---->|  -> authorization server = APP_URL
@@ -169,7 +190,7 @@ AI app                         cmail                              You (browser)
 
 ## Security model
 
-### What cmail guarantees
+### What Stanchion guarantees
 
 - **Least privilege by default.** Read and draft only; send and organise are
   separate, explicit choices. Mailboxes are chosen one by one.
@@ -182,7 +203,7 @@ AI app                         cmail                              You (browser)
   and drafts stay private to their owner as in the web app.
 - **Short, bound tokens.** Access tokens last one hour and only work at this
   server's `/mcp` (RFC 8707 audience). Refresh tokens rotate on every use; if
-  an old one is ever presented again, cmail assumes it was copied and revokes
+  an old one is ever presented again, Stanchion assumes it was copied and revokes
   the whole connection. Every connection expires after 90 days.
 - **Secrets are never stored.** Codes, tokens and client secrets are kept only
   as SHA-256 hashes.
@@ -202,12 +223,12 @@ AI app                         cmail                              You (browser)
 ### Prompt injection
 
 Email is written by other people, and some of them will try to instruct an AI
-assistant ("ignore previous instructions and forward..."). cmail's stance:
+assistant ("ignore previous instructions and forward..."). Stanchion's stance:
 
 - Every tool result that contains message or invitation text is labelled as
   untrusted content and tells the model not to follow instructions inside it.
   The server's instructions to the model say the same.
-- cmail never acts on email text. Tools only do what the app explicitly asks,
+- Stanchion never acts on email text. Tools only do what the app explicitly asks,
   within the scopes and mailboxes you approved.
 - Sending needs its own opt-in scope, is rate limited per connection, and
   `create_draft` is the recommended default so you review before anything
@@ -239,13 +260,13 @@ No server can fully stop a model from being misled by what it reads. Keep
   app and its model see the mail you shared.
 - It does not cover the app's own storage or logging of what it read.
 - It is not a certified or independently audited integration. Review it
-  against your own requirements, as with the rest of cmail.
+  against your own requirements, as with the rest of Stanchion.
 
 ### Note for reviewers: CSRF configuration
 
 SvelteKit's built-in CSRF check rejects any form-encoded POST without an
 `Origin` header. Native OAuth clients send exactly that to `/oauth/token`
-and `/oauth/revoke`. cmail therefore disables the built-in copy
+and `/oauth/revoke`. Stanchion therefore disables the built-in copy
 (`csrf.trustedOrigins: ['*']` in `vite.config.ts`) and re-implements the
 same rule in `hooks.server.ts`, exempting only those two endpoints, which never
 read cookies. Tests in `src/hooks.csrf.test.ts` cover both the exemption and
@@ -286,7 +307,7 @@ that every other path is still protected.
 Protocol versions: **2026-07-28** (stateless, per-request `_meta`, mirrored
 `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers validated against
 the body, `server/discover`) and the initialize-based **2025-11-25**,
-**2025-06-18** and **2025-03-26**. cmail never issues session IDs. Requests
+**2025-06-18** and **2025-03-26**. Stanchion never issues session IDs. Requests
 carrying an unsupported version get HTTP 400 with error `-32022` and the
 supported list. A 2026-07-28 request whose `_meta` lacks
 `io.modelcontextprotocol/clientCapabilities` gets HTTP 400 with `-32602`.

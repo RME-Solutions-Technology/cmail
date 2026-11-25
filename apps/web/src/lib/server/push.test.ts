@@ -7,7 +7,7 @@ import {
   publicPushKey,
   pushConfiguration,
   sendNewMailNotifications,
-} from '@cmail/shared/push';
+} from '@stanchion/shared/push';
 
 const encoder = new TextEncoder();
 
@@ -132,7 +132,7 @@ async function notificationDeliveryFixture(
   return {
     env: {
       DB,
-      APP_NAME: 'Cmail',
+      APP_NAME: 'Stanchion',
       VAPID_PUBLIC_KEY: encodeBase64Url(vapidPublic),
       VAPID_PRIVATE_KEY: vapidPrivate.d!,
       VAPID_SUBJECT: 'mailto:operator@example.com',
@@ -185,18 +185,18 @@ describe('Web Push configuration', () => {
   });
 
   it('creates privacy-safe, mailbox-specific notification routes and dedupe tags', () => {
-    expect(newMailNotificationPayload(' Cmail\n', 'mailbox_1', 'message-1')).toEqual({
-      title: 'Cmail',
+    expect(newMailNotificationPayload(' Stanchion\n', 'mailbox_1', 'message-1')).toEqual({
+      title: 'Stanchion',
       body: 'A new message arrived.',
       url: '/mail/message-1?mailbox=mailbox_1',
       tag: 'cmail:mailbox_1:message-1',
     });
-    expect(newMailNotificationPayload('cmail', 'mailbox 1', 'message-1')).toBeNull();
-    expect(newMailNotificationPayload('cmail', 'mailbox-1', '../message')).toBeNull();
+    expect(newMailNotificationPayload('Stanchion', 'mailbox 1', 'message-1')).toBeNull();
+    expect(newMailNotificationPayload('Stanchion', 'mailbox-1', '../message')).toBeNull();
   });
 
   it('shows the sender and subject on the lock screen when supplied, capped and stripped of control characters', () => {
-    expect(newMailNotificationPayload('Cmail', 'mailbox-1', 'message-1', ' Priya Patel ', ' Quarterly numbers\n')).toEqual({
+    expect(newMailNotificationPayload('Stanchion', 'mailbox-1', 'message-1', ' Priya Patel ', ' Quarterly numbers\n')).toEqual({
       title: 'Priya Patel',
       body: 'Quarterly numbers',
       url: '/mail/message-1?mailbox=mailbox-1',
@@ -205,8 +205,8 @@ describe('Web Push configuration', () => {
 
     // Falls back per-field -- not to the fully generic alert -- when the
     // caller supplied empty strings, e.g. a message with no subject line.
-    expect(newMailNotificationPayload('Cmail', 'mailbox-1', 'message-1', '', '')).toEqual({
-      title: 'Cmail',
+    expect(newMailNotificationPayload('Stanchion', 'mailbox-1', 'message-1', '', '')).toEqual({
+      title: 'Stanchion',
       body: 'New message',
       url: '/mail/message-1?mailbox=mailbox-1',
       tag: 'cmail:mailbox-1:message-1',
@@ -216,7 +216,7 @@ describe('Web Push configuration', () => {
     const bellChar = String.fromCharCode(7);
     const longSender = `Attacker${controlChar.repeat(3)}${'A'.repeat(100)}`;
     const longSubject = `${'S'.repeat(200)}${bellChar}`;
-    expect(newMailNotificationPayload('Cmail', 'mailbox-1', 'message-1', longSender, longSubject)).toEqual({
+    expect(newMailNotificationPayload('Stanchion', 'mailbox-1', 'message-1', longSender, longSubject)).toEqual({
       title: `Attacker${'A'.repeat(52)}`,
       body: 'S'.repeat(120),
       url: '/mail/message-1?mailbox=mailbox-1',
@@ -388,7 +388,7 @@ describe('Web Push configuration', () => {
       p256dh: encodeBase64Url(subscriberPublic),
       auth: encodeBase64Url(authenticationSecret),
     };
-    const payload = JSON.stringify({ title: 'cmail', body: 'A new message arrived.', url: '/mail/message-1' });
+    const payload = JSON.stringify({ title: 'Stanchion', body: 'A new message arrived.', url: '/mail/message-1' });
     const now = Date.UTC(2026, 7, 3, 10, 0, 0);
 
     const request = await createWebPushRequest(configuration, subscription, payload, now);

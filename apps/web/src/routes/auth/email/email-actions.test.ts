@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import type { EnrollmentRecord } from '#lib/server/identity.js';
 
 // The email one-time-code sign-in actions. Every pre-authentication refusal
@@ -60,6 +60,7 @@ vi.mock('#lib/server/session.js', () => ({
   SESSION_COOKIE: 'cmail_session',
   SESSION_COOKIE_MAX_AGE_SECONDS: 3600,
   createSessionToken: mocks.createSessionToken,
+  sqlDateTime: (moment: Date) => moment.toISOString().slice(0, 19).replace('T', ' '),
 }));
 vi.mock('#lib/server/travel.js', () => ({
   COUNTRY_PENDING_MESSAGE: 'Sign-in from this country needs approval.',
@@ -172,7 +173,7 @@ beforeEach(() => {
   mocks.emailOtpEnabled.mockReturnValue(true);
   mocks.createOtpProof.mockResolvedValue('signed-proof');
   mocks.consumeRateLimit.mockResolvedValue({ allowed: true });
-  mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: 'no-reply@example.com', systemFromName: 'Mail', orgName: 'Example', appName: 'cmail', appUrl: '' });
+  mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: 'no-reply@example.com', systemFromName: 'Mail', orgName: 'Example', appName: 'Stanchion', appUrl: '' });
   mocks.countryAllowed.mockReturnValue(true);
   mocks.turnstileEnabled.mockReturnValue(false);
   mocks.verifyTurnstile.mockResolvedValue(true);
@@ -249,7 +250,7 @@ describe('request a code', () => {
 
   it.each([
     ['there is no outbound provider', () => mocks.detectProvider.mockReturnValue('none')],
-    ['there is no system From address', () => mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: '', orgName: 'Example', appName: 'cmail' })],
+    ['there is no system From address', () => mocks.loadOrgSettings.mockResolvedValue({ signInCountries: [], systemEmail: '', orgName: 'Example', appName: 'Stanchion' })],
   ])('audits, but does not reveal, a deployment that cannot send mail because %s', async (_label, arrange) => {
     arrange();
     const { result } = await request();

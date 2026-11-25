@@ -3,8 +3,23 @@ import type { Actions, PageServerLoad } from './$types';
 import { audit, generateId } from '#lib/server/db.js';
 import {
   ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL,
+  assigneeDomainsParam,
   getEligibleMailboxAssignee,
 } from '#lib/server/mailbox-assignees.js';
+import { orgDomainsForDisplay } from '#lib/server/org-domains.js';
+import { orgDomains, type OrgDomains } from '@stanchion/shared/org-domains';
+
+const DOMAINS_UNAVAILABLE = 'Mail domains are temporarily unavailable. Try again shortly.';
+
+/** The organisation's domains for an action, or null (logged) when they cannot be read. */
+async function orgDomainsForAction(env: { MAIL_DOMAIN?: unknown; M365_TENANT_ID?: unknown; DB: D1Database }): Promise<OrgDomains | null> {
+  try {
+    return await orgDomains(env, env.DB);
+  } catch (caught) {
+    console.error('Organisation domains could not be read for an org chart action', caught instanceof Error ? caught.name : 'UnknownError');
+    return null;
+  }
+}
 import { isAddressAtDomain, normalizeDomain, normalizeEmail } from '#lib/server/validation.js';
 
 const ID_RX = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -294,7 +309,7 @@ function parsePositionInput(data: FormData): PositionInput | null {
 
 async function validatePositionReferences(
   db: D1Database,
-  mailDomain: string,
+  mailDomains: readonly string[],
   input: PositionInput,
   retainedPosition?: { user_id: string | null; work_email: string },
 ): Promise<string | null> {
@@ -325,8 +340,8 @@ async function validatePositionReferences(
   }
 
   if (input.workEmail) {
-    const domain = normalizeDomain(mailDomain);
-    if (!domain || !isAddressAtDomain(input.workEmail, domain)) {
+    // Any of the organisation's domains (docs/multi-domain.md).
+    if (!mailDomains.some((domain) => isAddressAtDomain(input.workEmail, domain))) {
       return 'Work email must use your organisation\'s mail domain';
     }
     const assignedMailbox = await db.prepare(
@@ -375,11 +390,11 @@ export const load: PageServerLoad = async ({ locals, platform }) => {
        INNER JOIN mailboxes m ON m.owner_user_id = u.id
        WHERE u.status IN ('active', 'pending')
          AND m.type = 'personal' AND m.status = 'active'
-         AND lower(substr(m.address, instr(m.address, '@') + 1)) = ?
+         AND lower(substr(m.address, instr(m.address, '@') + 1)) IN (SELECT value FROM json_each(?))
        GROUP BY u.id
        HAVING COUNT(*) = 1
        ORDER BY u.display_name, m.address, u.id`,
-    ).bind(normalizeDomain(env.MAIL_DOMAIN) || '__invalid__').all<{ id: string; display_name: string; status: string; personal_mailbox_address: string }>(),
+    ).bind(assigneeDomainsParam((await orgDomainsForDisplay(env)).domains) || '[]').all<{ id: string; display_name: string; status: string; personal_mailbox_address: string }>(),
     env.DB.prepare(
       `SELECT m.id, m.address, m.display_name, m.type, m.status, ma.user_id
        FROM mailboxes m
@@ -679,7 +694,9 @@ export const actions: Actions = {
     const data = await request.formData();
     const input = parsePositionInput(data);
     if (!input) return fail(400, { error: 'Enter valid position details' });
-    const referenceError = await validatePositionReferences(env.DB, env.MAIL_DOMAIN, input);
+    const domains = await orgDomainsForAction(env);
+    if (!domains) return fail(503, { error: DOMAINS_UNAVAILABLE });
+    const referenceError = await validatePositionReferences(env.DB, domains.domains, input);
     if (referenceError) return fail(400, { error: referenceError });
 
     const id = generateId();
@@ -726,7 +743,9 @@ export const actions: Actions = {
       'SELECT id, user_id, work_email FROM organization_positions WHERE id = ?',
     ).bind(id).first<{ id: string; user_id: string | null; work_email: string }>();
     if (!existing) return fail(404, { error: 'Position not found' });
-    const referenceError = await validatePositionReferences(env.DB, env.MAIL_DOMAIN, input, existing);
+    const domains = await orgDomainsForAction(env);
+    if (!domains) return fail(503, { error: DOMAINS_UNAVAILABLE });
+    const referenceError = await validatePositionReferences(env.DB, domains.domains, input, existing);
     if (referenceError) return fail(400, { error: referenceError });
 
     try {
@@ -807,9 +826,14 @@ export const actions: Actions = {
     }
     if (!validSingleLine(displayName, 120, false)) return fail(400, { error: 'Display name is too long' });
 
-    const domain = normalizeDomain(env.MAIL_DOMAIN);
+    // New shared mailboxes here use MAIL_DOMAIN; delegates may be on any
+    // organisation domain (docs/multi-domain.md).
+    const domains = await orgDomainsForAction(env);
+    if (!domains) return fail(503, { error: DOMAINS_UNAVAILABLE });
+    const domain = domains.primary;
     if (!domain) return fail(503, { error: 'MAIL_DOMAIN is not configured' });
-    const user = await getEligibleMailboxAssignee(env.DB, domain, userId);
+    const domainsParam = assigneeDomainsParam(domains.domains) || '[]';
+    const user = await getEligibleMailboxAssignee(env.DB, domains.domains, userId);
     if (!user) return fail(409, { error: 'Choose an active or pending user with an eligible mailbox on this domain' });
 
     let mailboxToCreate: { id: string; address: string; displayName: string } | null = null;
@@ -846,7 +870,7 @@ export const actions: Actions = {
         mailboxToCreate.id,
         mailboxToCreate.address,
         mailboxToCreate.displayName,
-        domain,
+        domainsParam,
         user.userId,
       ));
     }
@@ -860,7 +884,7 @@ export const actions: Actions = {
          permissions = excluded.permissions,
          assigned_at = excluded.assigned_at,
          assigned_by = excluded.assigned_by`,
-    ).bind(user.userId, permission, locals.user.id, mailbox.id, domain, user.userId));
+    ).bind(user.userId, permission, locals.user.id, mailbox.id, domainsParam, user.userId));
 
     try {
       const results = await env.DB.batch(statements);

@@ -1,4 +1,4 @@
-import type { AuthProvider, IdentityProvider, User, UserStatus } from '@cmail/shared/types';
+import type { AuthProvider, IdentityProvider, User, UserStatus } from '@stanchion/shared/types';
 import type { OAuthUserInfo } from './auth';
 import { normalizeEmail } from './validation';
 

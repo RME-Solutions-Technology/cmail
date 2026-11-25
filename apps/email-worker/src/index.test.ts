@@ -23,8 +23,8 @@ import worker, {
   retentionEnabled,
   stableInboundId,
 } from './index';
-import { parseMessageImportance } from '@cmail/shared/message-importance';
-import { normalizeParticipants, sanitizeParticipantName } from '@cmail/shared/message-participants';
+import { parseMessageImportance } from '@stanchion/shared/message-importance';
+import { normalizeParticipants, sanitizeParticipantName } from '@stanchion/shared/message-participants';
 import PostalMime from 'postal-mime';
 
 function routedMessage(overrides: Partial<{
@@ -443,11 +443,26 @@ describe('message interoperability headers', () => {
 describe('parsed authentication facts', () => {
   const env = { INBOUND_AUTHSERV_ID: 'mx.example.com' };
 
-  it('reads only the first Authentication-Results header', () => {
+  it('reads only the first Authentication-Results header (later records from other servers are ignored)', () => {
     expect(parsedAuthenticationFacts([
       { key: 'authentication-results', value: 'mx.example.com; spf=pass; dkim=pass; dmarc=fail' },
-      { key: 'Authentication-Results', value: 'mx.example.com; spf=pass; dkim=pass; dmarc=pass' },
+      { key: 'Authentication-Results', value: 'upstream.example.net; spf=pass; dkim=pass; dmarc=pass' },
     ], env)).toEqual({ sourceIp: null, spf: 'pass', dkim: 'pass', dmarc: 'fail' });
+  });
+
+  it('trusts nothing when a second record claims the boundary own id (a forged header, S5)', () => {
+    expect(parsedAuthenticationFacts([
+      { key: 'authentication-results', value: 'mx.example.com; spf=fail; dkim=none; dmarc=fail' },
+      { key: 'authentication-results', value: 'mx.example.com; spf=pass; dkim=pass; dmarc=pass header.from=bank.example' },
+    ], env)).toEqual({ sourceIp: null, spf: null, dkim: null, dmarc: null });
+    expect(parsedAuthenticationFacts([
+      { key: 'authentication-results', value: '(boundary) mx.example.com; spf=pass; dkim=pass; dmarc=pass' },
+      { key: 'authentication-results', value: 'mx.example.com; dmarc=pass' },
+    ], env).dmarc).toBeNull();
+    expect(parsedAuthenticationFacts([
+      { key: 'authentication-results', value: 'MX.example.com;spf=pass; dkim=pass; dmarc=pass' },
+      { key: 'authentication-results', value: 'mx.example.com; dmarc=pass' },
+    ], env).dmarc).toBeNull();
   });
 
   it('cannot be extended by a sender record when the boundary record has an unbalanced comment', () => {
@@ -468,7 +483,7 @@ describe('parsed authentication facts', () => {
   it('takes the remote IP only from the first header', () => {
     expect(parsedAuthenticationFacts([
       { key: 'authentication-results', value: 'mx.example.com; spf=pass smtp.mailfrom=a@example.org' },
-      { key: 'authentication-results', value: 'mx.example.com; spf=pass smtp.remote-ip=203.0.113.9' },
+      { key: 'authentication-results', value: 'other.example.net; spf=pass smtp.remote-ip=203.0.113.9' },
     ], env).sourceIp).toBeNull();
   });
 
@@ -745,7 +760,7 @@ describe('pre-reservation write amplification', () => {
   });
 
   it('uses a plain-text recipient-unavailable reason and leaves SMTP status selection to Cloudflare', () => {
-    expect(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE).toBe('cmail: recipient unavailable; verify the address or contact the organisation');
+    expect(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE).toBe('Stanchion: recipient unavailable; verify the address or contact the organisation');
     expect(RECIPIENT_UNAVAILABLE_SMTP_RESPONSE).not.toMatch(/\b[45]\d\d(?:[ .]|$)/);
   });
 

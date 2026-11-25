@@ -5,8 +5,8 @@ import { GUARDS_OFF, deliverInbound, deliveryDatabase, memoryStorage } from './t
 // nothing half-written may stay behind, and the mailbox's pending quota
 // charge must be released unless the message really was stored.
 
-vi.mock('@cmail/shared/push', async (original) => ({
-  ...(await original<typeof import('@cmail/shared/push')>()),
+vi.mock('@stanchion/shared/push', async (original) => ({
+  ...(await original<typeof import('@stanchion/shared/push')>()),
   sendNewMailNotifications: vi.fn(async () => ({})),
 }));
 

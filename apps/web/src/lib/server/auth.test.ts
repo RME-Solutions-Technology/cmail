@@ -39,9 +39,15 @@ describe('conditional OAuth providers', () => {
       MICROSOFT_CLIENT_ID: 'microsoft-id',
       MICROSOFT_CLIENT_SECRET: 'microsoft-secret',
     };
-    expect(getEnabledProviders(base)).toEqual(['microsoft']);
+    // An unset tenant no longer defaults to 'common': the audience has to be chosen (S13).
+    expect(getEnabledProviders(base)).toEqual([]);
+    expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'common' })).toEqual(['microsoft']);
+    expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: '11111111-1111-4111-8111-111111111111' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'organizations' })).toEqual(['microsoft']);
     expect(getEnabledProviders({ ...base, MICROSOFT_TENANT_ID: 'not/a/tenant' })).toEqual([]);
+    // The documented sync setup sets only M365_TENANT_ID: a tenant GUID there is the audience; anything else is not.
+    expect(getEnabledProviders({ ...base, M365_TENANT_ID: '11111111-1111-4111-8111-111111111111' })).toEqual(['microsoft']);
+    expect(getEnabledProviders({ ...base, M365_TENANT_ID: 'organizations' })).toEqual([]);
   });
 
   it('shows both independent providers when both configurations are complete', () => {
@@ -96,7 +102,7 @@ describe('conditional OAuth providers', () => {
   it.each(['google', 'microsoft'] as const)('allows %s session reuse without weakening the OAuth request', (provider) => {
     const env = {
       GOOGLE_CLIENT_ID: 'google-id', GOOGLE_CLIENT_SECRET: 'google-secret',
-      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret',
+      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret', MICROSOFT_TENANT_ID: 'common',
     };
     const callback = getOAuthCallbackUrl(AUTH_RUNTIME.APP_URL, provider)!;
     const regular = new URL(buildAuthorizationUrl(provider, env, callback, 'state', 'challenge'));

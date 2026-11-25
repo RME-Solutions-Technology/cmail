@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { m365SyncConfig } from '@cmail/shared/m365-sync';
+import { m365SyncConfig } from '@stanchion/shared/m365-sync';
 import { classify, needsGroupCheck, needsPurposeCheck } from './classify';
 import { CLIENT_ID, DOMAIN, PLAN_EXCHANGE_1, PLAN_EXCHANGE_FOUNDATION, SCOPE_GROUP, SHARED_GROUP, TENANT_ID, person, removed } from './testing/fake-graph';
 
@@ -7,7 +7,7 @@ const none = { scope: null, shared: null };
 
 describe('classify', () => {
   it('accepts an enabled member with an Exchange plan on the mail domain', () => {
-    expect(classify(person(1, 'alex'), DOMAIN, none, null)).toEqual({ kind: 'person', address: 'alex@example.test', displayName: 'Person 1' });
+    expect(classify(person(1, 'alex'), DOMAIN, none, null)).toEqual({ kind: 'person', address: 'alex@example.test', displayName: 'Person 1', upn: 'alex@example.test' });
   });
 
   it.each([

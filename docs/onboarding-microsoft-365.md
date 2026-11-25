@@ -1,8 +1,18 @@
+---
+title: "Onboarding an organisation that uses Microsoft 365"
+summary: "The tested order from an empty instance to staff signing in with Microsoft, then the optional standby steps."
+applies_to: standby
+audience: [operator, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, m365-sync.md, exchange-mirror.md, standby-switch.md]
+---
+
 # Onboarding an organisation that uses Microsoft 365
 
-This guide takes a new cmail instance from nothing to "staff sign in with
+This guide takes a new Stanchion instance from nothing to "staff sign in with
 their Microsoft account", for an organisation whose mail stays in Exchange
-Online. Optional steps then make cmail a warm standby: a standby subdomain,
+Online. Optional steps then make Stanchion a warm standby: a standby subdomain,
 the Exchange mirror, shared mailbox permissions, and the standby switch.
 
 It is the order that worked in the first production onboarding of a
@@ -20,7 +30,7 @@ from each step stay the reference for settings and behaviour.
 Every step that changes a live system (DNS, Entra, Exchange, a remote
 database) needs the owner's yes under your own change process.
 
-## Contents
+**In this article**
 
 - [Checklist](#checklist)
 - [0. What you need first](#0-what-you-need-first)
@@ -41,7 +51,7 @@ database) needs the owner's yes under your own change process.
 ## Checklist
 
 Placeholders: `example.com` is the organisation's mail domain,
-`https://mail.example.com` the web app, `cmail-web` the Pages project,
+`https://mail.example.com` the web app, `stanchion-web` the Pages project,
 `apps/email-worker/wrangler.toml` the instance's own Worker config.
 
 | # | Step | Done when |
@@ -71,11 +81,13 @@ usual reason a step stalls halfway.
   If you work with several accounts, set `CLOUDFLARE_ACCOUNT_ID` in the
   session before every Wrangler command.
 - **Microsoft 365 roles, active:** Application Administrator (or Cloud
-  Application Administrator) to create apps (step 3); **Global
-  Administrator** for admin consent, as the
+  Application Administrator) to create apps (step 3). The sign-in app asks
+  only for delegated `openid`, `email` and `profile`: that role or the app
+  owner can consent for everyone, and users can usually consent themselves,
+  so step 3 needs no Global Administrator. **Global Administrator** for admin
+  consent to application permissions, as the
   [az ad app permission admin-consent](https://learn.microsoft.com/en-us/cli/azure/ad/app/permission#az-ad-app-permission-admin-consent)
-  documentation requires (steps 5 and 11; also step 3 with
-  `-GrantAdminConsent`); Exchange Administrator (or Global Administrator)
+  documentation requires (steps 5 and 11); Exchange Administrator (or Global Administrator)
   for steps 10 and 11. The scripts also accept Privileged Role Administrator
   plus Application Administrator for steps 5 and 11; that combination is
   not verified, so use Global Administrator where you can. The scripts check
@@ -183,7 +195,7 @@ else. The sync (step 5) has its own app.
 
 ```powershell
 pwsh -File scripts/onboarding/new-signin-app.ps1 -TenantId <tenant id> `
-  -AppUrl https://mail.example.com -PagesProject cmail-web -WhatIf
+  -AppUrl https://mail.example.com -PagesProject stanchion-web -WhatIf
 # then without -WhatIf; add -GrantAdminConsent if users may not consent to apps
 ```
 
@@ -198,7 +210,7 @@ The secret is never shown.
 registration: single tenant; redirect URI platform **Web**,
 `https://mail.example.com/auth/callback/microsoft`. API permissions: Microsoft
 Graph delegated `openid`, `email`, `profile` only. Certificates & secrets >
-New client secret; then `pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name cmail-web --env=""`
+New client secret; then `pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name stanchion-web --env=""`
 and the same for `MICROSOFT_CLIENT_SECRET`, pasting at the prompt.
 
 Then, either way: `MICROSOFT_TENANT_ID = "<tenant id>"` in
@@ -209,7 +221,7 @@ effect on the next deployment).
 useful until step 4: nobody has an account yet.
 
 **Undo.** `az ad app delete --id <app id>`;
-`pnpm exec wrangler pages secret delete MICROSOFT_CLIENT_SECRET --project-name cmail-web --env=""`
+`pnpm exec wrangler pages secret delete MICROSOFT_CLIENT_SECRET --project-name stanchion-web --env=""`
 (and `MICROSOFT_CLIENT_ID`); redeploy.
 
 **Pitfalls.**
@@ -233,11 +245,11 @@ invitation. Bootstrap is on only while two temporary secrets exist.
 **Script.**
 
 ```powershell
-pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -AdminEmail admin@example.com
+pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject stanchion-web -AdminEmail admin@example.com
 pnpm deploy:web
 # open https://mail.example.com/bootstrap, paste the token (it is on your clipboard),
 # sign in with Microsoft as admin@example.com
-pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject cmail-web -Remove
+pwsh -File scripts/onboarding/set-bootstrap-secrets.ps1 -PagesProject stanchion-web -Remove
 pnpm deploy:web
 ```
 
@@ -266,7 +278,7 @@ redeploy, and start again with a new token.
 
 ## 5. Microsoft 365 sync
 
-**Purpose.** cmail creates an account and mailbox for each licensed person
+**Purpose.** Stanchion creates an account and mailbox for each licensed person
 on the mail domain, pauses leavers, and (optionally) finds shared mailboxes.
 It reads Microsoft 365 and never writes to it.
 
@@ -288,12 +300,12 @@ grants any that are still missing directly
 ([grant an appRoleAssignment](https://learn.microsoft.com/en-us/graph/api/serviceprincipal-post-approleassignedto)),
 and pipes a new client secret into the Worker secret `M365_CLIENT_SECRET`.
 
-**Manual equivalent.** [Microsoft 365 sync: Entra app setup](m365-sync.md#entra-app-setup-least-privilege).
+**Manual equivalent.** [Microsoft 365 sync: Entra app setup](m365-sync.md#how-to-set-up-the-entra-app-least-privilege).
 
 Then, either way, in `apps/email-worker/wrangler.toml` `[vars]`:
 `M365_TENANT_ID`, `M365_CLIENT_ID`, `MAIL_DOMAIN`,
 `M365_DETECT_SHARED_MAILBOXES = "true"` if wanted; keep the `*/15 * * * *`
-cron; `pnpm deploy:email-worker`. Then Admin > Microsoft 365 sync: turn it
+cron; `pnpm deploy:email-worker`. Then Admin > Microsoft 365 > Directory sync: turn it
 on with **dry run on**, press **Sync now**, and read the report.
 
 **Check.** The dry run counts match Microsoft 365 (people, shared mailboxes,
@@ -319,12 +331,12 @@ remove the vars, `az ad app delete --id <app id>`.
 
 ## 6. Staff sign-in
 
-**Purpose.** Synced people sign in with **Sign in with Microsoft** on cmail's
+**Purpose.** Synced people sign in with **Sign in with Microsoft** on Stanchion's
 own page, with no invitation.
 
 **Run.** Nothing extra: it works once steps 3 and 5 are done and the web
 app knows the tenant (`MICROSOFT_TENANT_ID` set to the tenant GUID, or
-`M365_TENANT_ID` on the web app). cmail binds the person by the ID token's
+`M365_TENANT_ID` on the web app). Stanchion binds the person by the ID token's
 `oid` and `tid`, never by email or UPN
 ([how it works](m365-sync.md#first-sign-in)).
 
@@ -355,7 +367,7 @@ passkeys are kept.
 
 **Pitfalls.** Passkeys are bound to the `APP_URL` host. Behind Cloudflare
 Access, `/auth/passkey` needs its own Bypass application. Details:
-[Passkey break-glass sign-in](passkeys.md#set-up).
+[Passkey break-glass sign-in](passkeys.md#how-to-set-up-passkeys).
 
 ## 8. Welcome emails (optional)
 
@@ -363,7 +375,7 @@ Access, `/auth/passkey` needs its own Bypass application. Details:
 steps.
 
 **Run.** Needs working outbound mail from `MAIL_DOMAIN` and step 6. Admin >
-Microsoft 365 sync > Welcome emails, with the sync in dry run first; send to
+Microsoft 365 > Welcome emails, with the sync in dry run first; send to
 one test account before anyone else. Full steps:
 [Microsoft 365 welcome emails: runbook](m365-welcome-emails.md#runbook).
 
@@ -374,7 +386,7 @@ message trace shows it delivered.
 
 ## 9. Standby subdomain (optional)
 
-**Purpose.** Give cmail its own way to receive mail while the domain's MX
+**Purpose.** Give Stanchion its own way to receive mail while the domain's MX
 stays with Exchange Online. Steps 10 and 12 build on it.
 
 **Run (dashboard).** Email Service > Email Routing > the apex domain >
@@ -420,7 +432,7 @@ check the apex records are unchanged.
 
 ## 10. Exchange mirror (optional)
 
-**Purpose.** cmail keeps a live copy of the tenant's mail from one Exchange
+**Purpose.** Stanchion keeps a live copy of the tenant's mail from one Exchange
 journal rule, so a standby has recent mail. Read
 [Exchange mirror](exchange-mirror.md) first, including how a report is
 trusted and the privacy section.
@@ -444,17 +456,17 @@ pwsh -File scripts/onboarding/exchange-mirror.ps1 @m -Enable
 Between a and b:
 1. Worker `[vars]`: `M365_TENANT_ID`, `M365_JOURNAL_NDR_DOMAIN = "standby.example.com"`,
    `INBOUND_AUTHSERV_ID = "mx.cloudflare.net"` and the rest of
-   [Exchange mirror setup](exchange-mirror.md#1-cmail); migration `0027`;
+   [Exchange mirror setup](exchange-mirror.md#1-stanchion); migration `0027`;
    deploy the Worker, then the web app.
 2. Email Routing on `standby.example.com`: one rule for the literal journal
-   address (from the file) -> **Send to a Worker** -> the cmail email Worker.
-   A second rule for the NDR address to a mailbox a person reads (a cmail
+   address (from the file) -> **Send to a Worker** -> the Stanchion email Worker.
+   A second rule for the NDR address to a mailbox a person reads (a Stanchion
    mailbox through its standby address, or "Send to an email" to a verified
    address outside Exchange Online).
 3. Add `include:spf.protection.outlook.com` to the SPF TXT record of
    `standby.example.com`, keeping the Cloudflare include.
 
-Between b and c: Admin > Exchange mirror > **Turn on**.
+Between b and c: Admin > Microsoft 365 > Mail feed > Journal source (legacy) > **Turn on**.
 
 **Manual equivalent.** [Exchange mirror: Exchange Online](exchange-mirror.md#3-exchange-online)
 (`Set-TransportConfig -JournalingReportNdrTo`, `New-RemoteDomain` +
@@ -463,13 +475,13 @@ then `Enable-JournalRule`). Save `(Get-TransportConfig).JournalingReportNdrTo`
 before changing it.
 
 **Check.** Send a message between two licensed users. Within a minute Admin >
-Exchange mirror shows a last report time, the message "filed", and no
+Microsoft 365 > Mail feed shows a last report time, the message "filed", and no
 refused reports. If reports are refused, read the reason and the safe
-diagnostic in the audit log ([diagnosing](exchange-mirror.md#diagnosing-refused-reports)).
+diagnostic in the audit log ([diagnosing](exchange-mirror.md#troubleshoot-refused-reports)).
 
 **Undo.** `exchange-mirror.ps1 @m -Rollback`: disables and removes the
 rule, removes the remote domain and restores the saved NDR address. Then
-Admin > Exchange mirror > Turn off; optionally delete the routing rule and
+Admin > Microsoft 365 > Mail feed > Journal source (legacy) > Turn off; optionally delete the routing rule and
 `M365_JOURNAL_ADDRESS`. Mirrored mail stays until a manager removes it.
 
 **Pitfalls (all seen live).**
@@ -480,8 +492,8 @@ Admin > Exchange mirror > Turn off; optionally delete the routing rule and
   domain, which passes only once `include:spf.protection.outlook.com` is in
   that domain's SPF.
 - Cloudflare's `Authentication-Results` carries a bare `spf=pass` before the
-  `spf=pass smtp.mailfrom=<NDR domain>` result. cmail before PR 123 read the
-  first one, so every report failed `auth_failed`; run a cmail version that
+  `spf=pass smtp.mailfrom=<NDR domain>` result. Stanchion before PR 123 read the
+  first one, so every report failed `auth_failed`; run a Stanchion version that
   includes that fix (it uses the SPF result that names `smtp.mailfrom`).
 - Without that SPF include, and with `M365_JOURNAL_REQUIRE_AUTH = "true"`,
   every report is refused, Exchange sends one NDR per report to the NDR
@@ -491,7 +503,7 @@ Admin > Exchange mirror > Turn off; optionally delete the routing rule and
 - Journaling copies **all** mail from the moment the rule is enabled; the
   mirror holds only mail from then on, nothing older.
 - The secret journal address is the real security boundary. Keep the file
-  private; rotate it if it leaks ([rotating](exchange-mirror.md#rotating-the-journal-token)).
+  private; rotate it if it leaks ([rotating](exchange-mirror.md#how-to-rotate-the-journal-token)).
 - The NDR address must be outside Exchange Online (Microsoft's rule).
 - Not verified: whether Exchange Online accepts clearing
   `JournalingReportNdrTo` to empty on rollback when it was empty before. If
@@ -500,8 +512,8 @@ Admin > Exchange mirror > Turn off; optionally delete the routing rule and
 ## 11. Shared mailbox permissions (optional)
 
 **Purpose.** Copy who has Full Access and Send As on shared mailboxes from
-Exchange into cmail daily. Graph cannot read these permissions, and the
-Exchange Online Admin API (preview) does not cover them, so cmail runs the
+Exchange into Stanchion daily. Graph cannot read these permissions, and the
+Exchange Online Admin API (preview) does not cover them, so Stanchion runs the
 Exchange PowerShell module in a Cloudflare Container, read-only. Read
 [Shared mailbox access from Exchange Online](m365-mailbox-permissions.md) first.
 
@@ -530,11 +542,11 @@ the PFX (base64) and its random password into the Worker secrets
 `M365_EXO_CERT_PFX_B64` and `M365_EXO_CERT_PASSWORD`, and delete the PFX file
 ([app-only auth for Exchange Online PowerShell](https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2)).
 
-**Manual equivalent.** [Setup steps 1 to 5](m365-mailbox-permissions.md#setup).
+**Manual equivalent.** [Setup steps 1 to 5](m365-mailbox-permissions.md#how-to-set-up-shared-mailbox-access).
 
 Then: `[vars]` `M365_EXO_APP_ID` and `M365_EXO_ORGANIZATION`; uncomment the
 container block from `wrangler.toml.example`; migration `0028`; with Docker
-running, deploy the Worker, then the web app; Admin > Shared mailbox access >
+running, deploy the Worker, then the web app; Admin > Microsoft 365 > Shared mailbox access >
 Turn on (dry run stays on).
 
 **Check.** Two cron runs later the report matches Exchange for a shared
@@ -569,10 +581,10 @@ after steps 9 and 10.
 - [Standby test address and daily probe](standby-probe.md): every mailbox
   also answers at `name@standby.example.com` (one routing rule per address),
   with a daily probe.
-- [Switch mail to the cmail standby, and back](standby-switch.md): move the
+- [Switch mail to the Stanchion standby, and back](standby-switch.md): move the
   domain's MX to Cloudflare in one DNS change, and back. Dry run first.
 - [Copy standby mail back into Exchange](copy-back.md): after an outage,
-  copy what cmail received into each person's Exchange mailbox.
+  copy what Stanchion received into each person's Exchange mailbox.
 
 ## Lessons from the first onboarding
 

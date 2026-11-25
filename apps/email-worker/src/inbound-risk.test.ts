@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyRateHold,
   decideInboundPlacement,
   parseSpamScore,
   pickSenderRule,
   readSpamScore,
   shouldQuarantine,
   spamQuarantineThreshold,
-} from '@cmail/shared/inbound-risk';
+} from '@stanchion/shared/inbound-risk';
 
 function headers(values: Record<string, string>): { get(name: string): string | null } {
   const lower = new Map(Object.entries(values).map(([key, value]) => [key.toLowerCase(), value]));
@@ -185,38 +186,79 @@ describe('pickSenderRule', () => {
 
 describe('decideInboundPlacement', () => {
   it('files a blocked sender to Spam regardless of score or threshold', () => {
-    expect(decideInboundPlacement({ spamScore: null, threshold: null, senderRule: 'block' }))
+    expect(decideInboundPlacement({ spamScore: null, threshold: null, senderRule: 'block', senderAuthenticated: true }))
       .toEqual({ folder: 'spam', reason: 'blocked-sender' });
-    expect(decideInboundPlacement({ spamScore: 0, threshold: 99, senderRule: 'block' }))
+    expect(decideInboundPlacement({ spamScore: 0, threshold: 99, senderRule: 'block', senderAuthenticated: true }))
       .toEqual({ folder: 'spam', reason: 'blocked-sender' });
   });
 
   it('lets an allowed sender skip the score check entirely', () => {
-    expect(decideInboundPlacement({ spamScore: 100, threshold: 1, senderRule: 'allow' }))
+    expect(decideInboundPlacement({ spamScore: 100, threshold: 1, senderRule: 'allow', senderAuthenticated: true }))
       .toEqual({ folder: 'inbox', reason: null });
-    expect(decideInboundPlacement({ spamScore: null, threshold: null, senderRule: 'allow' }))
+    expect(decideInboundPlacement({ spamScore: null, threshold: null, senderRule: 'allow', senderAuthenticated: true }))
       .toEqual({ folder: 'inbox', reason: null });
   });
 
   it('never quarantines on score when the threshold is unset, even with an extreme score', () => {
-    expect(decideInboundPlacement({ spamScore: 1000, threshold: null, senderRule: null }))
+    expect(decideInboundPlacement({ spamScore: 1000, threshold: null, senderRule: null, senderAuthenticated: true }))
       .toEqual({ folder: 'inbox', reason: null });
   });
 
   it('never quarantines on score when there is no score to compare', () => {
-    expect(decideInboundPlacement({ spamScore: null, threshold: 5, senderRule: null }))
+    expect(decideInboundPlacement({ spamScore: null, threshold: 5, senderRule: null, senderAuthenticated: true }))
       .toEqual({ folder: 'inbox', reason: null });
   });
 
   it('quarantines by score at or above the threshold and records the score in the reason', () => {
-    expect(decideInboundPlacement({ spamScore: 8, threshold: 8, senderRule: null }))
+    expect(decideInboundPlacement({ spamScore: 8, threshold: 8, senderRule: null, senderAuthenticated: true }))
       .toEqual({ folder: 'spam', reason: 'spam-score:8' });
-    expect(decideInboundPlacement({ spamScore: 8.5, threshold: 8, senderRule: null }))
+    expect(decideInboundPlacement({ spamScore: 8.5, threshold: 8, senderRule: null, senderAuthenticated: true }))
       .toEqual({ folder: 'spam', reason: 'spam-score:8.5' });
   });
 
   it('delivers to Inbox when the score is below the threshold', () => {
-    expect(decideInboundPlacement({ spamScore: 7.9, threshold: 8, senderRule: null }))
+    expect(decideInboundPlacement({ spamScore: 7.9, threshold: 8, senderRule: null, senderAuthenticated: true }))
+      .toEqual({ folder: 'inbox', reason: null });
+  });
+});
+
+describe('applyRateHold', () => {
+  const inbox = { folder: 'inbox', reason: null } as const;
+  it('does nothing when nothing was held', () => {
+    expect(applyRateHold(inbox, { held: false, senderAuthenticated: false, firstContact: true })).toEqual(inbox);
+  });
+  it('files held mail from an unknown or unauthenticated sender to Junk with a reason', () => {
+    expect(applyRateHold(inbox, { held: true, senderAuthenticated: false, firstContact: false })).toEqual({ folder: 'spam', reason: 'rate-limit' });
+    expect(applyRateHold(inbox, { held: true, senderAuthenticated: true, firstContact: true })).toEqual({ folder: 'spam', reason: 'rate-limit' });
+  });
+  it('keeps a known correspondent who passed DMARC in the Inbox', () => {
+    expect(applyRateHold(inbox, { held: true, senderAuthenticated: true, firstContact: false })).toEqual(inbox);
+  });
+  it('keeps an existing Junk decision and its reason', () => {
+    const spam = { folder: 'spam', reason: 'blocked-sender' } as const;
+    expect(applyRateHold(spam, { held: true, senderAuthenticated: false, firstContact: true })).toEqual(spam);
+  });
+});
+
+describe('allow rule needs an authenticated sender (contractor review S4)', () => {
+  it('ignores an allow rule when the From is not DMARC-authenticated, so the score still decides', () => {
+    expect(decideInboundPlacement({ spamScore: 100, threshold: 1, senderRule: 'allow', senderAuthenticated: false }))
+      .toEqual({ folder: 'spam', reason: 'spam-score:100', allowIgnored: true });
+    expect(decideInboundPlacement({ spamScore: null, threshold: null, senderRule: 'allow', senderAuthenticated: false }))
+      .toEqual({ folder: 'inbox', reason: null, allowIgnored: true });
+  });
+  it('still honours an allow rule for an authenticated sender', () => {
+    expect(decideInboundPlacement({ spamScore: 100, threshold: 1, senderRule: 'allow', senderAuthenticated: true }))
+      .toEqual({ folder: 'inbox', reason: null });
+  });
+  it('applies a block rule whether or not the sender is authenticated', () => {
+    for (const senderAuthenticated of [true, false]) {
+      expect(decideInboundPlacement({ spamScore: null, threshold: null, senderRule: 'block', senderAuthenticated }))
+        .toEqual({ folder: 'spam', reason: 'blocked-sender' });
+    }
+  });
+  it('does not mention an ignored allow when there was no allow rule', () => {
+    expect(decideInboundPlacement({ spamScore: 1, threshold: 8, senderRule: null, senderAuthenticated: false }))
       .toEqual({ folder: 'inbox', reason: null });
   });
 });

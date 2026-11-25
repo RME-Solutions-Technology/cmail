@@ -5,6 +5,7 @@ import {
   createSessionToken,
   getSessionTokenFromCookie,
   hashToken,
+  sqlDateTime,
   shouldRenewSession,
   verifySessionToken,
 } from './session';
@@ -145,5 +146,15 @@ describe('session cookies', () => {
     expect(buildSessionCookie('token-value', false)).toContain('Max-Age=34560000');
     expect(clearSessionCookie(false)).toContain('Max-Age=0');
     expect(getSessionTokenFromCookie(null)).toBeNull();
+  });
+});
+
+describe('sqlDateTime', () => {
+  it('writes the same shape as SQLite datetime(), so text comparison with the current time is a real time comparison', () => {
+    const stored = sqlDateTime(new Date(Date.UTC(2026, 10, 24, 5, 30, 15, 999)));
+    expect(stored).toBe('2026-11-24 05:30:15');
+    // An expired session earlier the same day must compare LESS than now (an ISO string compared greater).
+    expect(stored < '2026-11-24 06:00:00').toBe(true);
+    expect(new Date(Date.UTC(2026, 10, 24, 5, 30, 15)).toISOString() < '2026-11-24 06:00:00').toBe(false);
   });
 });

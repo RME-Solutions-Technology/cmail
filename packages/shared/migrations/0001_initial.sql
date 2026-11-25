@@ -1,4 +1,4 @@
--- Initial cmail schema for Cloudflare D1.
+-- Initial Stanchion schema for Cloudflare D1.
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -493,6 +493,6 @@ INSERT OR IGNORE INTO signature_templates
   (id, name, applies_to, html_body, plain_text_body, is_locked)
 VALUES
   ('sig-default', 'Default', '*',
-   '<hr><p style="font-size:12px;color:#666;">This message is sent in the course of service and is intended only for the person or group receiving it. Please respect the confidentiality of this correspondence.</p>',
-   '---\nThis message is sent in the course of service and is intended only for the person or group receiving it. Please respect the confidentiality of this correspondence.',
+   '<hr><p style="font-size:12px;color:#666;">This email and any attachments are confidential and intended only for the named recipient. If you have received it in error, please tell the sender and delete it.</p>',
+   '---\nThis email and any attachments are confidential and intended only for the named recipient. If you have received it in error, please tell the sender and delete it.',
    1);

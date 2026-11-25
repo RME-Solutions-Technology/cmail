@@ -1,6 +1,6 @@
 # Security policy
 
-cmail processes authentication data, message content, attachments, and administrative records. This pre-1.0 project has not been certified for any regulatory or assurance framework.
+Stanchion processes authentication data, message content, attachments, and administrative records. This pre-1.0 project has not been certified for any regulatory or assurance framework.
 
 ## Supported versions
 
@@ -11,7 +11,7 @@ Until versioned releases exist, security fixes target the latest commit on the d
 Use the repository host's private vulnerability-reporting feature when
 available. On GitHub, open the repository's **Security** tab, choose
 **Advisories**, then **Report a vulnerability**, or use the
-[private reporting form](https://github.com/RME-Solutions-Technology/cmail/security/advisories/new)
+[private reporting form](https://github.com/RME-Solutions-Technology/stanchion/security/advisories/new)
 after the repository owner enables it.
 
 If private reporting is unavailable, ask the maintainers for a private contact channel — do not publish technical details. Do not open a public issue containing an exploit, secret, personal data, private message, tenant identifier, or production URL.
@@ -40,8 +40,8 @@ Reports are especially useful for:
 - privilege escalation in user, mailbox, policy, audit, trace, or settings tools;
 - the MCP endpoint or its OAuth authorization server: consent bypass, token
   theft or replay, redirect or audience confusion, scope or mailbox escape,
-  and prompt-injection paths that lead cmail to act without the user's grant;
-- dependency vulnerabilities with a demonstrated path through cmail.
+  and prompt-injection paths that lead Stanchion to act without the user's grant;
+- dependency vulnerabilities with a demonstrated path through Stanchion.
 
 Provider outages, provider-account compromise, DNS misconfiguration, unsupported local changes, and social engineering without a product flaw are usually deployment concerns, not project vulnerabilities. Report privately if the boundary is unclear.
 

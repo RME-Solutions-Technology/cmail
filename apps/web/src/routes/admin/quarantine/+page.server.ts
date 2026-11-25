@@ -1,5 +1,5 @@
 import { fail } from '@sveltejs/kit';
-import type { Env } from '@cmail/shared/types';
+import type { Env } from '@stanchion/shared/types';
 import type { Actions, PageServerLoad } from './$types';
 import { audit, generateId } from '#lib/server/db.js';
 import { textField } from '#lib/server/validation.js';

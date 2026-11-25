@@ -1,19 +1,47 @@
+---
+title: "Shared mailbox access from Exchange Online"
+summary: "How to copy Full Access and Send As on shared mailboxes from Exchange Online into Stanchion each day."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Microsoft 365 > Shared mailbox access"
+last_reviewed: 2026-11-16
+related: [m365-sync.md, credentials.md, onboarding-microsoft-365.md]
+---
+
 # Shared mailbox access from Exchange Online
 
 Copies **Full Access** and **Send As** on Exchange Online shared mailboxes into
-cmail's shared mailbox assignments, automatically, once a day.
+Stanchion's shared mailbox assignments, automatically, once a day.
 
-**Status: built, off by default, not yet tested against a real tenant or a
-deployed Cloudflare Container.** Everything below that says "unverified" must
+**Status: built, off by default. On one live tenant the collector (in a
+deployed Cloudflare Container) and a dry run are verified; live mode has not
+yet run.** Everything below that says "unverified" must
 be checked in a test tenant (never a client's) before the first live use.
 
 It is an optional add-on to the [Microsoft 365 mailbox sync](m365-sync.md):
-that sync creates the cmail accounts and shared mailboxes; this feature then
+that sync creates the Stanchion accounts and shared mailboxes; this feature then
 gives people access to those shared mailboxes the way Exchange does.
+
+**In this article**
+
+- [In short](#in-short)
+- [Why a container](#why-a-container)
+- [Architecture](#architecture)
+- [Mapping: Exchange to Stanchion](#mapping-exchange-to-stanchion)
+- [Safety rules](#safety-rules)
+- [Manager accounts](#manager-accounts)
+- [Troubleshoot shared mailbox access](#troubleshoot-shared-mailbox-access)
+- [Snapshot contract (version 1)](#snapshot-contract-version-1)
+- [Cost](#cost)
+- [How to set up shared mailbox access](#how-to-set-up-shared-mailbox-access)
+- [How to test](#how-to-test)
+- [How to turn it off and roll back](#how-to-turn-it-off-and-roll-back)
+- [Network egress](#network-egress)
+- [Not verified yet](#not-verified-yet)
 
 ## In short
 
-- **Off by default.** A manager switch in Admin > Shared mailbox access. While
+- **Off by default.** A manager switch in Admin > Microsoft 365 > Shared mailbox access. While
   off, the scheduled job reads one setting and returns: no container start, no
   Microsoft call, no write. Primary mail (receiving, sending, personal
   mailboxes, the Microsoft 365 sync) is not touched either way. A test proves
@@ -70,9 +98,9 @@ email Worker, cron */15
   │             → store the snapshot in Durable Object storage, destroy the container
   ├─ next tick: GET /result → strict validation (snapshot.ts)
   ├─ groups: expand group trustees with Graph transitiveMembers (groups.ts)
-  ├─ diff: Exchange rights vs cmail assignments and the ledger (diff.ts)
+  ├─ diff: Exchange rights vs Stanchion assignments and the ledger (diff.ts)
   ├─ brake check → apply in bounded chunks with audit rows (apply.ts)
-  └─ status row m365_perm_state → Admin > Shared mailbox access
+  └─ status row m365_perm_state → Admin > Microsoft 365 > Shared mailbox access
 ```
 
 Each step saves its place in `m365_perm_state`, so a cron run that stops at
@@ -95,27 +123,28 @@ above); one that needs more fails safely (`pass_too_long`, nothing changed).
 Passes start at most every `M365_PERMS_INTERVAL_HOURS` (6 to 24), so at most
 4 scheduled passes a day, and **Sync access now** starts one at most once an
 hour.
-## Mapping: Exchange to cmail
+## Mapping: Exchange to Stanchion
 
 Exchange rights are independent: Full Access does not allow sending, Send As
 does not allow reading
 ([Manage permissions for recipients](https://learn.microsoft.com/en-us/exchange/recipients-in-exchange-online/manage-permissions-for-recipients)).
-cmail levels include each other: Read < Send as (read + send) < Full (send +
+Stanchion levels include each other: Read < Send as (read + send) < Full (send +
 folders, archive, delete). The rule is **never more than Exchange grants**.
 
-| Exchange (direct and group grants combined) | cmail level | Shown as |
+| Exchange (direct and group grants combined) | Stanchion level | Shown as |
 |---|---|---|
 | Full Access + Send As | Full | `add`, `upgrade` |
 | Full Access only | Read (or Full with `M365_PERMS_FULLACCESS_IMPLIES_SEND = "true"`) | `add` |
-| Send As only | nothing (cmail Send as would add reading) | `not_representable` |
-| Send on Behalf | not read (cmail has no on-behalf sending) | — |
+| Send As only | nothing (Stanchion Send as would add reading) | `not_representable` |
+| Send on Behalf | not read (Stanchion has no on-behalf sending) | — |
 | Inherited, `NT AUTHORITY\…`, bare SIDs (deleted accounts) | skipped | snapshot `skipped` counts |
-| Any Deny entry on the mailbox (Full Access or Send As) | the whole mailbox is left as it is: no additions, no removals (Exchange applies Deny over group grants; cmail cannot model that) | `deny_entries`, `mailboxNotCovered` |
+| Any Deny entry on the mailbox (Full Access or Send As) | the whole mailbox is left as it is: no additions, no removals (Exchange applies Deny over group grants; Stanchion cannot model that) | `deny_entries`, `mailboxNotCovered` |
 | An address the Worker would refuse (for example non-ASCII) | that mailbox is left out of the snapshot and left as it is | `mailbox_address_unsupported` |
 | A room, equipment or shared mailbox as trustee, a contact | skipped | `otherKind` |
-| A trustee not linked to a cmail person by the Microsoft 365 sync | skipped | `trusteeNotLinked` |
+| A trustee not linked to a Stanchion person by the Microsoft 365 sync | skipped | `trusteeNotLinked` |
+| A manager account (never linked by the Microsoft 365 sync) | skipped, unless **Include manager accounts** is on: see [Manager accounts](#manager-accounts) | `trusteeNotLinked` or `managerMatched` |
 | A paused, offboarded or out-of-scope person | no new or raised access (existing sync-made access can still be lowered or removed when Exchange takes it away) | `account_not_active` |
-| A person whose Microsoft 365 link is gone | nothing removed (a lost link is not Exchange taking access away) | — |
+| A person whose Microsoft 365 link is gone | nothing removed (a lost link is not Exchange taking access away) | `unlinkedKept` (`account_not_linked`) |
 | A shared mailbox the Microsoft 365 sync has not linked yet | skipped until linked | `mailboxNotLinked` |
 
 Mapping is by Entra object id only (Exchange `ExternalDirectoryObjectId`, the
@@ -202,7 +231,100 @@ count as not fully read (no removals there).
 MCP (AI app) mailbox access is checked against `mailbox_assignments` at call
 time, so a removed assignment takes effect on the next request.
 
-## Failure modes
+## Manager accounts
+
+The Microsoft 365 sync never adopts or links a manager account (it reports
+`manager_not_adopted`), so the person who bootstrapped Stanchion has no link, and
+every Exchange grant to them is skipped as `trusteeNotLinked`: they can have
+Full Access to every shared mailbox in Exchange and see none in Stanchion.
+
+**Include manager accounts** (Admin > Microsoft 365 > Shared mailbox access, org setting
+`m365_perms_include_managers`) closes that gap. It is **off by default**; off,
+no manager is looked up (no Graph call, no extra write). On, once per round,
+before the diff:
+
+1. Stanchion lists active manager accounts with no Microsoft 365 link and looks
+   up at most 20 a round. With more, each round starts after the last one
+   looked up, so every manager is reached in turn; the rest are reported as
+   `too_many_managers`. Lookups also stop when the run's time or database
+   budget is used up (those managers are `lookup_failed` this round).
+2. For each manager whose address is on `MAIL_DOMAIN`, the Worker asks Graph,
+   with the Microsoft 365 sync's own app (`User.Read.All`):
+   `GET /users?$filter=mail eq '<address>'&$select=id,mail,userType,accountEnabled,proxyAddresses&$top=2`
+   ([list users](https://learn.microsoft.com/en-us/graph/api/user-list)).
+   A quote in the address is doubled (OData string literal). The Graph app is
+   bound to this tenant, so any answer is a user of this tenant. A throttled,
+   refused or failed lookup stops the lookups for this round.
+3. The manager is matched only when **exactly one** user comes back, its
+   `mail` equals the manager's Stanchion address exactly (case aside), its
+   `proxyAddresses` hold that address as the **primary** entry
+   (`SMTP:<address>`, capital `SMTP`), it is a `Member` (not a guest), its
+   account is enabled, no Stanchion account or shared mailbox is already linked
+   to that user, and no other manager has the same address or matched the
+   same user. Anything else leaves the manager unmatched this round, with a
+   reason code.
+4. The diff then treats the matched user's object id like a person link, for
+   that manager only, while the account is still an active manager with the
+   same address and no link (checked again before every write). Direct and
+   group grants count, with the normal mapping.
+
+**Additions and raises only.** A matched manager gets new access and has
+sync-made access raised when Exchange grants more. The sync never lowers or
+removes a matched manager account's access (`managerAccountKept`, reasons
+`manager_account_not_lowered` and `manager_account_not_removed`). Every other
+rule still applies: a manager-made row is never touched, a manager's own
+removal of sync-given access sticks (`manager_removed`), and each addition is
+audited like any other. No person link is created and the Microsoft 365 sync
+still never adopts a manager.
+
+**When the match is gone** (the switch is off, the manager's address changed,
+the Entra account was disabled or its address moved, the account was paused
+or is no longer a manager), the sync can no longer tell whether Exchange
+still grants that account anything, because it has no object id for it. Its
+sync-made rows are then **kept and reported** on every fully read mailbox
+(`unlinkedKept`, action `unlinked_kept`, reason
+`manager_account_not_matched`), never removed: a removal needs proof that
+Exchange took the access away, and without an identity there is none (the
+same rule as for a person whose link is gone, reported as
+`account_not_linked`). Remove unwanted rows in Admin > Mailboxes; once a
+matched manager is found again, the normal rules for matched managers apply.
+An active manager that a rotating round did not look up is not reported.
+
+**Why the primary SMTP address and not the UPN.** Stanchion's account address is a
+mailbox address on `MAIL_DOMAIN`, and the Microsoft 365 sync already
+identifies people by Graph `mail`. The UPN is a sign-in name: it is often on
+another domain (for example `<name>.onmicrosoft.com`) or differs from the
+mailbox address, and matching it to a mailbox address would be a guess. Graph
+`mail` alone is not proof either: it is usually the primary SMTP address, but
+it can be set separately and Microsoft does not document it as unique. The
+proxy address list is what Exchange routes by, and Exchange Online refuses an
+SMTP proxy address that another recipient already holds; the entry with the
+capital `SMTP:` prefix is the primary one. So the match needs both, and an
+exact string, never a display name or a partial address.
+
+**Risk.** Address matching is weaker than an object id link, so it is limited
+to managers, who can already assign themselves any shared mailbox in
+Admin > Mailboxes, and it only ever adds access Exchange grants to that same
+user. Making another user's primary SMTP address equal to a manager's address
+needs Exchange recipient administration rights, and would only give the
+manager more access, not the person who changed it.
+
+**Report.** `managerMatched` counts the (shared mailbox, manager) pairs
+Exchange grants that were resolved to a manager account. Each manager looked
+at gets a report row (at most 21 a round, so the diff's own rows keep their
+room), `manager_matched` or `manager_not_matched` with one of:
+`graph_not_configured`, `not_on_mail_domain`, `no_entra_user`, `ambiguous`,
+`address_mismatch`, `not_primary_smtp`, `not_member`, `account_disabled`,
+`object_linked`, `lookup_failed`, `too_many_managers`. Dry run reports what it
+would add, as for anyone else. Logs carry outcome counts only, never
+addresses.
+
+**Turn it on:** Admin > Microsoft 365 > Shared mailbox access > **Include manager accounts**,
+ideally with dry run on first, and check the next report. **Turn it off:** the
+same button; access already given stays as it is and is reported as
+`unlinked_kept` (remove it in Admin > Mailboxes if you do not want it).
+
+## Troubleshoot shared mailbox access
 
 | What happens | Behaviour | Admin shows |
 |---|---|---|
@@ -280,12 +402,12 @@ usage, about USD 1.20 a month extra. A tenant too large for one batch takes one 
 batch per 15-minute cron run until the pass is complete, each up to 13 minutes. Durable Object and D1 use is a handful of requests a day.
 Image storage in Cloudflare's registry was not found priced separately
 (unverified).
-## Setup
+## How to set up shared mailbox access
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#11-shared-mailbox-permissions-optional), step 11, with `scripts/onboarding/perms-setup.ps1` for steps 1 to 5 below.
 
 Do this in a **test tenant first**. Steps 1 to 4 are in Microsoft 365, 5 to
-8 in Cloudflare and cmail.
+8 in Cloudflare and Stanchion.
 
 ### 1. Entra app (separate from the directory sync app)
 
@@ -348,7 +470,7 @@ $roles = foreach ($parent in $parents.Keys) {
 $roles | ForEach-Object { Get-ManagementRoleEntry "$_\*" } | Select-Object Role, Name
 # c. A role group with only that role.
 New-RoleGroup -Name "cmail Mailbox Access Readers" -Roles $roles `
-  -Description "Read-only: Full Access and Send As on shared mailboxes for cmail"
+  -Description "Read-only: Full Access and Send As on shared mailboxes for Stanchion"
 
 # d. The app's service principal in Exchange, added to the group.
 #    ObjectId = the Enterprise application's Object ID (not the app registration's).
@@ -468,7 +590,7 @@ web app.
 
 ### 8. Turn it on
 
-Admin > Shared mailbox access: check there is no "not configured" notice,
+Admin > Microsoft 365 > Shared mailbox access: check there is no "not configured" notice,
 **Turn on** (dry run stays on), wait for two cron runs (collection, then
 report), read the report. When it matches Exchange **and step 4 was a go**,
 **Turn dry run off**.
@@ -480,7 +602,7 @@ report), read the report. When it matches Exchange **and step 4 was a go**,
   untouched, failures keep access, switch off changes nothing (whole-database
   hash), dry run writes nothing, and the collector's container handling with
   a fake container. Run one file locally with
-  `pnpm --filter @cmail/email-worker exec vitest run src/m365-perms`.
+  `pnpm --filter @stanchion/email-worker exec vitest run src/m365-perms`.
 - **Collector harness** (no tenant): `pwsh -File apps/email-worker/container/m365-perms/collect.Tests.ps1`
   runs `collect.ps1` against mocked Exchange cmdlets (system, orphaned,
   inherited, deny, group, room and unresolvable trustees, a failed query, the
@@ -492,13 +614,13 @@ report), read the report. When it matches Exchange **and step 4 was a go**,
 - **Image build** (no tenant): `docker build apps/email-worker/container/m365-perms`.
 - **Test tenant dress rehearsal** before any client: steps 1 to 8, dry run,
   then live with one shared mailbox; add and remove Full Access and Send As in
-  Exchange and check each cmail change and its audit row; change a row in
+  Exchange and check each Stanchion change and its audit row; change a row in
   Admin > Mailboxes and check the sync leaves it alone; break the certificate
   and check nothing changes and the alert appears after 3 runs.
 
-## Rollback
+## How to turn it off and roll back
 
-- **Stop:** Admin > Shared mailbox access > Turn off. Nothing runs; every
+- **Stop:** Admin > Microsoft 365 > Shared mailbox access > Turn off. Nothing runs; every
   assignment stays.
 - **Undo its grants:** the ledger lists them:
   `SELECT mailbox_id, user_id, level_written FROM m365_perm_ledger;` Remove
@@ -526,6 +648,10 @@ through the module, holds no data beyond one snapshot, and the image carries
 no secret. Restricting egress to Microsoft hosts is a planned hardening step.
 
 ## Not verified yet
+
+Verified on one live tenant (November 2026): the container builds and
+starts, the collector signs in and reads Exchange Online, and a dry run
+completes. Live mode and the points below are still open for other tenants.
 
 - A real run against Exchange Online (cmdlet output formats, trustee formats,
   timings, throttling).

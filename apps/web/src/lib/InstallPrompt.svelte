@@ -94,9 +94,9 @@
       <img src={page.data?.brandIconUrl || '/icon.svg'} alt="" width="28" height="28" />
       <span>
         {#if isIosSafari}
-          Install <strong>{page.data?.appName || 'cmail'}</strong>: Share → Add to Home Screen → Open as Web App
+          Install <strong>{page.data?.appName || 'Stanchion'}</strong>: Share → Add to Home Screen → Open as Web App
         {:else}
-          Install <strong>{page.data?.appName || 'cmail'}</strong>
+          Install <strong>{page.data?.appName || 'Stanchion'}</strong>
         {/if}
       </span>
     </div>

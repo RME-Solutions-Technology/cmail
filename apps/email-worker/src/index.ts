@@ -1,4 +1,4 @@
-// cmail inbound email worker
+// Stanchion inbound email worker
 // Receives email via Cloudflare Email Routing, parses, stores in D1/R2.
 // Outbound is handled directly by the web app (Cloudflare Email Service or Postmark) —
 // this worker is inbound-only.
@@ -19,18 +19,21 @@ import {
   standbyConfigDiagnostic,
   type ProbeDecision,
 } from './standby/standby';
-import type { StandbyEnv } from '@cmail/shared/standby';
-import { isJournalAddress, type ExchangeMirrorEnv } from '@cmail/shared/exchange-mirror';
+import type { StandbyEnv } from '@stanchion/shared/standby';
+import { isJournalAddress, type ExchangeMirrorEnv } from '@stanchion/shared/exchange-mirror';
+import { graphMirrorConfig, type GraphMirrorEnv } from '@stanchion/shared/graph-mirror';
+import { GRAPH_MIRROR_CRON, runGraphMirrorTick } from './graph-mirror/run';
 import { exchangeMirrorConfigDiagnostic, handleJournalDelivery, type InboundTools } from './exchange-mirror/ingest';
 import { runAliasSyncTick } from './m365-sync/aliases';
 import { runWelcomeTick, welcomeConfigDiagnostic, type WelcomeWorkerEnv } from './m365-welcome/welcome';
 import { handleVaultRpc, isVaultRpcPath } from './vault/rpc';
 import type { VaultKeyEnv } from './vault/crypto';
 import PostalMime from 'postal-mime';
-import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@cmail/shared/push';
-import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
-import { parseMessageImportance } from '@cmail/shared/message-importance';
-import { contactUpsertStatements } from '@cmail/shared/contacts';
+import { pushConfigurationDiagnostic, sendNewMailNotifications, type PushEnvironment } from '@stanchion/shared/push';
+import { sanitizeBoundedEmailHtml } from '@stanchion/shared/sanitize-email';
+import { parseMessageImportance } from '@stanchion/shared/message-importance';
+import { contactUpsertStatements } from '@stanchion/shared/contacts';
+import { decideFocusAtDelivery, focusUpdateStatement } from '@stanchion/shared/focused-inbox';
 import {
   evaluateInboxRules,
   loadEnabledInboxRules,
@@ -42,25 +45,28 @@ import {
   ruleNeedsHeaders,
   type InboxRuleOutcome,
   type RuleMessageFacts,
-} from '@cmail/shared/inbox-rules';
+} from '@stanchion/shared/inbox-rules';
 import {
   normalizeParticipantAddress,
   normalizeParticipants,
   sanitizeParticipantName,
   serializeParticipants,
   type MessageParticipant,
-} from '@cmail/shared/message-participants';
+} from '@stanchion/shared/message-participants';
 import {
   decideInboundPlacement,
   pickSenderRule,
   readSpamScore,
   spamQuarantineThreshold,
-} from '@cmail/shared/inbound-risk';
+  applyRateHold,
+} from '@stanchion/shared/inbound-risk';
 import { parseAuthenticationResults } from './authentication-results';
 import { applyCalendarWrites, extractCalendarText } from './calendar';
 import {
+  recordInboundRateLimitAudit,
   releaseInboundReservation,
-  reserveInboundDelivery,
+  rekeyInboundSenderToFrom,
+  reserveInboundDeliveryHolding,
   type InboundGuardEnv,
 } from './inbound-guard';
 import { runRetention, type RetentionEnv } from './retention';
@@ -71,9 +77,10 @@ export {
   hashInboundSender,
   inboundGuardConfiguration,
   reserveInboundDelivery,
+  reserveInboundDeliveryHolding,
 } from './inbound-guard';
 
-interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, VaultKeyEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
+interface Env extends RetentionEnv, PushEnvironment, InboundGuardEnv, M365SyncWorkerEnv, M365PermsWorkerEnv, CopyBackWorkerEnv, StandbyEnv, ExchangeMirrorEnv, GraphMirrorEnv, VaultKeyEnv, Omit<WelcomeWorkerEnv, 'DB' | 'EMAIL' | 'MAIL_DOMAIN'> {
   /** Subrequests one Exchange journal report may use for filing (docs/exchange-mirror.md). */
   M365_JOURNAL_SUBREQUEST_BUDGET?: string | number;
   /** Native Cloudflare Email Service binding used by the private service endpoint. */
@@ -152,8 +159,8 @@ const OPAQUE_STORAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 // Deliberately neutral: do not disclose whether this address never existed,
 // was disabled, or belonged to an offboarded person. Cloudflare controls the
 // permanent SMTP rejection and passes this plain-text reason to the sender;
-// it does not cause Cmail to send mail.
-export const RECIPIENT_UNAVAILABLE_SMTP_RESPONSE = 'cmail: recipient unavailable; verify the address or contact the organisation';
+// it does not cause Stanchion to send mail.
+export const RECIPIENT_UNAVAILABLE_SMTP_RESPONSE = 'Stanchion: recipient unavailable; verify the address or contact the organisation';
 /** Structural type so the Worker can still run locally without the optional binding. */
 export interface InboundRateLimitBinding {
   limit(input: { key: string }): Promise<{ success: boolean }>;
@@ -163,6 +170,8 @@ export interface InboundRateLimitBinding {
 const BLOCKED_EXTENSIONS = new Set([
   '.exe', '.bat', '.cmd', '.scr', '.js', '.vbs', '.ps1', '.msi',
   '.com', '.pif', '.hta', '.cpl', '.reg', '.inf', '.wsf',
+  // Added after the contractor review (S15): shortcuts, disk images and other Windows script or installer types.
+  '.lnk', '.iso', '.img', '.vhd', '.vhdx', '.jar', '.vbe', '.jse', '.wsh', '.msc', '.chm', '.scf', '.url', '.appx', '.msix',
 ]);
 
 function generateId(): string {
@@ -517,7 +526,22 @@ export function parsedAuthenticationFacts(
   headers: Array<{ key: string; value: string }> | undefined,
   env?: { INBOUND_AUTHSERV_ID?: string },
 ): { sourceIp: string | null; spf: string | null; dkim: string | null; dmarc: string | null } {
-  const first = headers?.find((header) => header.key.toLowerCase() === 'authentication-results')?.value;
+  const records = (headers ?? []).filter((header) => header.key.toLowerCase() === 'authentication-results');
+  const first = records[0]?.value;
+  // The boundary stamps exactly one record with its own id. A second record
+  // that claims the same id was written by the sender (a forgery attempt), so
+  // no verdict from this message can be trusted (contractor review S5).
+  const trustedId = env?.INBOUND_AUTHSERV_ID?.trim().toLowerCase();
+  if (trustedId) {
+    const claimingTrusted = records.filter((record) => {
+      // Leading RFC 5322 comments before the id do not hide a record from this count.
+      const id = record.value.replace(/^(?:\s|\([^)]*\))+/, '').split(/[\s;(]/, 1)[0]?.toLowerCase();
+      return id === trustedId;
+    });
+    if (claimingTrusted.length > 1) {
+      return { sourceIp: null, spf: null, dkim: null, dmarc: null };
+    }
+  }
   const facts = parseAuthenticationResults(first ?? null, env?.INBOUND_AUTHSERV_ID);
   return { sourceIp: facts.sourceIp, spf: facts.spf, dkim: facts.dkim, dmarc: facts.dmarc };
 }
@@ -531,6 +555,38 @@ export async function stableInboundId(mailboxId: string, messageIdHeader: string
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
   return `inbound-${hex}`;
+}
+
+/**
+ * Stricter than isFirstContact: true only when someone in this mailbox has
+ * written to the address, or has read mail from it that was not filed to Junk.
+ * Used to let a rate-held message keep the Inbox, so an attacker with their
+ * own authenticated domain cannot become "known" just by getting one message
+ * stored. A lookup failure resolves to false (the message is held).
+ */
+async function isKnownCorrespondent(
+  db: D1Database,
+  mailboxId: string,
+  senderAddress: string,
+): Promise<boolean> {
+  if (!mailboxId || !senderAddress) return false;
+  try {
+    const prior = await db.prepare(
+      `SELECT 1 AS seen FROM messages
+       WHERE mailbox_id = ?
+         AND (
+           (direction = 'inbound' AND from_address = ? AND is_read = 1 AND folder <> 'spam')
+           OR (
+             direction IN ('outbound', 'internal')
+             AND EXISTS (SELECT 1 FROM json_each(messages.to_addresses) WHERE json_each.value = ?)
+           )
+         )
+       LIMIT 1`,
+    ).bind(mailboxId, senderAddress, senderAddress).first<{ seen: number }>();
+    return !!prior;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -574,7 +630,7 @@ async function isFirstContact(
 /**
  * Resolves the winning organisation-wide sender rule for the header From
  * address, matching its exact address and its bare domain in one prepared
- * statement. pickSenderRule (from @cmail/shared/inbound-risk) then applies
+ * statement. pickSenderRule (from @stanchion/shared/inbound-risk) then applies
  * the address-beats-domain, block-beats-allow precedence.
  *
  * A lookup failure resolves to no rule. sender_rules is a management
@@ -583,7 +639,7 @@ async function isFirstContact(
  */
 export async function lookupSenderRule(db: D1Database, headerFrom: string): Promise<'allow' | 'block' | null> {
   // The delimiter is the final @ for the same reason normalizeParticipantAddress
-  // (in @cmail/shared/message-participants) uses it: a quoted local-part may
+  // (in @stanchion/shared/message-participants) uses it: a quoted local-part may
   // itself contain @.
   const delimiter = headerFrom.lastIndexOf('@');
   const domain = delimiter >= 0 ? headerFrom.slice(delimiter + 1) : '';
@@ -827,6 +883,26 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
   if (url.pathname === '/internal/exchange-mirror/config' && request.method === 'GET') {
     return Response.json(exchangeMirrorConfigDiagnostic(env));
   }
+  // Exchange mirror, Graph source: configuration by setting name only, and
+  // "Run now" from Admin (one bounded tick; the lease still applies).
+  if (url.pathname === '/internal/graph-mirror/config' && request.method === 'GET') {
+    const check = graphMirrorConfig(env);
+    return Response.json(check.configured
+      ? { configured: true, folders: check.config.folders, lookbackHours: check.config.lookbackHours, initialCap: check.config.initialCap }
+      : { configured: false, problems: check.problems });
+  }
+  if (url.pathname === '/internal/graph-mirror/run' && request.method === 'POST') {
+    try {
+      const result = await runGraphMirrorTick(env, INBOUND_TOOLS, { force: true, budgets: { timeMs: GRAPH_MIRROR_RUN_NOW_MS } });
+      // Status and counts only.
+      return Response.json(result.status === 'worked'
+        ? { status: result.status, filed: result.counts.filed + result.counts.sentFiled, complete: result.complete, error: result.error }
+        : { status: result.status });
+    } catch (caught) {
+      console.error('Graph mirror run failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      return Response.json({ status: 'error' }, { status: 503 });
+    }
+  }
   // Microsoft 365 welcome emails (docs/m365-welcome-emails.md): whether this
   // Worker can send at all, by setting name only.
   if (url.pathname === '/internal/m365-welcome/config' && request.method === 'GET') {
@@ -893,7 +969,10 @@ async function handleOutboundServiceRequest(request: Request, env: Env): Promise
 
 // The inbound path's own content helpers, shared with the Exchange mirror so
 // a mirrored copy is cleaned and limited exactly like a delivered one.
-const INBOUND_TOOLS: InboundTools = {
+/** "Run now" from Admin waits for the tick, so it gets a shorter time budget than the cron. */
+const GRAPH_MIRROR_RUN_NOW_MS = 20_000;
+
+export const INBOUND_TOOLS: InboundTools = {
   getInboundLimit,
   getAttachmentLimit,
   getDecodedBodyLimit,
@@ -986,6 +1065,21 @@ export default {
       }));
       return;
     }
+    // Exchange mirror, Graph source: its own */5 cron, and the */10 one too
+    // so an instance whose wrangler file predates the */5 cron still pulls.
+    // Returns after one settings read unless switched on; a lease and a
+    // minimum interval keep two crons in the same minute to one run.
+    if (controller.cron === GRAPH_MIRROR_CRON || controller.cron === STANDBY_PROBE_CRON) {
+      ctx.waitUntil(runGraphMirrorTick(env, INBOUND_TOOLS).then((result) => {
+        // Counts and codes only, never addresses or content.
+        if (result.status === 'worked') console.log('Graph mirror ran', { ...result.counts, mailboxes: result.mailboxes, visited: result.visited, complete: result.complete, error: result.error });
+        else if (result.status === 'error' || result.status === 'not_installed') console.warn('Graph mirror', { status: result.status, code: result.status === 'error' ? result.code : undefined });
+        else if (result.status === 'not_configured') console.warn('Graph mirror', { status: result.status, problems: result.problems });
+      }, (caught: unknown) => {
+        console.error('Graph mirror failed', { error: caught instanceof Error ? caught.name : 'UnknownError' });
+      }));
+      if (controller.cron === GRAPH_MIRROR_CRON) return;
+    }
     // Standby probe: returns at once unless a manager turned the standby
     // address on in Admin. See docs/standby-probe.md.
     if (controller.cron === STANDBY_PROBE_CRON) {
@@ -1018,7 +1112,9 @@ export default {
     // switched on, is handled there. With M365_JOURNAL_ADDRESS empty this is
     // a string comparison and nothing else; with the switch off the address
     // continues below like any other (and is refused as unknown).
-    if (isJournalAddress(env, recipientAddress) && await handleJournalDelivery(message, env, INBOUND_TOOLS)) return;
+    if (isJournalAddress(env, recipientAddress) && await handleJournalDelivery(message, env, INBOUND_TOOLS, {
+      notify: (mailboxId, messageId) => ctx.waitUntil(sendNewMailNotifications(env, mailboxId, messageId)),
+    })) return;
 
     // Trusted transport facts come only from the parsed header list (below).
     // The joined message.headers value is not used: sender text could hide the
@@ -1104,16 +1200,18 @@ export default {
       return;
     }
 
-    const reservation = await reserveInboundDelivery(env, {
+    const reservation = await reserveInboundDeliveryHolding(env, {
       mailboxId: mailbox.id,
       senderAddress,
       deliveryKey: messageId,
       messageBytes: messageSize,
+      mailboxType: mailbox.type,
     });
     if (reservation.status === 'duplicate') {
       return;
     }
-    if (reservation.status !== 'accepted') {
+    if (reservation.status !== 'accepted' && reservation.status !== 'held') {
+      // Only the storage quota (or a failing database) refuses mail now.
       // Policy and dependency failures deliberately have the same generic,
       // non-diagnostic SMTP response. Do not persist attacker-controlled PII
       // in trace/audit rows for guardrail denials.
@@ -1125,14 +1223,26 @@ export default {
       );
       return;
     }
+    // A rate limit never bounces real mail: the message is kept and filed to
+    // Junk with a reason (unless it is from someone this mailbox already
+    // corresponds with and passed DMARC; see below).
+    let rateHeld = reservation.status === 'held';
+    if (rateHeld) {
+      console.warn('Inbound rate limit reached; message held in Junk, not rejected');
+      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'mailbox');
+    }
+    if (reservation.senderLimitSkipped) {
+      console.warn('INBOUND_SENDER_HASH_KEY is missing or malformed; per-sender limit skipped');
+    }
 
     const reservationId = reservation.reservationId;
     let reservationSettled = reservationId === null;
 
     try {
       let parsed;
+      let rawEmail: ArrayBuffer | null = null;
       try {
-      const rawEmail = await new Response(message.raw).arrayBuffer();
+      rawEmail = await new Response(message.raw).arrayBuffer();
       const parser = new PostalMime();
       parsed = await parser.parse(rawEmail);
       } catch {
@@ -1149,20 +1259,20 @@ export default {
         return;
       }
 
-    const preparedBody = prepareInboundBody(
+    let preparedBody = prepareInboundBody(
       parsed.html,
       parsed.text,
       getDecodedBodyLimit(env),
     );
+    // A body that is too large or too deep to display is never bounced
+    // (contractor review C2): show the plain-text part if there is one, else a
+    // short notice, and keep the original message as an attachment when it fits.
+    const bodyDegraded = !preparedBody.ok;
     if (!preparedBody.ok) {
-      message.setReject('Message body exceeds the configured processing limit');
-      await logTrace(env.DB, {
-        direction: 'inbound',
-        status: 'rejected',
-        status_detail: 'Decoded body complexity limit exceeded',
-        size_bytes: messageSize,
-      });
-      return;
+      const textOnly = parsed.text ? prepareInboundBody(undefined, parsed.text, getDecodedBodyLimit(env)) : null;
+      preparedBody = textOnly && textOnly.ok
+        ? textOnly
+        : { ok: true, html: '<p>This message is too large or too complex to show here. The original message is attached as original-message.eml when it fits within the attachment limit.</p>' };
     }
 
     // Recorded verdicts come from the parsed header list, not the joined value.
@@ -1223,6 +1333,25 @@ export default {
         source_ip: sourceIp,
       });
       return;
+    }
+
+    // Degraded body: keep the original as an attachment so nothing is lost,
+    // but only when it fits the same limits every other attachment obeys.
+    if (
+      bodyDegraded
+      && rawEmail
+      && preparedAttachments.length < getAttachmentLimit(env)
+      && totalAttachmentBytes + rawEmail.byteLength <= attachmentByteLimit
+    ) {
+      preparedAttachments.push({
+        id: generateId(),
+        filename: 'original-message.eml',
+        contentType: 'message/rfc822',
+        contentId: null,
+        disposition: 'attachment' as const,
+        content: rawEmail,
+        size: rawEmail.byteLength,
+      } as (typeof preparedAttachments)[number]);
     }
 
     const blockedAttachment = preparedAttachments.some(
@@ -1294,13 +1423,30 @@ export default {
     // identity the reader is shown and the one a warning has to be about.
     const spamScore = readSpamScore(message.headers);
     const senderRule = await lookupSenderRule(env.DB, headerFrom);
-    const placement = decideInboundPlacement({
+    const firstContact = await isFirstContact(env.DB, mailbox.id, headerFrom);
+    // The per-sender limit was keyed on the envelope sender, which a sender can
+    // change on every message. After a DMARC pass, count against the From
+    // address instead (S2); any problem leaves the envelope key in force.
+    if (!rateHeld && await rekeyInboundSenderToFrom(env, {
+      reservationId,
+      mailboxId: mailbox.id,
+      fromAddress: headerFrom,
+      dmarc: auth.dmarc,
+      mailboxType: mailbox.type,
+    }) === 'over') {
+      rateHeld = true;
+      console.warn('Inbound per-sender limit reached for the From address; message held in Junk, not rejected');
+      await recordInboundRateLimitAudit(env.DB, mailbox.id, 'sender');
+    }
+    // Only a held message needs the stricter check (someone wrote to them or read their mail).
+    const knownCorrespondent = rateHeld ? await isKnownCorrespondent(env.DB, mailbox.id, headerFrom) : false;
+    const placement = applyRateHold(decideInboundPlacement({
       spamScore,
       threshold: spamQuarantineThreshold(env.SPAM_QUARANTINE_SCORE),
       senderRule,
-    });
+      senderAuthenticated: auth.dmarc === 'pass',
+    }), { held: rateHeld, senderAuthenticated: auth.dmarc === 'pass', firstContact: !knownCorrespondent });
     const quarantined = placement.folder === 'spam';
-    const firstContact = await isFirstContact(env.DB, mailbox.id, headerFrom);
     // Inbox rules only see mail the organisation filed to the Inbox: a
     // mailbox rule never pulls quarantined mail back out of Junk.
     const ruleOutcome = quarantined ? null : await inboundRuleOutcome(env.DB, mailbox.id, {
@@ -1313,6 +1459,20 @@ export default {
       importance,
       sizeBytes: messageSize,
     }, { text: parsed.text, html: preparedBody.html, headers: parsed.headers });
+    // Focused Inbox (docs/focused-inbox.md): only mail still bound for the
+    // Inbox after spam filing and inbox rules. null (switch off, or the lookup
+    // failed) stores nothing and the message is filed exactly as before.
+    const focus = (ruleOutcome?.folder ?? placement.folder) === 'inbox'
+      ? await decideFocusAtDelivery(env.DB, {
+        mailboxId: mailbox.id,
+        tenantId: env.M365_TENANT_ID,
+        sender: headerFrom,
+        mailDomain: env.MAIL_DOMAIN,
+        headers: parsed.headers,
+        // Only a DMARC pass recorded by the trusted boundary proves the From.
+        senderAuthenticated: auth.dmarc === 'pass',
+      })
+      : null;
 
     const storageNamespace = generateId();
     const bodyKey = messageBodyR2Key(storageNamespace, generateId());
@@ -1385,7 +1545,11 @@ export default {
       // D1 batches are transactional: message metadata and every attachment
       // row become visible together or not at all. This prevents a retry from
       // deduplicating against a partially persisted message.
-      await env.DB.batch([messageInsert, ...attachmentInserts]);
+      await env.DB.batch([
+        messageInsert,
+        ...(focus ? [focusUpdateStatement(env.DB, messageId, focus)] : []),
+        ...attachmentInserts,
+      ]);
       // The D1 message-insert trigger atomically replaces the pending quota
       // charge with this messages.size_bytes row.
       reservationSettled = true;
@@ -1441,8 +1605,8 @@ export default {
       // Spam, not discarded. Nothing here ever drops mail.
       status: quarantined ? 'quarantined' : 'delivered',
       status_detail: quarantined
-        ? (placement.reason === 'blocked-sender' ? 'Filed to Spam by sender rule' : 'Filed to Spam by spam score')
-        : ruleOutcome ? inboxRuleTraceDetail(ruleOutcome) : 'OK',
+        ? (placement.reason === 'blocked-sender' ? 'Filed to Spam by sender rule' : placement.reason === 'rate-limit' ? 'Held in Spam: hourly receiving limit reached (not rejected)' : 'Filed to Spam by spam score')
+        : ruleOutcome ? inboxRuleTraceDetail(ruleOutcome) : (placement.allowIgnored ? 'OK (allow rule ignored: sender not authenticated)' : 'OK'),
       spf_result: auth.spf,
       dkim_result: auth.dkim,
       dmarc_result: auth.dmarc,

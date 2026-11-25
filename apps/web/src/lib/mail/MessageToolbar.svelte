@@ -29,7 +29,7 @@
   function openCompose(event, href) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    void goto(href, { state: { cmailComposeReturn: composeReturnHref } });
+    void goto(href, { state: { stanchionComposeReturn: composeReturnHref } });
   }
 
   /** Close the phone "More" menu, then run the action. */

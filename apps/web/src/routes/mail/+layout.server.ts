@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import type { Mailbox } from '@cmail/shared/types';
+import type { Mailbox } from '@stanchion/shared/types';
 import { getEnabledProviders, isAuthProvider } from '#lib/server/auth.js';
 import { BOOTSTRAP_PROOF_COOKIE } from '#lib/server/bootstrap.js';
 import { ENROLLMENT_COOKIE } from '#lib/server/identity.js';

@@ -1,6 +1,7 @@
 // Pure eligibility rules for the Microsoft 365 mailbox sync. See
 // docs/m365-sync.md, "Which accounts are synced".
-import { EXCHANGE_MAILBOX_PLANS, isGuid } from '@cmail/shared/m365-sync';
+import { EXCHANGE_MAILBOX_PLANS, isGuid } from '@stanchion/shared/m365-sync';
+import { domainIn } from '@stanchion/shared/org-domains';
 import type { GraphUser, PurposeLookup } from './graph';
 
 export type OutReason =
@@ -20,7 +21,7 @@ export type OutReason =
 export type SharedSource = 'in_shared_group' | 'shared_mailbox';
 
 export type Classification =
-  | { kind: 'person'; address: string; displayName: string }
+  | { kind: 'person'; address: string; displayName: string; upn: string }
   | { kind: 'shared'; address: string; displayName: string; source: SharedSource }
   | { kind: 'out'; reason: OutReason; address: string }
   /** The mailbox type lookup failed: leave this object exactly as it is this round. */
@@ -38,6 +39,9 @@ const LOCAL_PART = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
 
 const DEFAULT_PLANS: ReadonlySet<string> = new Set(Object.keys(EXCHANGE_MAILBOX_PLANS));
 
+/** The organisation's mail domains (orgDomains), or MAIL_DOMAIN alone. */
+export type OrgDomainSet = string | ReadonlySet<string>;
+
 /**
  * True when the user has a usable Exchange Online service plan that includes
  * a mailbox, matched by service plan id (EXCHANGE_MAILBOX_PLANS). The service
@@ -50,15 +54,25 @@ export function hasExchangePlan(user: GraphUser, planIds: ReadonlySet<string> = 
     && typeof plan.capabilityStatus === 'string' && USABLE_PLAN.has(plan.capabilityStatus));
 }
 
-/** The primary SMTP address (Graph `mail`), lower case, if it is a plain address on the mail domain. */
-export function primaryAddress(user: GraphUser, mailDomain: string): { address: string; onDomain: boolean } {
+/**
+ * The primary SMTP address (Graph `mail`), lower case, and whether it is a
+ * plain address on one of the organisation's domains (`domains`: the org
+ * domain set, or MAIL_DOMAIN alone).
+ */
+export function primaryAddress(user: GraphUser, domains: OrgDomainSet): { address: string; onDomain: boolean } {
   const raw = typeof user.mail === 'string' ? user.mail.trim().toLowerCase() : '';
   if (!raw || raw.length > 254 || /[\s<>"\u0000-\u001f\u007f]/.test(raw)) return { address: '', onDomain: false };
   const at = raw.lastIndexOf('@');
   if (at <= 0) return { address: '', onDomain: false };
   const local = raw.slice(0, at);
   const domain = raw.slice(at + 1);
-  return { address: raw, onDomain: domain === mailDomain && LOCAL_PART.test(local) && !local.includes('..') };
+  return { address: raw, onDomain: domainIn(domain, domains) && LOCAL_PART.test(local) && !local.includes('..') };
+}
+
+/** The sign-in name (userPrincipalName) as a plain address, or '' when Graph gave nothing usable. */
+export function cleanUpn(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return raw && raw.length <= 254 && /^[^\s<>"@\u0000-\u001f\u007f]+@[^\s<>"@\u0000-\u001f\u007f]+$/.test(raw) ? raw : '';
 }
 
 export function cleanDisplayName(value: unknown): string {
@@ -68,19 +82,19 @@ export function cleanDisplayName(value: unknown): string {
 /**
  * True when Exchange's mailbox type (userPurpose) is needed to classify this
  * object, with shared mailbox detection on: not deleted, a valid object id,
- * and a `mail` value on MAIL_DOMAIN. Disabled and unlicensed objects are
+ * and a `mail` value on an organisation domain. Disabled and unlicensed objects are
  * included on purpose: that is what a shared mailbox usually looks like.
  */
-export function needsPurposeCheck(user: GraphUser, mailDomain: string): boolean {
+export function needsPurposeCheck(user: GraphUser, domains: OrgDomainSet): boolean {
   if (user['@removed'] || !isGuid(typeof user.id === 'string' ? user.id.toLowerCase() : user.id)) return false;
-  return primaryAddress(user, mailDomain).onDomain;
+  return primaryAddress(user, domains).onDomain;
 }
 
 /** True when a group membership check is needed to classify this object. */
-export function needsGroupCheck(user: GraphUser, mailDomain: string, groups: { scope: string | null; shared: string | null }): boolean {
+export function needsGroupCheck(user: GraphUser, domains: OrgDomainSet, groups: { scope: string | null; shared: string | null }): boolean {
   if (user['@removed'] || !isGuid(user.id)) return false;
   if (!groups.scope && !groups.shared) return false;
-  return primaryAddress(user, mailDomain).onDomain;
+  return primaryAddress(user, domains).onDomain;
 }
 
 /**
@@ -90,13 +104,13 @@ export function needsGroupCheck(user: GraphUser, mailDomain: string, groups: { s
  */
 export function classify(
   user: GraphUser,
-  mailDomain: string,
+  domains: OrgDomainSet,
   groups: { scope: string | null; shared: string | null },
   memberOf: Set<string> | null,
   planIds: ReadonlySet<string> = DEFAULT_PLANS,
   purpose: PurposeLookup | 'none_unconfirmed' | null = null,
 ): Classification {
-  const { address, onDomain } = primaryAddress(user, mailDomain);
+  const { address, onDomain } = primaryAddress(user, domains);
   if (user['@removed']) return { kind: 'out', reason: 'deleted', address };
   if (!address) return { kind: 'out', reason: 'no_address', address };
   if (!onDomain) return { kind: 'out', reason: 'other_domain', address };
@@ -128,5 +142,5 @@ export function classify(
   if (user.accountEnabled !== true) return { kind: 'out', reason: 'disabled', address };
   if (!hasExchangePlan(user, planIds)) return { kind: 'out', reason: 'no_mailbox_plan', address };
   if (groups.scope && !memberOf?.has(groups.scope)) return { kind: 'out', reason: 'not_in_scope_group', address };
-  return { kind: 'person', address, displayName };
+  return { kind: 'person', address, displayName, upn: cleanUpn(user.userPrincipalName) };
 }

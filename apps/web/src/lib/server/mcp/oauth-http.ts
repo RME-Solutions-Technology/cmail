@@ -19,7 +19,7 @@ function oauthError(error: OAuthError, basicUsed = false): Response {
   return oauthJson(
     { error: error.error, error_description: error.description },
     error.status,
-    error.status === 401 && basicUsed ? { 'WWW-Authenticate': 'Basic realm="cmail"' } : {},
+    error.status === 401 && basicUsed ? { 'WWW-Authenticate': 'Basic realm="Stanchion"' } : {},
   );
 }
 

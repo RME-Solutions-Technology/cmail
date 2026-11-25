@@ -142,12 +142,21 @@
             required
             spellcheck="false"
           />
-          {#if data.mailDomain}<span aria-hidden="true">@{data.mailDomain}</span>{/if}
+          {#if data.mailDomain && data.mailDomains.length > 1}
+            <select name="mailbox_domain" aria-label="Mailbox domain">
+              {#each data.mailDomains as domain (domain)}
+                <option value={domain} selected={domain === data.mailDomain}>@{domain}</option>
+              {/each}
+            </select>
+          {:else if data.mailDomain}<span aria-hidden="true">@{data.mailDomain}</span>{/if}
         </div>
         <small id="mailbox-domain-hint">
           {data.mailDomain
             ? 'Required. Use letters, numbers, dots, underscores, or hyphens.'
             : 'Set MAIL_DOMAIN before creating personal mailboxes.'}
+          {#if data.mailDomain && data.mailDomains.length > 1}
+            People whose mailbox is on another domain can receive and file mail, but can't send from it yet: only @{data.mailDomain} can send for now.
+          {/if}
         </small>
       </div>
       <div class="field compact-field">
@@ -384,6 +393,7 @@
   .suffix-control input { border-radius: var(--radius) 0 0 var(--radius); }
   .suffix-control span { display: inline-flex; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--border-input); color: var(--text-muted); font-size: 13px; white-space: nowrap; }
   .suffix-control:focus-within span { border-bottom-color: var(--primary); box-shadow: 0 1px 0 var(--primary); }
+  .suffix-control select { width: auto; max-width: 55%; border-radius: 0 var(--radius) var(--radius) 0; font-size: 13px; }
   .invite-field { grid-column: 1 / -1; display: flex; gap: 9px; align-items: start; }
   .invite-field input { width: auto; margin-top: 3px; }
   .invite-field div { display: grid; gap: 2px; }

@@ -1,4 +1,4 @@
-import { sanitizeBoundedEmailHtml } from '@cmail/shared/sanitize-email';
+import { sanitizeBoundedEmailHtml } from '@stanchion/shared/sanitize-email';
 import type { Root, RootContent } from 'hast';
 import rehypeParse from 'rehype-parse';
 import { unified } from 'unified';

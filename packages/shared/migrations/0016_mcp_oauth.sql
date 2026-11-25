@@ -1,5 +1,5 @@
 -- Remote MCP (Model Context Protocol) access for AI agents, authorised with
--- OAuth 2.1 (authorization code + PKCE S256) through cmail's own sign-in and
+-- OAuth 2.1 (authorization code + PKCE S256) through Stanchion's own sign-in and
 -- an explicit consent screen. See docs/mcp.md for the flow and threat model.
 --
 -- Additive only: every table here is new, and no existing table is rebuilt

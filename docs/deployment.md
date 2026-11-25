@@ -1,14 +1,40 @@
+---
+title: "Deployment and verification"
+summary: "The production sequence: Cloudflare resources, sign-in, secrets, outbound mail, deploy, inbound routing, bootstrap and checks."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, configuration.md, operations.md]
+---
+
 # Deployment and verification
 
 This guide walks through a production deployment to Cloudflare. Provider interfaces and commands change over time — check current Cloudflare, Google, Microsoft, and Postmark docs as you go.
+
+**In this article**
+
+- [Guided repository import](#guided-repository-import)
+- [1. Prepare a clean release](#1-prepare-a-clean-release)
+- [Updating an existing instance](#updating-an-existing-instance)
+- [2. Provision Cloudflare resources](#2-provision-cloudflare-resources)
+- [3. Establish the final application origin](#3-establish-the-final-application-origin)
+- [4. Configure identity providers and secrets](#4-configure-identity-providers-and-secrets)
+- [5. Configure optional browser notifications](#5-configure-optional-browser-notifications)
+- [6. Configure outbound delivery](#6-configure-outbound-delivery)
+- [7. Deploy applications](#7-deploy-applications)
+- [8. Configure inbound routing](#8-configure-inbound-routing)
+- [9. Bootstrap and lock down administration](#9-bootstrap-and-lock-down-administration)
+- [Verification](#verification)
+- [Official platform references](#official-platform-references)
 
 ## Guided repository import
 
 The **Deploy to Cloudflare** button in the project README starts Cloudflare's repository-import flow. It's a guided starting point, not a one-click production deploy.
 
-cmail has a SvelteKit Pages application (Cloudflare's frontend hosting) and a separate email Worker (Cloudflare's serverless function runtime). Both share workspace code, D1 (Cloudflare's hosted database), and R2 (Cloudflare's object storage). The Worker receives routed mail and handles the private native outbound path. Cloudflare's [deployment-button documentation](https://developers.cloudflare.com/workers/platform/deploy-buttons/) says buttons support Workers only: no Pages, no full monorepo support, and no deploying multiple Workers together. The button also skips OAuth registrations, production secrets, Email Sending domain onboarding, Email Routing rules, a custom domain, and cmail's one-time bootstrap.
+Stanchion has a SvelteKit Pages application (Cloudflare's frontend hosting) and a separate email Worker (Cloudflare's serverless function runtime). Both share workspace code, D1 (Cloudflare's hosted database), and R2 (Cloudflare's object storage). The Worker receives routed mail and handles the private native outbound path. Cloudflare's [deployment-button documentation](https://developers.cloudflare.com/workers/platform/deploy-buttons/) says buttons support Workers only: no Pages, no full monorepo support, and no deploying multiple Workers together. The button also skips OAuth registrations, production secrets, Email Sending domain onboarding, Email Routing rules, a custom domain, and Stanchion's one-time bootstrap.
 
-Use the button only to import the repository, then complete every step below before calling the environment deployed. If you fork cmail, point the button at your own reviewed source, not the upstream badge — otherwise it imports upstream cmail instead of your fork. A future move to [SvelteKit on Workers](https://developers.cloudflare.com/workers/framework-guides/web-apps/sveltekit/) may automate more of this, but the email Worker and provider setup will still need manual steps.
+Use the button only to import the repository, then complete every step below before calling the environment deployed. If you fork Stanchion, point the button at your own reviewed source, not the upstream badge — otherwise it imports upstream Stanchion instead of your fork. A future move to [SvelteKit on Workers](https://developers.cloudflare.com/workers/framework-guides/web-apps/sveltekit/) may automate more of this, but the email Worker and provider setup will still need manual steps.
 
 ## 1. Prepare a clean release
 
@@ -30,7 +56,7 @@ The management console shows the web build's Git revision and compares it with `
 
 How it works, so you can predict and troubleshoot it:
 
-- **Upstream.** `REPO_URL` in the web `[vars]` (default `https://github.com/RME-Solutions-Technology/cmail`). It must be a plain public `https://github.com/<owner>/<repo>` URL; anything else is never fetched. The "Update procedure" link points at this section of that repository.
+- **Upstream.** `REPO_URL` in the web `[vars]` (default `https://github.com/RME-Solutions-Technology/stanchion`). It must be a plain public `https://github.com/<owner>/<repo>` URL; anything else is never fetched. The "Update procedure" link points at this section of that repository.
 - **Sources.** The latest `main` commit comes from Git's public ref advertisement (`github.com/<repo>.git/info/refs`) and the version from `package.json` at that commit on `raw.githubusercontent.com`. Neither uses GitHub's REST API, whose 60-requests-an-hour unauthenticated limit is shared by everyone behind the same Cloudflare egress address and is usually exhausted. The REST compare API is tried only for the commit count and fork detection, and losing it is harmless.
 - **Caching.** Results are cached in the Cloudflare edge cache and in memory for an hour (ten minutes after a failed check), so a busy console asks GitHub about once an hour per location.
 - **Server-side, manager-only, no secrets.** The browser calls `/admin/source-updates` on your own instance; the Worker fetches GitHub. No token is used and the Content Security Policy needs no change.
@@ -86,10 +112,10 @@ Mail metadata, bodies, and attachments live in separate D1 and R2 resources. Bac
 Use Cloudflare's [D1 export](https://developers.cloudflare.com/d1/best-practices/import-export-data/) and an S3-compatible client such as the documented [`rclone` integration](https://developers.cloudflare.com/r2/examples/rclone/). Give the R2 client a restricted token and a separately controlled backup destination. A D1 export blocks other database requests while it runs. For a routine recovery point: pre-copy R2, export D1, then copy R2 again — the second copy catches objects committed around the export without deleting backup objects. For a strict recovery point, pause Email Routing and interactive writes before the first command, and resume only after validation. Replace all names and the date before running:
 
 ```sh
-rclone copy r2-production:cmail-storage r2-backup:cmail-storage-YYYY-MM-DD --checksum
-pnpm exec wrangler d1 export cmail-db --remote --output ../cmail-backups/cmail-db-YYYY-MM-DD.d1-export.sql
-rclone copy r2-production:cmail-storage r2-backup:cmail-storage-YYYY-MM-DD --checksum
-rclone check r2-production:cmail-storage r2-backup:cmail-storage-YYYY-MM-DD --one-way
+rclone copy r2-production:stanchion-storage r2-backup:stanchion-storage-YYYY-MM-DD --checksum
+pnpm exec wrangler d1 export stanchion-db --remote --output ../stanchion-backups/stanchion-db-YYYY-MM-DD.d1-export.sql
+rclone copy r2-production:stanchion-storage r2-backup:stanchion-storage-YYYY-MM-DD --checksum
+rclone check r2-production:stanchion-storage r2-backup:stanchion-storage-YYYY-MM-DD --one-way
 ```
 
 Hash the D1 export (`sha256sum` on Unix, or `Get-FileHash -Algorithm SHA256` in PowerShell) and keep the checksum with the R2 prefix and maintenance-window record. A two-pass live copy can include harmless extra R2 objects created after the D1 snapshot — it's not a substitute for pausing writes when you need exact consistency.
@@ -97,10 +123,10 @@ Hash the D1 export (`sha256sum` on Unix, or `Get-FileHash -Algorithm SHA256` in 
 Before production mail flow starts, rehearse recovery at least once into **new, isolated** resources — never overwrite production. Create a recovery D1 database and R2 bucket, then import the matching export and object backup:
 
 ```sh
-pnpm exec wrangler d1 create cmail-db-recovery
-pnpm exec wrangler d1 execute cmail-db-recovery --remote --file ../cmail-backups/cmail-db-YYYY-MM-DD.d1-export.sql
-rclone copy r2-backup:cmail-storage-YYYY-MM-DD r2-recovery:cmail-storage-recovery --checksum
-rclone check r2-backup:cmail-storage-YYYY-MM-DD r2-recovery:cmail-storage-recovery --one-way
+pnpm exec wrangler d1 create stanchion-db-recovery
+pnpm exec wrangler d1 execute stanchion-db-recovery --remote --file ../stanchion-backups/stanchion-db-YYYY-MM-DD.d1-export.sql
+rclone copy r2-backup:stanchion-storage-YYYY-MM-DD r2-recovery:stanchion-storage-recovery --checksum
+rclone check r2-backup:stanchion-storage-YYYY-MM-DD r2-recovery:stanchion-storage-recovery --one-way
 ```
 
 Record the D1 export checksum, R2 backup prefix, creation time, source resource names, and confirmation the recovery validated. Check table counts and a small approved sample of message bodies/attachments on the isolated resources. Restoring a live environment needs an approved outage plan: stop mail routing and writes, restore the matching D1 and R2 point together, update both application bindings together, then test before re-enabling routing.
@@ -108,7 +134,7 @@ Record the D1 export checksum, R2 backup prefix, creation time, source resource 
 Create the Pages project before writing Pages secrets:
 
 ```sh
-pnpm exec wrangler pages project create cmail-web --production-branch main
+pnpm exec wrangler pages project create stanchion-web --production-branch main
 ```
 
 If you choose another project name, use it consistently in deployment and secret commands.
@@ -117,7 +143,7 @@ If you choose another project name, use it consistently in deployment and secret
 
 `apps/backup-worker` is a scheduled Worker that keeps a backup inside the same Cloudflare account, with no extra credentials:
 
-- **Mail bodies and attachments** are copied from the mail bucket to `objects/<key>` in a separate, private backup bucket. Keys never change in cmail, so each object is copied once; should a key's content ever change, the previous copy is kept under `versions/YYYY-MM-DD/<key>` for the retention window. Each hourly run copies at most `BACKUP_MAX_COPIES_PER_RUN` (default 200), so a large first backup completes over several runs.
+- **Mail bodies and attachments** are copied from the mail bucket to `objects/<key>` in a separate, private backup bucket. Keys never change in Stanchion, so each object is copied once; should a key's content ever change, the previous copy is kept under `versions/YYYY-MM-DD/<key>` for the retention window. Each hourly run copies at most `BACKUP_MAX_COPIES_PER_RUN` (default 200), so a large first backup completes over several runs.
 - **A daily manifest** (`manifests/YYYY-MM-DD.json`) lists every mail object that existed that day, with `complete: true` once all of them are in the backup.
 - **A daily database dump** (`d1/YYYY-MM-DD/`): every table as NDJSON parts, the schema, and `complete.json` written last.
 - **Safety stops.** A run refuses outright, writing nothing, if the backup bucket holds non-backup keys (it is probably the mail bucket) or the mail bucket holds a backup identity (the bindings point at a backup bucket). It **pauses** when the backed-up objects missing from the mail bucket add up to more than `BACKUP_MAX_MISSING_SHARE` of the backup (default 20%, at least 25 objects), however slowly that built up, or when the mail bucket is empty or shares no object with the backup. A paused run copies, deletes and writes nothing, keeps every manifest (only old D1 dumps are pruned), still dumps D1, and is marked failed, so it shows in Cron history. Its message ends with `BACKUP_ACKNOWLEDGE_DELETIONS=<count>:<code>`. Check the `SOURCE` binding first. If the disappearance is genuine (a large purge or offboarding), set exactly that value: the code fingerprints those objects, so it accepts that set and nothing else, and a value left in place can never cover a later problem. Remove it after one run completes. The share is a deliberate tolerance: a wrong binding that hides fewer objects than it would not pause, so lower it for large deployments.
@@ -126,7 +152,7 @@ If you choose another project name, use it consistently in deployment and secret
 It holds the same private mail as production: keep the backup bucket private (no public access, no `r2.dev` URL), and treat access to it like access to the mail bucket. It protects against accidental deletion and overwrites within the retention window, not against losing the whole account: for that, also keep the off-account export described above. Large mailboxes need the Workers Paid plan (a run can exceed the Free plan's CPU time per invocation), and each run holds both bucket listings in memory, so it suits deployments up to tens of thousands of mail objects; watch the Worker's Cron Trigger history after the first runs.
 
 ```sh
-pnpm exec wrangler r2 bucket create cmail-backup
+pnpm exec wrangler r2 bucket create stanchion-backup
 cp apps/backup-worker/wrangler.toml.example apps/backup-worker/wrangler.toml   # fill in the D1 id and bucket names
 cd apps/backup-worker && pnpm exec wrangler deploy
 ```
@@ -134,8 +160,8 @@ cd apps/backup-worker && pnpm exec wrangler deploy
 To restore one object, copy it back by key (`objects/` prefix removed) and keep its content type, then delete the local copy (it is private mail). This is enough while the message's D1 row still exists; if the row is gone too, restore D1 first (Time Travel below, within its window).
 
 ```sh
-pnpm exec wrangler r2 object get cmail-backup/objects/<key> --remote --file restore.bin
-pnpm exec wrangler r2 object put cmail-storage/<key> --remote --file restore.bin --content-type "<original content type>"
+pnpm exec wrangler r2 object get stanchion-backup/objects/<key> --remote --file restore.bin
+pnpm exec wrangler r2 object put stanchion-storage/<key> --remote --file restore.bin --content-type "<original content type>"
 rm restore.bin
 ```
 
@@ -145,7 +171,7 @@ Rehearse a restore on preview resources first: point a second copy of the Worker
 
 #### Link checks against a phishing-domain list
 
-The email Worker's hourly `7 * * * *` cron downloads the [CERT Polska Warning List](https://cert.pl/en/warning-list/) (its data usage policy allows any use, including commercial, and requires no attribution; attribution must not imply endorsement) into the mail bucket under `link-blocklist/v1/` as 256 small shards. Only changed shards are rewritten, and a failed, oversized or suspiciously small download keeps the last good copy (a list less than half the last size is accepted on the third such download). When a reader clicks a web link in a message, `/link` checks the host and its parent domains locally: listed means a warning page with a small "go anyway"; not listed means a redirect. Nothing about the click leaves the deployment. Links are signed by cmail, so `/link` never redirects a link it didn't create. Signatures are tied to the reader and expire within two weeks (they are re-made whenever a message is shown). If the list can't be read, or is more than two days old, links open normally and the decision is logged (fail open: the check is a backstop, so it never blocks mail use). Logs hold the decision only, plus the host for a listed site. Parsing the list (about 125,000 domains) needs more CPU than the Workers Free plan allows per run, so this needs Workers Paid; on Free the refresh fails and links simply open.
+The email Worker's hourly `7 * * * *` cron downloads the [CERT Polska Warning List](https://cert.pl/en/warning-list/) (its data usage policy allows any use, including commercial, and requires no attribution; attribution must not imply endorsement) into the mail bucket under `link-blocklist/v1/` as 256 small shards. Only changed shards are rewritten, and a failed, oversized or suspiciously small download keeps the last good copy (a list less than half the last size is accepted on the third such download). When a reader clicks a web link in a message, `/link` checks the host and its parent domains locally: listed means a warning page with a small "go anyway"; not listed means a redirect. Nothing about the click leaves the deployment. Links are signed by Stanchion, so `/link` never redirects a link it didn't create. Signatures are tied to the reader and expire within two weeks (they are re-made whenever a message is shown). If the list can't be read, or is more than two days old, links open normally and the decision is logged (fail open: the check is a backstop, so it never blocks mail use). Logs hold the decision only, plus the host for a listed site. Parsing the list (about 125,000 domains) needs more CPU than the Workers Free plan allows per run, so this needs Workers Paid; on Free the refresh fails and links simply open.
 
 This is a backstop, not protection: the list mostly covers threats aimed at Polish users, so most phishing sites aren't on it, and the interface never describes an unlisted link as safe. The backup Worker skips `link-blocklist/`. Add the cron to an existing deployment's email Worker `wrangler.toml` (see `wrangler.toml.example`).
 
@@ -153,12 +179,12 @@ This is a backstop, not protection: the list mostly covers threats aimed at Poli
 
 D1 keeps history for 30 days on Workers Paid (7 days on Workers Free) through [Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/), so a bad data change (a faulty migration, a wrong bulk action, a script error) can be undone without an export. It covers D1 only: R2 objects deleted or overwritten in the same window are not brought back, so keep the R2 copy described above.
 
-- Before any migration or bulk change, record a bookmark with `pnpm exec wrangler d1 time-travel info cmail-db`, and keep it with the change record.
+- Before any migration or bulk change, record a bookmark with `pnpm exec wrangler d1 time-travel info stanchion-db`, and keep it with the change record.
 - To undo, get approval, pause Email Routing and interactive writes, and restore to that bookmark. To go back to a moment instead, look up the bookmark for that time first (`info` takes an RFC 3339 timestamp), then restore by bookmark. A restore rewinds **every** table in place, cancels in-flight queries and asks for confirmation; Wrangler then prints an undo bookmark, so record it.
 
 ```sh
-pnpm exec wrangler d1 time-travel info cmail-db --timestamp=2026-01-01T09:00:00Z
-pnpm exec wrangler d1 time-travel restore cmail-db --bookmark=<bookmark-before-the-change>
+pnpm exec wrangler d1 time-travel info stanchion-db --timestamp=2026-01-01T09:00:00Z
+pnpm exec wrangler d1 time-travel restore stanchion-db --bookmark=<bookmark-before-the-change>
 ```
 
 A D1-only restore can leave rows pointing at R2 objects that changed since. If the incident also touched message bodies or attachments, restore the matching R2 point too, as for a full recovery above. Rehearse on a **preview or recovery** database, never production: record a bookmark, make a harmless marker change (for example create an empty table), restore, and confirm the marker is gone. After any restore, compare per-table row counts with what you expect before re-enabling routing.
@@ -167,10 +193,10 @@ A D1-only restore can leave rows pointing at R2 objects that changed since. If t
 
 Pages preview builds must never inherit production mail data, storage, service bindings, or outbound capability. The committed Wrangler examples repeat every non-inheritable preview binding and variable on purpose — don't collapse those blocks into production defaults.
 
-1. Create a separate `cmail-db-preview` D1 database and
-   `cmail-storage-preview` R2 bucket. Put the preview database ID only in
+1. Create a separate `stanchion-db-preview` D1 database and
+   `stanchion-storage-preview` R2 bucket. Put the preview database ID only in
    `env.preview` in both ignored Wrangler files.
-2. Keep Pages preview bound to `cmail-email-worker-preview`. The Worker preview
+2. Keep Pages preview bound to `stanchion-email-worker-preview`. The Worker preview
    environment has `workers_dev=false`, `preview_urls=false`, empty routes, and
    no `send_email` binding. Its Pages variables keep
    `OUTBOUND_PROVIDER="none"`.
@@ -191,7 +217,7 @@ Pages preview builds must never inherit production mail data, storage, service b
    and restrict which branches create previews.
 
 Before each deploy, inspect the resolved environment and confirm Preview names,
-IDs, and bindings can't reach `cmail-db`, `cmail-storage`, the production email
+IDs, and bindings can't reach `stanchion-db`, `stanchion-storage`, the production email
 Worker, or an outbound provider.
 
 ## 3. Establish the final application origin
@@ -227,30 +253,30 @@ application that supports accounts in any organisational directory and personal
 Microsoft accounts, then set `MICROSOFT_TENANT_ID=common`. For an internal-only
 Entra deployment, select the single-tenant account type and set the variable to
 that tenant's GUID. Either way, register the exact Microsoft callback URL
-shown above. cmail calls
+shown above. Stanchion calls
 `https://graph.microsoft.com/oidc/userinfo` with the access token — don't replace
-this with `/v1.0/me` or broaden delegated permissions for cmail.
+this with `/v1.0/me` or broaden delegated permissions for Stanchion.
 
 Now add a unique session key and the credentials for one or both registered
 providers. The Pages project must already exist for these commands to work:
 
 ```sh
-pnpm exec wrangler pages secret put SESSION_SECRET --project-name cmail-web
-pnpm exec wrangler pages secret put GOOGLE_CLIENT_ID --project-name cmail-web
-pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name cmail-web
+pnpm exec wrangler pages secret put SESSION_SECRET --project-name stanchion-web
+pnpm exec wrangler pages secret put GOOGLE_CLIENT_ID --project-name stanchion-web
+pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name stanchion-web
 # Optional Microsoft provider:
-pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name cmail-web
-pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name cmail-web
+pnpm exec wrangler pages secret put MICROSOFT_CLIENT_ID --project-name stanchion-web
+pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name stanchion-web
 ```
 
 A provider's sign-in button appears only once its own credentials, the shared `APP_URL`, and `SESSION_SECRET` are all set. The default Cloudflare outbound path needs no Pages API token — add an outbound secret only for Postmark or the optional Cloudflare REST fallback.
 
-cmail binds an account to the provider plus the immutable `sub` (subject ID) returned by UserInfo. Returning sign-in never selects a user by email, UPN (Microsoft's internal username-like ID), or ID-token claim. Email is checked only when consuming a manager-issued first-sign-in invitation, or during the tightly scoped first-manager bootstrap flow: Google requires a matching UserInfo email with `email_verified=true`; Microsoft requires its matching non-empty access-token-backed OIDC UserInfo `email` claim plus the independent capability, since Microsoft UserInfo omits `email_verified`.
+Stanchion binds an account to the provider plus the immutable `sub` (subject ID) returned by UserInfo. Returning sign-in never selects a user by email, UPN (Microsoft's internal username-like ID), or ID-token claim. Email is checked only when consuming a manager-issued first-sign-in invitation, or during the tightly scoped first-manager bootstrap flow: Google requires a matching UserInfo email with `email_verified=true`; Microsoft requires its matching non-empty access-token-backed OIDC UserInfo `email` claim plus the independent capability, since Microsoft UserInfo omits `email_verified`.
 
 A third sign-in method needs no provider registration at all: an
 invitation-scoped email one-time code, for invitees whose mail isn't hosted
-by Google or Microsoft. It's on by default; set `EMAIL_OTP_ENABLED=false` to
-remove it entirely. To add a bot check on the code-request form, create a
+by Google or Microsoft. It's off by default; set `EMAIL_OTP_ENABLED=true` to
+turn it on. To add a bot check on the code-request form, create a
 Cloudflare Turnstile widget for `APP_URL`, set `TURNSTILE_SITE_KEY` as a
 Pages variable, and store `TURNSTILE_SECRET_KEY` as a Pages secret — both
 must be present for the widget to appear. See [Email one-time-code
@@ -273,7 +299,7 @@ Use a production-only value, distinct from the development key `pnpm run setup` 
 Skip this step if you don't need browser notifications. Generate one VAPID (keys that authenticate your server to push services) pair with `pnpm push:keys`. Put the same public key and subject in the web and Worker Wrangler `[vars]`, then store the same private key independently in both runtime secret stores:
 
 ```sh
-pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name cmail-web
+pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name stanchion-web
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY --config apps/email-worker/wrangler.toml
 ```
 
@@ -305,14 +331,14 @@ For Cloudflare Email Service:
 
 Deploy the email Worker before Pages. Pages sends only a bounded request over the private service binding; the Worker calls its native Email Sending binding and returns an opaque Cloudflare tracking ID — not the wire RFC `Message-ID`. Never add `[[send_email]]` directly to the Pages configuration.
 
-For local or non-service-binding environments only, set the non-secret `CLOUDFLARE_ACCOUNT_ID` and store a narrowly scoped `CLOUDFLARE_EMAIL_API_TOKEN` with **Email Sending: Edit** as a Pages secret. This enables the REST fallback. Cloudflare's REST success response doesn't consistently show every optional field in its narrative examples, but the generated API reference includes RFC-style `result.message_id`, and cmail validates it when present. REST credentials also enable a single `send_raw` call for mixed local/external messages, keeping external envelope recipients separate from the full visible To/Cc headers. Without those credentials, native Cloudflare or Postmark submits the full recipient set once, and local recipients return through Email Routing. Local Worker email bindings are simulated unless you explicitly enable remote sending — remote calls send real mail.
+For local or non-service-binding environments only, set the non-secret `CLOUDFLARE_ACCOUNT_ID` and store a narrowly scoped `CLOUDFLARE_EMAIL_API_TOKEN` with **Email Sending: Edit** as a Pages secret. This enables the REST fallback. Cloudflare's REST success response doesn't consistently show every optional field in its narrative examples, but the generated API reference includes RFC-style `result.message_id`, and Stanchion validates it when present. REST credentials also enable a single `send_raw` call for mixed local/external messages, keeping external envelope recipients separate from the full visible To/Cc headers. Without those credentials, native Cloudflare or Postmark submits the full recipient set once, and local recipients return through Email Routing. Local Worker email bindings are simulated unless you explicitly enable remote sending — remote calls send real mail.
 
 For Postmark, set `OUTBOUND_PROVIDER=postmark`, store `POSTMARK_API_KEY` as a Pages secret, and publish exactly the DNS records issued for your account.
 
 ### Bounce and complaint feedback (optional)
 
 Cloudflare Email Service accepts a message and then delivers it later, so a
-bounce can happen after cmail has already shown the message as sent. With
+bounce can happen after Stanchion has already shown the message as sent. With
 [Email Sending event subscriptions](https://developers.cloudflare.com/email-service/reference/event-subscriptions/),
 Cloudflare puts each delivery event on a queue and the email Worker reads it:
 
@@ -327,36 +353,36 @@ Cloudflare puts each delivery event on a queue and the email Worker reads it:
   hand-off, the remote server's reply and the reason where the provider gives
   them.
 - Cloudflare reports bounces as events, not as a bounce email. So for each
-  bounced, failed or rejected recipient, cmail puts an **Undeliverable**
+  bounced, failed or rejected recipient, Stanchion puts an **Undeliverable**
   notice from "Mail Delivery System" in the Inbox of each mailbox that holds
   the Sent copy, with a new-mail alert where push is set up. The notice gives
   the cause in plain words, who has to act, how to fix it, and details for
   email admins: the status code, the remote server's reply, the original
   message details and the message hops. Cloudflare doesn't report the remote
   server's name or IP address, so the notice doesn't show them.
-- Events for mail that cmail did not send, such as another app on the same
+- Events for mail that Stanchion did not send, such as another app on the same
   sending domain, are dropped without being stored.
 - After a hard bounce or a spam complaint, Cloudflare puts the address on its
-  suppression list and refuses later sends to it. cmail then tells the sender
+  suppression list and refuses later sends to it. Stanchion then tells the sender
   which address is blocked and offers **Send again**. With
   `CLOUDFLARE_ACCOUNT_ID` and a Pages secret `CLOUDFLARE_SUPPRESSIONS_API_TOKEN`
   (an account-owned token with **Email Sending: Edit** only), it also offers
   **Unblock and send again**, which
   lifts a bounce block for an address this mailbox was just refused for.
-  Complaint and read-only blocks are never lifted from cmail. Without the
+  Complaint and read-only blocks are never lifted from Stanchion. Without the
   credentials, an administrator lifts a block in the dashboard: **Email
   Service** > **Email Sending** > **Suppressions**.
 
 To turn it on:
 
 1. Apply migrations `0019` and `0020` (`pnpm db:migrate`) before deploying this release.
-2. Create a queue, for example `cmail-email-events`
-   (`npx wrangler queues create cmail-email-events`).
+2. Create a queue, for example `stanchion-email-events`
+   (`npx wrangler queues create stanchion-email-events`).
 3. In the queue's **Subscriptions**, subscribe it to **Email Sending** for each
    sending domain. Choose all six events, or at least `message.bounced`,
    `message.failed`, `message.rejected` and `message.complained`. From the
    command line, use the short event names:
-   `npx wrangler queues subscription create cmail-email-events --source email.sending --zone-id <zone ID> --domain <sending domain> --events "message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained"`
+   `npx wrangler queues subscription create stanchion-email-events --source email.sending --zone-id <zone ID> --domain <sending domain> --events "message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained"`
 4. Uncomment the `[[queues.consumers]]` block in the email Worker's Wrangler
    file, set `queue` to your queue's name, and deploy the email Worker.
 5. Send a test message to an address that does not exist on a domain you
@@ -406,7 +432,7 @@ Before each release, record the deployed Git commit and the exact prior Worker v
 
 ```sh
 pnpm exec wrangler deployments list --config apps/email-worker/wrangler.toml
-pnpm exec wrangler pages deployment list --project-name cmail-web
+pnpm exec wrangler pages deployment list --project-name stanchion-web
 ```
 
 Keep a known-good release available until the new release passes verification. Normal releases deploy a backward-compatible Worker first, then Pages. A full rollback reverses that order: roll Pages back first, while the newer Worker still supports the previous private API, then roll the Worker back. This avoids leaving the newer Pages application calling an older Worker contract. Use the Pages project's **Deployments → Rollback to this deployment** action, then roll back the Worker to the recorded version:
@@ -421,28 +447,18 @@ Do **not** blindly roll application code back after a D1 migration. Migrations a
 
 ### Rotate credentials
 
-Rotate on a schedule you choose, and at once after a suspected leak or when someone with access leaves. Put the new value in with the same command you used the first time. A new email Worker secret takes effect at once; redeploy Pages so the new value is used everywhere. Rotate one secret at a time and check sign-in and a test message after each.
-
-| Secret | Where | What changes when you rotate it |
-| --- | --- | --- |
-| `SESSION_SECRET` | Pages | Everyone is signed out. Email sign-in codes and bootstrap proofs still in progress stop working, so ask for a new code. Link-check links in messages already open show the "unverified" warning page when clicked, until the message is reloaded. Pick a quiet hour. |
-| `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_SECRET` | Pages | Create the new secret in the provider's console first, set it in Pages, redeploy, test sign-in, then delete the old secret in the console. |
-| `POSTMARK_API_KEY` | Pages | Create a new server token in Postmark, set it in Pages, redeploy, send a test message, then revoke the old token. Revoking first stops outbound mail. |
-| `CLOUDFLARE_SUPPRESSIONS_API_TOKEN` (Unblock button only) | Pages | Create a new account-owned token with **Email Sending: Edit** only, set it in Pages, redeploy, check the compose page offers Unblock, then delete the old token. It is separate from the send token, so it never changes how mail is sent. |
-| `CLOUDFLARE_EMAIL_API_TOKEN` (REST fallback only) | Pages | Create a new token with **Email Sending: Edit** only, set it in Pages, redeploy, send a test message, then delete the old token in the Cloudflare dashboard. The service binding path doesn't use it. |
-| `INBOUND_SENDER_HASH_KEY` | email Worker | Sender limiting starts counting afresh. Nothing else is affected. |
-| `VAPID_PRIVATE_KEY` (and the public key) | Pages and email Worker | Existing browser notification subscriptions stop working; people must turn notifications on again. Generate a new pair (step 5), put the new `VAPID_PUBLIC_KEY` in both Wrangler `[vars]`, store the new private key in both runtimes, and redeploy both. |
-| `BOOTSTRAP_ADMIN_TOKEN` (with `BOOTSTRAP_ADMIN_EMAIL`) | Pages | Only needed to create the first administrator. Delete both once bootstrap is done (step 9). If you need bootstrap again, or the token may have leaked, rotate the token and restart bootstrap as step 9 describes. |
-
-Keep the old value until the new one is verified, so you can put it back. Never put a secret on a command line that is saved in shell history or paste it into a ticket or chat.
+Rotate on a schedule you choose, and at once after a suspected leak or when
+someone with access leaves. What to create and with which permissions is in
+[Credentials and permissions](credentials.md); the steps and what each
+rotation breaks are in [Running Stanchion: Rotate secrets](operations.md#rotate-secrets).
 
 ## 8. Configure inbound routing
 
-Enable Cloudflare Email Routing for the chosen mail domain. Route only intended addresses, or an explicitly approved catch-all, to the deployed email Worker. Email Routing is cmail's inbound path and is configured independently of the outbound provider — even when Cloudflare Email Service also handles outbound delivery.
+Enable Cloudflare Email Routing for the chosen mail domain. Route only intended addresses, or an explicitly approved catch-all, to the deployed email Worker. Email Routing is Stanchion's inbound path and is configured independently of the outbound provider — even when Cloudflare Email Service also handles outbound delivery.
 
-The Worker accepts mail only for active mailbox rows in D1. Unknown, disabled, and offboarded addresses all get one generic SMTP-time rejection; the response doesn't reveal whether an address ever existed or why it's unavailable. The sending MTA (mail transfer agent — the server relaying the message) normally generates any non-delivery report (NDR) to its own sender. cmail deliberately sends no branded auto-reply or bounce email for rejected inbound attempts: this uses no cmail outbound quota, prevents backscatter (bounce mail sent to a forged sender), and can't be amplified by a spammer. An SMTP rejection doesn't guarantee a human receives an NDR — sender-side policy and delivery software decide that.
+The Worker accepts mail only for active mailbox rows in D1. Unknown, disabled, and offboarded addresses all get one generic SMTP-time rejection; the response doesn't reveal whether an address ever existed or why it's unavailable. The sending MTA (mail transfer agent — the server relaying the message) normally generates any non-delivery report (NDR) to its own sender. Stanchion deliberately sends no branded auto-reply or bounce email for rejected inbound attempts: this uses no Stanchion outbound quota, prevents backscatter (bounce mail sent to a forged sender), and can't be amplified by a spammer. An SMTP rejection doesn't guarantee a human receives an NDR — sender-side policy and delivery software decide that.
 
-Test a known address and an unknown address before broadening rules. Also test an offboarded address, and confirm it gets the same generic result. Use Cloudflare Email Routing/Worker metrics and logs to monitor rejection patterns — cmail deliberately keeps no durable per-attempt log for rejected addresses.
+Test a known address and an unknown address before broadening rules. Also test an offboarded address, and confirm it gets the same generic result. Use Cloudflare Email Routing/Worker metrics and logs to monitor rejection patterns — Stanchion deliberately keeps no durable per-attempt log for rejected addresses.
 
 ## 9. Bootstrap and lock down administration
 
@@ -451,8 +467,8 @@ both temporary Pages secrets and redeploy:
 
 ```sh
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name cmail-web
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name cmail-web
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name stanchion-web
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name stanchion-web
 pnpm deploy:web
 ```
 
@@ -466,8 +482,8 @@ Open `<APP_URL>/bootstrap` directly — never append the token to the URL. Submi
 Delete both values immediately after successful bootstrap and redeploy:
 
 ```sh
-pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_TOKEN --project-name cmail-web
-pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_EMAIL --project-name cmail-web
+pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_TOKEN --project-name stanchion-web
+pnpm exec wrangler pages secret delete BOOTSTRAP_ADMIN_EMAIL --project-name stanchion-web
 pnpm deploy:web
 ```
 
@@ -511,7 +527,7 @@ Complete at least these checks:
 - A REST test validates and stores `result.message_id` when present, and records it as unavailable rather than fabricating one when it's absent.
 - A mixed-recipient test keeps identical visible To/Cc roles externally and internally, sends each recipient exactly once, and exercises both the raw-REST and provider-loopback plans the deployment will use.
 - Explicit outbound selection fails closed when that provider's required values are incomplete; auto selection follows the documented priority.
-- cmail rejects a staged Cloudflare message above either the 50-recipient or 5-MiB general-send limit before provider submission.
+- Stanchion rejects a staged Cloudflare message above either the 50-recipient or 5-MiB general-send limit before provider submission.
 - Provider failures are visible and never appear as successful sends.
 - Unknown inbound recipients are rejected.
 - If `SPAM_QUARANTINE_SCORE` or a sender allow/block rule is configured, a test message confirms filing to Spam, and release back to Inbox, both work — see [Spam and quarantine](spam-and-quarantine.md).
@@ -541,7 +557,7 @@ Complete at least these checks:
   and aligned `dmarc=pass` in received authentication results.
 - The deployment's current Google, Yahoo, Microsoft, and other material
   receiver classifications and sender policies have been reviewed.
-- The accountable owner has confirmed cmail won't be used as a bulk-marketing
+- The accountable owner has confirmed Stanchion won't be used as a bulk-marketing
   system without the missing consent, unsubscribe, suppression, reputation, and
   compliance controls described in the authentication guide.
 - When Cloudflare handles outbound delivery, Email preview retention and dashboard access are approved, or preview is disabled.

@@ -16,8 +16,8 @@ if (expectedMigrations.length === 0) {
   throw new Error('No D1 migration files were found.');
 }
 
-const persistenceDirectory = mkdtempSync(join(tmpdir(), 'cmail-migrations-'));
-const upgradeFixtureDirectory = mkdtempSync(join(tmpdir(), 'cmail-migrations-upgrade-'));
+const persistenceDirectory = mkdtempSync(join(tmpdir(), 'stanchion-migrations-'));
+const upgradeFixtureDirectory = mkdtempSync(join(tmpdir(), 'stanchion-migrations-upgrade-'));
 const upgradePersistenceDirectory = join(upgradeFixtureDirectory, 'd1');
 const upgradeMigrationsDirectory = join(upgradeFixtureDirectory, 'migrations');
 const upgradeConfigPath = join(upgradeFixtureDirectory, 'wrangler.toml');
@@ -69,7 +69,7 @@ function assertWranglerFailure(args, label) {
 }
 
 const baseArguments = [
-  'cmail-schema-test',
+  'stanchion-schema-test',
   '--local',
   '--config',
   'scripts/wrangler.test.toml',
@@ -90,10 +90,10 @@ function verifyUpgradeFixture() {
   for (const migration of expectedMigrations.filter((name) => name < '0006_')) {
     copyFileSync(join(root, 'packages', 'shared', 'migrations', migration), join(upgradeMigrationsDirectory, migration));
   }
-  writeFileSync(upgradeConfigPath, `name = "cmail-migration-upgrade-test"\ncompatibility_date = "2026-08-01"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "cmail-migration-upgrade-test"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\nmigrations_dir = "migrations"\n`);
+  writeFileSync(upgradeConfigPath, `name = "stanchion-migration-upgrade-test"\ncompatibility_date = "2026-08-01"\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "stanchion-migration-upgrade-test"\ndatabase_id = "00000000-0000-0000-0000-000000000000"\nmigrations_dir = "migrations"\n`);
 
   const upgradeArguments = [
-    'cmail-migration-upgrade-test',
+    'stanchion-migration-upgrade-test',
     '--local',
     '--config', upgradeConfigPath,
     '--persist-to', upgradePersistenceDirectory,
@@ -461,10 +461,10 @@ try {
         WHERE name IN ('payload_hash', 'html_sha256', 'text_sha256')
           AND "notnull" = 1) AS outbound_digest_column_count,
       (SELECT COUNT(*) FROM signature_templates
-        WHERE id = 'sig-default' AND applies_to = '*') AS default_signature_count,
+        WHERE id = 'sig-default' AND applies_to = '*' AND is_enabled = 0) AS default_signature_count,
       (SELECT COUNT(*) FROM pragma_table_info('signature_templates')
         WHERE name = 'is_enabled' AND "notnull" = 1
-          AND dflt_value = '1') AS organisation_signature_enabled_column_count,
+          AND dflt_value = '0') AS organisation_signature_enabled_column_count,
       (SELECT COUNT(*) FROM pragma_table_info('personal_signatures')
         WHERE name IN ('user_id', 'html_body', 'plain_text_body', 'is_locked', 'updated_at', 'updated_by')) AS personal_signature_column_count,
       (SELECT COUNT(*) FROM pragma_table_info('compose_preferences')
@@ -475,6 +475,10 @@ try {
         WHERE name = 'owner_user_id') AS personal_mailbox_owner_column_count,
       (SELECT COUNT(*) FROM pragma_table_info('push_subscriptions')
         WHERE name = 'device_id') AS push_device_id_column_count,
+      (SELECT COUNT(*) FROM pragma_table_info('passkey_pairings')
+        WHERE name IN ('id', 'user_id', 'session_id', 'token_hash', 'state', 'device_label', 'country', 'joiner_hash', 'approve_code', 'wrong_tries', 'challenge_id', 'credential_id', 'expires_at', 'created_at')) AS passkey_pairing_column_count,
+      (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'index' AND name IN ('idx_passkey_pairings_user_state', 'idx_passkey_pairings_expiry', 'idx_passkey_pairings_one_open')) AS passkey_pairing_index_count,
       (SELECT COUNT(*) FROM pragma_foreign_key_check) AS foreign_key_violation_count;
   `;
 
@@ -518,6 +522,8 @@ try {
   assertEqual(Number(row.compose_preference_column_count), 4, 'Compose preference columns');
   assertEqual(Number(row.personal_mailbox_owner_column_count), 1, 'Personal mailbox owner column');
   assertEqual(Number(row.push_device_id_column_count), 1, 'Push device identifier column');
+  assertEqual(Number(row.passkey_pairing_column_count), 14, 'Passkey pairing columns');
+  assertEqual(Number(row.passkey_pairing_index_count), 3, 'Passkey pairing indexes');
   assertEqual(Number(row.foreign_key_violation_count), 0, 'Foreign-key violation count');
 
   verifyUpgradeFixture();

@@ -10,11 +10,26 @@
 /** org_settings keys. Absent = off. */
 export const EXCHANGE_MIRROR_SETTING_ENABLED = 'exchange_mirror_enabled';
 export const M365_ALIAS_SYNC_SETTING_ENABLED = 'm365_alias_sync_enabled';
+/**
+ * "Send colleague mail through Exchange" (docs/exchange-mirror.md). Off by
+ * default, and meaningful only while the mirror is on: mail from Stanchion to a
+ * colleague on the Exchange-hosted domain goes out through the provider (so
+ * Exchange and Outlook get it) instead of straight into their Stanchion mailbox.
+ */
+export const EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND = 'exchange_mirror_colleague_send';
 
 export async function loadExchangeMirrorSwitch(db: D1Database): Promise<boolean> {
   const row = await db.prepare('SELECT value FROM org_settings WHERE key = ?')
     .bind(EXCHANGE_MIRROR_SETTING_ENABLED).first<{ value: string }>();
   return row?.value === 'true';
+}
+
+/** True only while both the mirror and its colleague-send switch are on. One read. */
+export async function loadColleagueSendViaExchange(db: D1Database): Promise<boolean> {
+  const { results } = await db.prepare('SELECT key, value FROM org_settings WHERE key IN (?, ?)')
+    .bind(EXCHANGE_MIRROR_SETTING_ENABLED, EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND).all<{ key: string; value: string }>();
+  const on = new Set((results ?? []).filter((row) => row.value === 'true').map((row) => row.key));
+  return on.has(EXCHANGE_MIRROR_SETTING_ENABLED) && on.has(EXCHANGE_MIRROR_SETTING_COLLEAGUE_SEND);
 }
 
 export async function loadAliasSyncSwitch(db: D1Database): Promise<boolean> {
@@ -242,14 +257,15 @@ export const EXCHANGE_MIRROR_REASON_TEXT: Readonly<Record<string, string>> = {
   unsafe_subject: 'The original subject contains a line break, so the report envelope cannot be trusted.',
   message_id_mismatch: 'The envelope Message-Id does not match the Message-ID of the attached original, or the original has none.',
   aliases_stale: 'Imported aliases were not used: the alias import is off or has not succeeded in the last 3 days.',
+  unmatched_domain: 'A recipient\'s mailbox is on a domain that is not one of the organisation\'s domains (MAIL_DOMAIN or a verified Microsoft 365 domain), so it was counted, not filed.',
   unsafe_envelope: 'The report envelope has lines in an order Exchange does not write (possible injected text).',
   no_recipients: 'The report envelope lists no recipients.',
-  too_many_recipients: 'The report envelope lists more recipients than cmail files at once.',
+  too_many_recipients: 'The report envelope lists more recipients than Stanchion files at once.',
   original_unparseable: 'The attached original message could not be read.',
   body_limit: 'The message body is over the processing limit.',
   attachment_count: 'The message has more attachments than the inbound limit.',
   attachment_bytes: 'The attachments are larger than the inbound limit.',
-  blocked_attachment: 'The message has an attachment type cmail never accepts.',
+  blocked_attachment: 'The message has an attachment type Stanchion never accepts.',
   quota: 'A mailbox is full (storage quota).',
   guard_unavailable: 'The mailbox storage check was unavailable.',
   budget: 'The message had more recipients than one report can file within the Worker limits.',
@@ -274,7 +290,7 @@ export interface AliasSyncCounts {
   removed: number;
   /** Addresses refused: another mailbox's own address, or claimed by two mailboxes. */
   conflicts: number;
-  /** Microsoft 365 objects with addresses that have no linked cmail mailbox. */
+  /** Microsoft 365 objects with addresses that have no linked Stanchion mailbox. */
   unlinked: number;
   /** Removals held back by the mass-removal brake. */
   heldRemovals: number;

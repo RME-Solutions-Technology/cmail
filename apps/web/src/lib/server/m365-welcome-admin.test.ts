@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseM365WelcomeSwitch, parseWelcomeProfile } from '@cmail/shared/m365-welcome';
+import { sendEmail } from './outbound';
+import { parseM365WelcomeSwitch, parseWelcomeProfile } from '@stanchion/shared/m365-welcome';
 import { createTestDatabase } from './mcp/testing/harness';
 import {
   applyWelcomeAdminAction,
@@ -8,6 +9,12 @@ import {
   parseWelcomeAdminAction,
   workerCanSend,
 } from './m365-welcome-admin';
+
+// The web app's own outbound mail, mocked: the test email goes through it.
+vi.mock('./outbound', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./outbound')>()),
+  sendEmail: vi.fn(async () => ({ success: true, provider: 'cloudflare' })),
+}));
 
 const DOMAIN = 'example.test';
 const NOW = new Date('2026-11-16T03:04:05Z');
@@ -25,7 +32,7 @@ function setup(options: { canSend?: boolean | 'down' | 'none'; signIn?: 'microso
   const env: Record<string, unknown> & { DB: D1Database } = {
     DB: d1,
     APP_URL: 'https://mail.example.test',
-    APP_NAME: 'cmail',
+    APP_NAME: 'Stanchion',
     MAIL_DOMAIN: DOMAIN,
     ORG_NAME: 'Example Org',
     SYSTEM_EMAIL: `noreply@${DOMAIN}`,
@@ -43,15 +50,15 @@ function setup(options: { canSend?: boolean | 'down' | 'none'; signIn?: 'microso
     ...(options.signIn === 'access' ? { ACCESS_TEAM_DOMAIN: 'example.cloudflareaccess.com', ACCESS_AUD: 'aud-tag-0000000000000000' } : {}),
     ...(canSend === 'none' ? {} : { EMAIL_SERVICE: { fetch } as unknown as Fetcher }),
   };
-  const person = (id: string, extra: { linkedAt?: string; status?: string; signedIn?: boolean } = {}) => {
+  const person = (id: string, extra: { linkedAt?: string; status?: string; signedIn?: boolean; upn?: string; inScope?: boolean } = {}) => {
     sqlite.prepare(`INSERT INTO users (id, email, display_name, role, status, last_sign_in) VALUES (?, ?, ?, 'standard', ?, ?)`)
       .run(id, `${id}@${DOMAIN}`, `${id} Example`, extra.status ?? 'pending', extra.signedIn ? '2026-11-15 00:00:00' : null);
-    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id, created_at) VALUES (?, 'person', ?, ?)`)
-      .run(`00000000-0000-4000-8000-${String(++objects).padStart(12, '0')}`, id, extra.linkedAt ?? '2026-11-15 12:00:00');
+    sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id, created_at, upn, source_state) VALUES (?, 'person', ?, ?, ?, ?)`)
+      .run(`00000000-0000-4000-8000-${String(++objects).padStart(12, '0')}`, id, extra.linkedAt ?? '2026-11-15 12:00:00', extra.upn ?? '', extra.inScope === false ? 'out_of_scope' : 'in_scope');
   };
   const settings = () => parseM365WelcomeSwitch(sqlite.prepare('SELECT key, value FROM org_settings').all() as Array<{ key: string; value: string }>);
   const audits = () => sqlite.prepare(`SELECT event_type, target, detail FROM audit_log ORDER BY rowid`).all() as Array<{ event_type: string; target: string | null; detail: string }>;
-  const manager = { id: 'manager-1' };
+  const manager = { id: 'manager-1', email: 'manager@example.test', display_name: 'Manager One' };
   return { d1, sqlite, env, fetch, person, settings, audits, manager };
 }
 
@@ -128,7 +135,7 @@ describe('welcome emails admin: defaults and readiness', () => {
     await applyWelcomeAdminAction(t.env, t.manager, 'welcome_refresh', {}, NOW);
     const row = t.sqlite.prepare(`SELECT value FROM org_settings WHERE key = 'm365_welcome_profile'`).get() as { value: string };
     expect(parseWelcomeProfile(row.value)).toEqual({
-      v: 1, appUrl: 'https://mail.example.test', appName: 'cmail', orgName: 'Example Org', fromEmail: `noreply@${DOMAIN}`,
+      v: 1, appUrl: 'https://mail.example.test', appName: 'Stanchion', orgName: 'Example Org', fromEmail: `noreply@${DOMAIN}`,
       fromName: 'Example Org Mail', contactEmail: `desk@${DOMAIN}`, brandColor: '#0078d4', signIn: 'microsoft',
     });
     const offDomain = await buildWelcomeProfile({ ...t.env, SYSTEM_EMAIL: 'someone@other.test' });
@@ -229,5 +236,149 @@ describe('welcome emails admin: Resend', () => {
       ['alice', 'sent', true],
       ['bob', 'not_sent', true],
     ]);
+  });
+});
+
+describe('welcome emails admin: who would be emailed (count and list)', () => {
+  it('lists only licensed, enabled people with their UPN; never shared mailboxes, unlicensed, signed-in or sent people', async () => {
+    const t = setup();
+    t.person('alice', { upn: `alice@corp.${DOMAIN}` });
+    t.person('bob');
+    t.person('sent');
+    t.sqlite.prepare(`INSERT INTO m365_welcome_emails (user_id, status, origin) VALUES ('sent', 'sent', 'auto')`).run();
+    // Unlicensed or disabled: the sync marks the link out of scope.
+    t.person('unlicensed', { inScope: false });
+    t.person('signedin', { signedIn: true, status: 'active' });
+    // A shared mailbox, and a stray pending account at the same address.
+    t.sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('m-team', ?, 'shared', 'active')`).run(`team@${DOMAIN}`);
+    t.sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id, upn) VALUES (?, 'shared', 'm-team', ?)`).run('00000000-0000-4000-8000-0000000000ff', `team@${DOMAIN}`);
+    t.person('team');
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.recipients.total).toBe(2);
+    expect(overview.recipients.people.map((person) => [person.email, person.signInName])).toEqual([
+      [`alice@${DOMAIN}`, `alice@corp.${DOMAIN}`],
+      [`bob@${DOMAIN}`, `bob@${DOMAIN}`],
+    ]);
+    expect(overview.recipients.people.some((person) => person.email.startsWith('team@'))).toBe(false);
+    expect(overview.people.find((person) => person.userId === 'alice')?.signInName).toBe(`alice@corp.${DOMAIN}`);
+  });
+
+  it('keeps an exact total for the count', async () => {
+    const t = setup();
+    for (let n = 0; n < 3; n += 1) t.person(`p${n}`);
+    expect((await loadWelcomeOverview(t.env, 'manager-1')).recipients).toMatchObject({ total: 3 });
+  });
+
+  it('previews the standby sentence only when a standby switch is on', async () => {
+    const t = setup();
+    expect((await loadWelcomeOverview(t.env, 'manager-1')).preview?.text).not.toMatch(/standby/i);
+    t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('exchange_mirror_enabled', 'true')`).run();
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.standby).toBe(true);
+    expect(overview.preview?.text).toContain('uses Stanchion as a standby for email emergencies. Nothing changes day to day.');
+  });
+});
+
+describe('welcome emails admin: Send a test to me', () => {
+  const mocked = vi.mocked(sendEmail);
+
+  it('sends the email to the manager only, with a [Test] subject, records nothing, turns nothing on, and audits', async () => {
+    mocked.mockClear();
+    const t = setup();
+    t.person('alice');
+    t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('passkey_signin_enabled', 'true')`).run();
+    const result = await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW);
+    expect(result).toMatchObject({ ok: true });
+    expect(mocked).toHaveBeenCalledTimes(1);
+    const sent = mocked.mock.calls[0][0];
+    expect(sent.to).toBe('manager@example.test');
+    expect(sent.from).toBe(`noreply@${DOMAIN}`);
+    expect(sent.subject).toBe('[Test] Your Example Org mail account is ready');
+    expect(sent.text).toContain('Hello Manager,');
+    expect(sent.text).toContain('Settings > Passkeys');
+    expect(sent.text).not.toContain('alice');
+    // Not a welcome send: no record, the switch stays off, the waiting person is untouched.
+    expect(t.sqlite.prepare('SELECT COUNT(*) AS n FROM m365_welcome_emails').get()).toEqual({ n: 0 });
+    expect(t.settings().enabled).toBe(false);
+    expect(t.audits().filter((row) => row.event_type.startsWith('m365_welcome.test'))).toEqual([
+      { event_type: 'm365_welcome.test_sent', target: 'manager-1', detail: expect.not.stringContaining('manager@example.test') },
+    ]);
+  });
+
+  it('works for a manager the sync did not create, names their UPN when the sync has one, and does not need the Worker', async () => {
+    mocked.mockClear();
+    const t = setup();
+    // No m365_sync_links row for manager-1 at all.
+    expect(await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: true });
+    expect(mocked.mock.calls[0][0].text).toContain(`use your work account (manager@${DOMAIN}).`);
+    t.sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, user_id, upn) VALUES ('00000000-0000-4000-8000-0000000000aa', 'person', 'manager-1', ?)`).run(`manager@corp.${DOMAIN}`);
+    await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW);
+    expect(mocked.mock.calls[1][0].text).toContain(`use your work account (manager@corp.${DOMAIN}).`);
+    expect(mocked.mock.calls[1][0].to).toBe('manager@example.test');
+    expect(t.fetch).not.toHaveBeenCalled();
+  });
+
+  it('is limited to 5 an hour per manager', async () => {
+    mocked.mockClear();
+    const t = setup();
+    for (let n = 0; n < 5; n += 1) expect(await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: true });
+    const sixth = await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW);
+    expect(sixth).toMatchObject({ ok: false, status: 429 });
+    expect(mocked).toHaveBeenCalledTimes(5);
+    // Another manager has their own allowance.
+    t.sqlite.prepare(`INSERT INTO users (id, email, role, status) VALUES ('manager-2', 'second@example.test', 'manager', 'active')`).run();
+    expect(await applyWelcomeAdminAction(t.env, { id: 'manager-2', email: 'second@example.test' }, 'welcome_test', {}, NOW)).toMatchObject({ ok: true });
+    expect(mocked.mock.calls.at(-1)?.[0].to).toBe('second@example.test');
+  });
+
+  it('refuses without outbound mail or an organisation name, and reports a delivery failure, still audited', async () => {
+    mocked.mockClear();
+    const none = setup({ outbound: 'none' });
+    expect(await applyWelcomeAdminAction(none.env, none.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: false, status: 409 });
+    const noOrg = setup();
+    noOrg.env.ORG_NAME = '';
+    expect(await applyWelcomeAdminAction(noOrg.env, noOrg.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: false, status: 409 });
+    expect(mocked).not.toHaveBeenCalled();
+    const failing = setup();
+    mocked.mockResolvedValueOnce({ success: false, provider: 'cloudflare', error: 'x' });
+    expect(await applyWelcomeAdminAction(failing.env, failing.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: false, status: 502 });
+    expect(failing.audits().at(-1)).toMatchObject({ event_type: 'm365_welcome.test_failed' });
+  });
+});
+
+describe('welcome emails admin: review follow-ups', () => {
+  it('counts only people at or after the cut-off as sent automatically, and lists the rest as Send', async () => {
+    const t = setup();
+    t.person('early', { linkedAt: '2026-11-10 00:00:00' });
+    t.person('late', { linkedAt: '2026-11-16 03:30:00' });
+    await applyWelcomeAdminAction(t.env, t.manager, 'welcome_enable', {}, NOW);
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.recipients).toMatchObject({ total: 2, auto: 1 });
+    // Switch off: everyone counts.
+    await applyWelcomeAdminAction(t.env, t.manager, 'welcome_disable', {}, NOW);
+    expect((await loadWelcomeOverview(t.env, 'manager-1')).recipients).toMatchObject({ total: 2, auto: 2 });
+  });
+
+  it('extra form fields cannot change who the test goes to', async () => {
+    const t = setup();
+    t.person('alice');
+    vi.mocked(sendEmail).mockClear();
+    const input = { to: 'evil@example.test', userId: 'alice', email: 'evil@example.test', scope: 'include_waiting' } as never;
+    expect(await applyWelcomeAdminAction(t.env, { ...t.manager, email: 'manager@example.test' }, 'welcome_test', input, NOW)).toMatchObject({ ok: true });
+    expect(vi.mocked(sendEmail).mock.calls).toHaveLength(1);
+    expect(vi.mocked(sendEmail).mock.calls[0][0].to).toBe('manager@example.test');
+    expect(vi.mocked(sendEmail).mock.calls[0][0].text).not.toContain('alice');
+  });
+
+  it('keeps working before migration 0032 is applied: sign-in name falls back to the address', async () => {
+    const t = setup();
+    t.person('alice');
+    t.sqlite.exec('ALTER TABLE m365_sync_links DROP COLUMN upn');
+    vi.mocked(sendEmail).mockClear();
+    const overview = await loadWelcomeOverview(t.env, 'manager-1');
+    expect(overview.recipients.people.map((person) => person.signInName)).toEqual([`alice@${DOMAIN}`]);
+    expect(overview.people[0]?.signInName).toBe(`alice@${DOMAIN}`);
+    expect(await applyWelcomeAdminAction(t.env, t.manager, 'welcome_test', {}, NOW)).toMatchObject({ ok: true });
+    expect(vi.mocked(sendEmail).mock.calls[0][0].text).toContain(`use your work account (manager@${DOMAIN}).`);
   });
 });

@@ -1,8 +1,27 @@
+---
+title: "Shared mailboxes"
+summary: "How to use a team address: delegation, Send as, Full access and shared folders."
+applies_to: both
+audience: [user, manager]
+switch: none
+last_reviewed: 2026-11-16
+related: [m365-mailbox-permissions.md, manager-handbook.md]
+---
+
 # Shared mailboxes
 
 A shared mailbox is a team or function address — such as `support@example.org` or `accounts@example.org` — that several people can access without sharing a password. A Manager grants access to named accounts, and each person signs in with their own Google or Microsoft identity.
 
-These terms — shared mailbox, Send as, Full access, Mail trace — describe cmail's own permission model. cmail is not Microsoft Exchange, is not affiliated with Microsoft, and does not match it feature-for-feature.
+These terms — shared mailbox, Send as, Full access, Mail trace — describe Stanchion's own permission model. Stanchion is not Microsoft Exchange, is not affiliated with Microsoft, and does not match it feature-for-feature.
+
+**In this article**
+
+- [Permission bundles](#permission-bundles)
+- [Shared state](#shared-state)
+- [From identity and replies](#from-identity-and-replies)
+- [Manager setup flow](#manager-setup-flow)
+- [Disable, re-enable, and offboard](#disable-re-enable-and-offboard)
+- [What this does not cover](#what-this-does-not-cover)
 
 ## Permission bundles
 
@@ -24,7 +43,7 @@ Give people only the access they need:
 
 ## Shared state
 
-cmail stores one copy of each message, with one state. So everyone with access shares:
+Stanchion stores one copy of each message, with one state. So everyone with access shares:
 
 - read or unread status;
 - starred status;
@@ -33,15 +52,15 @@ cmail stores one copy of each message, with one state. So everyone with access s
 
 Opening a message marks it read for everyone. If someone with Full access moves or deletes it, everyone sees that change. Anyone with Send as or Full access can open and edit a shared draft. Attachments chosen in the composer are not saved with the draft — they stay only in that browser tab until the message is sent.
 
-Agree on ground rules before you launch a shared mailbox — for example, leave unhandled items unread, only use Archive once something is finished, and only permanently delete mail as part of a documented retention process. cmail does not currently offer per-person read status, categories, assigning items to a specific person, "send on behalf of", or approval workflows.
+Agree on ground rules before you launch a shared mailbox — for example, leave unhandled items unread, only use Archive once something is finished, and only permanently delete mail as part of a documented retention process. Stanchion does not currently offer per-person read status, categories, assigning items to a specific person, "send on behalf of", or approval workflows.
 
 ## From identity and replies
 
-The composer's **From** list shows active mailboxes where you have Send as or Full access. Choosing the shared address makes that the sender address recipients see. cmail never shows your personal sign-in address as the sender, and does not add a "sent on behalf of" label.
+The composer's **From** list shows active mailboxes where you have Send as or Full access. Choosing the shared address makes that the sender address recipients see. Stanchion never shows your personal sign-in address as the sender, and does not add a "sent on behalf of" label.
 
 Replying uses the mailbox that received the message, as long as you can send from it. Always check **From** before you send, especially if you have several personal and shared mailboxes. Read permission alone does not add the shared address to From. A Sent copy is stored in the mailbox you sent from, so other people with access can see the team's response.
 
-Internal recipients on the same cmail deployment get an internal mailbox copy. External recipients are sent through the configured outbound provider. Mail trace records delivery details, but it is not a copy of the message content.
+Internal recipients on the same Stanchion deployment get an internal mailbox copy. External recipients are sent through the configured outbound provider. Mail trace records delivery details, but it is not a copy of the message content.
 
 ## Manager setup flow
 
@@ -66,8 +85,8 @@ Before removing the last active delegate from a shared mailbox, hand over respon
 
 ## What this does not cover
 
-Shared-mailbox access only works inside the cmail web app. cmail does not support Exchange, Microsoft Graph, IMAP, POP, or other native mail-client access, and cannot automatically add a mailbox into Outlook or another mail app. Cloudflare Email Routing handles inbound mail, and the configured outbound provider handles sending to external recipients.
+Shared-mailbox access only works inside the Stanchion web app. Stanchion does not support Exchange, Microsoft Graph, IMAP, POP, or other native mail-client access, and cannot automatically add a mailbox into Outlook or another mail app. Cloudflare Email Routing handles inbound mail, and the configured outbound provider handles sending to external recipients.
 
-For new mail, cmail sends a generic alert (Web Push) to each active delegate who has subscribed on a device. It does not name the mailbox, sender, subject, or message on the lock screen. Alerts are best-effort and do not reserve the item for one person. Tapping an alert opens the message in its shared mailbox — the server checks your current access again at that point, so a revoked or disabled mailbox stays hidden even from an old alert.
+For new mail, Stanchion sends a generic alert (Web Push) to each active delegate who has subscribed on a device. It does not name the mailbox, sender, subject, or message on the lock screen. Alerts are best-effort and do not reserve the item for one person. Tapping an alert opens the message in its shared mailbox — the server checks your current access again at that point, so a revoked or disabled mailbox stays hidden even from an old alert.
 
 For administration details and safe lifecycle procedures, see the [manager handbook](manager-handbook.md). For day-to-day message use, see the [user guide](user-guide.md).

@@ -1,6 +1,36 @@
+---
+title: "Configuration reference"
+summary: "Every Stanchion setting: origin, mail domain, sign-in providers, outbound mail, limits and organisation defaults."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, deployment.md]
+---
+
 # Configuration reference
 
-cmail is configured through Cloudflare bindings for storage, plain environment variables for non-secret settings, provider secret stores for credentials, and optional organisation settings stored in D1 (Cloudflare's hosted database).
+Stanchion is configured through Cloudflare bindings for storage, plain environment variables for non-secret settings, provider secret stores for credentials, and optional organisation settings stored in D1 (Cloudflare's hosted database).
+
+**In this article**
+
+- [Storage bindings](#storage-bindings)
+- [Core web settings](#core-web-settings)
+- [OAuth](#oauth)
+- [Email one-time-code sign-in](#email-one-time-code-sign-in)
+- [Cloudflare Access bridge (optional)](#cloudflare-access-bridge-optional)
+- [Optional Web Push](#optional-web-push)
+- [Inbound calendar updates](#inbound-calendar-updates)
+- [Outbound delivery](#outbound-delivery)
+- [Bootstrap](#bootstrap)
+- [Organisation defaults](#organisation-defaults)
+- [Organisation directory and public endpoint](#organisation-directory-and-public-endpoint)
+- [Brand and regional defaults](#brand-and-regional-defaults)
+- [Web guardrails](#web-guardrails)
+- [AI agent (MCP) connections](#ai-agent-mcp-connections)
+- [Inbound Worker limits](#inbound-worker-limits)
+- [Where values belong](#where-values-belong)
+- [Secret handling](#secret-handling)
 
 ## Storage bindings
 
@@ -36,7 +66,7 @@ Configure at least one complete provider:
 | `GOOGLE_CLIENT_SECRET` | Google sign-in is enabled | Yes |
 | `MICROSOFT_CLIENT_ID` | Microsoft sign-in is enabled | Treat as configuration |
 | `MICROSOFT_CLIENT_SECRET` | Microsoft sign-in is enabled | Yes |
-| `MICROSOFT_TENANT_ID` | Optional for Microsoft; defaults to `common` | Treat as configuration |
+| `MICROSOFT_TENANT_ID` | Required for Microsoft: a tenant GUID, `organizations`, `common` or `consumers`; with none set, Microsoft sign-in stays off | Treat as configuration |
 
 A provider's button appears only when its client ID and secret are present, `APP_URL` is a safe callback origin, and `SESSION_SECRET` passes the minimum-strength check. An invalid Microsoft tenant value, or any missing shared prerequisite, fails closed and keeps the button off.
 
@@ -46,7 +76,7 @@ For Microsoft sign-in, choose the audience deliberately:
 - Use `organizations` for work or school accounts across Entra tenants.
 - Use `common` for Microsoft 365 work/school accounts plus personal accounts (Outlook.com, Hotmail, Live). The Entra app registration must also select the account type that covers both organisational directories and personal Microsoft accounts.
 
-Both providers use the OpenID Connect (OIDC, a standard sign-in protocol) authorization-code flow with PKCE and the `openid email profile` scopes. cmail exchanges the code, then calls the provider's UserInfo endpoint with the access token: Google at `https://openidconnect.googleapis.com/v1/userinfo`, Microsoft at `https://graph.microsoft.com/oidc/userinfo` — deliberately not the Microsoft Graph `/me` endpoint. The durable identity key is the provider name plus the UserInfo `sub` value. cmail never uses email, UPN (Microsoft's internal username-like ID), or ID-token claims to resolve a returning account.
+Both providers use the OpenID Connect (OIDC, a standard sign-in protocol) authorization-code flow with PKCE and the `openid email profile` scopes. Stanchion exchanges the code, then calls the provider's UserInfo endpoint with the access token: Google at `https://openidconnect.googleapis.com/v1/userinfo`, Microsoft at `https://graph.microsoft.com/oidc/userinfo` — deliberately not the Microsoft Graph `/me` endpoint. The durable identity key is the provider name plus the UserInfo `sub` value. Stanchion never uses email, UPN (Microsoft's internal username-like ID), or ID-token claims to resolve a returning account.
 
 An ordinary user's first sign-in needs a manager-issued enrolment invitation. Provider links look like `<APP_URL>/enroll/google#token=...` and `<APP_URL>/enroll/microsoft#token=...`. The `#token` fragment never reaches the HTTP request, referrer, or server logs — the first-party page strips it from browser history before a same-origin POST. The raw token is stored only as a hash in D1, expires after 72 hours, and works once. The route validates it and captures the pending enrolment in a 15-minute `HttpOnly`, `SameSite=Lax` cookie (`Secure` on production HTTPS) before redirecting to the provider, so the raw token never continues into OIDC. Binding also needs a matching UserInfo email: Google must return `email_verified=true`; Microsoft must return a non-empty OIDC UserInfo `email` claim, since Microsoft UserInfo has no `email_verified`. After binding, sign-in uses only provider plus `sub` — changing or reusing an email can't transfer the account.
 
@@ -56,11 +86,11 @@ Every successful sign-in, Google and Microsoft included, is also checked against
 
 ## Email one-time-code sign-in
 
-A third, invitation-scoped sign-in method for people whose mail is hosted by neither Google nor Microsoft — never self-serve. It's on by default; set `EMAIL_OTP_ENABLED=false` to remove it entirely (the landing-page link disappears and `/auth/email` redirects away).
+A third, invitation-scoped sign-in method for people whose mail is hosted by neither Google nor Microsoft — never self-serve. It's off by default; set `EMAIL_OTP_ENABLED=true` to turn it on (when off, the landing-page link is hidden and `/auth/email` redirects away). Instances that relied on the old default must now set `true` explicitly before deploying this version.
 
 | Variable | Required | Secret | Description |
 |---|---:|---:|---|
-| `EMAIL_OTP_ENABLED` | No | No | `false` disables the whole method; any other value (including unset) enables it |
+| `EMAIL_OTP_ENABLED` | No | No | `true` enables the method; any other value (including unset) leaves it off |
 | `TURNSTILE_SITE_KEY` | No | No | Public Cloudflare Turnstile site key for the code-request form's optional bot check |
 | `TURNSTILE_SECRET_KEY` | No | Yes | Matching Turnstile secret; both must be present for the widget to appear |
 | `OTP_SESSION_TTL_HOURS` | No | No | Hard cap, in hours, on an email-OTP session's lifetime regardless of `SESSION_TTL_HOURS`. Default 168 (7 days); accepted range 1-9600 |
@@ -107,7 +137,7 @@ Configure the same values on both the Pages application and inbound email Worker
 Put the public key and subject in `[vars]` in both local Wrangler files. For local Worker testing, put only `VAPID_PRIVATE_KEY` in the ignored `apps/email-worker/.dev.vars` — don't copy unrelated web credentials into the Worker. For production, set the private key separately in Pages and the inbound Worker:
 
 ```sh
-pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name cmail-web
+pnpm exec wrangler pages secret put VAPID_PRIVATE_KEY --project-name stanchion-web
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY --config apps/email-worker/wrangler.toml
 ```
 
@@ -156,11 +186,11 @@ match and nothing is trusted.
 | `CLOUDFLARE_SUPPRESSIONS_API_TOKEN` | Yes | Optional. With `CLOUDFLARE_ACCOUNT_ID`, turns on **Unblock and send again** for recipients on Cloudflare's suppression list. Account-owned token with **Email Sending: Edit**; never used for sending |
 | `POSTMARK_API_KEY` | Yes | Enable Postmark delivery |
 
-In `auto` mode, cmail picks the first complete provider configuration, checking Cloudflare Email Service then Postmark. Set an explicit provider when you need deterministic selection — explicit selection fails closed if that provider's required values are missing or invalid, and cmail never silently falls through to a different provider. If no provider is ready, external outbound attempts fail while internal mailbox delivery keeps working.
+In `auto` mode, Stanchion picks the first complete provider configuration, checking Cloudflare Email Service then Postmark. Set an explicit provider when you need deterministic selection — explicit selection fails closed if that provider's required values are missing or invalid, and Stanchion never silently falls through to a different provider. If no provider is ready, external outbound attempts fail while internal mailbox delivery keeps working.
 
 ### Cloudflare Email Service
 
-Cloudflare Email Service is the recommended external provider. In production, Pages calls the cmail email Worker over the private `EMAIL_SERVICE` service binding. That Worker owns Cloudflare's native `send_email` binding, so the web application holds no outbound Cloudflare API token. Its result is an opaque Cloudflare tracking ID, not the wire RFC `Message-ID`. cmail stores it so delivery events can be matched back to the message (see deployment.md, "Bounce and complaint feedback"). To enable it:
+Cloudflare Email Service is the recommended external provider. In production, Pages calls the Stanchion email Worker over the private `EMAIL_SERVICE` service binding. That Worker owns Cloudflare's native `send_email` binding, so the web application holds no outbound Cloudflare API token. Its result is an opaque Cloudflare tracking ID, not the wire RFC `Message-ID`. Stanchion stores it so delivery events can be matched back to the message (see deployment.md, "Bounce and complaint feedback"). To enable it:
 
 1. Confirm the account is on the Workers Paid plan — Email Sending is currently a public beta.
 2. Use a domain hosted on Cloudflare DNS and onboard it under **Compute → Email Service → Email Sending**. Review the Cloudflare-created bounce MX, SPF, DKIM, and DMARC records (DNS entries that route and authenticate mail) against every existing sender for the domain.
@@ -168,9 +198,9 @@ Cloudflare Email Service is the recommended external provider. In production, Pa
 4. Keep the Pages `[[services]]` binding named `EMAIL_SERVICE` pointed at that environment's email Worker. Deploy the Worker before Pages.
 5. Keep the template's `OUTBOUND_PROVIDER=cloudflare`. Use `auto` only when a complete Postmark configuration should act as a fallback.
 
-Follow [Email authentication and sender requirements](email-authentication.md) for the current RFC 9989 DMARC rollout, record verification, major receiver policies, and the boundary that keeps cmail from being used as a bulk-marketing system. Provider onboarding doesn't replace that review.
+Follow [Email authentication and sender requirements](email-authentication.md) for the current RFC 9989 DMARC rollout, record verification, major receiver policies, and the boundary that keeps Stanchion from being used as a bulk-marketing system. Provider onboarding doesn't replace that review.
 
-Cloudflare limits a general outbound message to 50 total `to`/`cc`/`bcc` recipients and 5 MiB including attachments. cmail enforces those limits before submission, even if an application setting would otherwise allow more. New Cloudflare accounts also start with conservative daily quotas — check the [current limits](https://developers.cloudflare.com/email-service/platform/limits/) and stage real mail flow before switching production traffic.
+Cloudflare limits a general outbound message to 50 total `to`/`cc`/`bcc` recipients and 5 MiB including attachments. Stanchion enforces those limits before submission, even if an application setting would otherwise allow more. New Cloudflare accounts also start with conservative daily quotas — check the [current limits](https://developers.cloudflare.com/email-service/platform/limits/) and stage real mail flow before switching production traffic.
 
 Cloudflare Email preview is a separate privacy decision. When enabled, dashboard users can inspect rendered HTML, plain text, headers, attachments, and raw message source, retained for about seven days. Cloudflare turns it on by default for new sending domains. Review access and disable it in the sending domain's settings unless you need that extra retention. See [Email logs and message preview](https://developers.cloudflare.com/email-service/observability/logs/#message-preview).
 
@@ -180,26 +210,26 @@ The committed topology implements exactly this private Worker path: Pages must n
 
 Keep the two identifier classes separate:
 
-- Native Workers `send()` returns an opaque Cloudflare tracking ID. cmail stores it in the provider-ID array used by trace and lifecycle investigations.
-- Cloudflare controls the wire `Message-ID` header. The native binding doesn't expose it, so cmail never treats the tracking ID as an RFC header.
-- The REST API reference declares an RFC-style `result.message_id`; cmail validates and stores it as the authoritative wire header when present, but tolerates an omitted field (some response examples don't show it) rather than inventing a replacement.
+- Native Workers `send()` returns an opaque Cloudflare tracking ID. Stanchion stores it in the provider-ID array used by trace and lifecycle investigations.
+- Cloudflare controls the wire `Message-ID` header. The native binding doesn't expose it, so Stanchion never treats the tracking ID as an RFC header.
+- The REST API reference declares an RFC-style `result.message_id`; Stanchion validates and stores it as the authoritative wire header when present, but tolerates an omitted field (some response examples don't show it) rather than inventing a replacement.
 
 So `In-Reply-To` and `References` preserve existing ancestry, but the first external reply to a brand-new native-binding conversation may not join the local Sent thread automatically. A production acceptance test must inspect an actually received copy and its reply — a successful API response alone doesn't prove thread correlation.
 
 #### Mixed local and external recipients
 
-Every recipient must see the same visible To/Cc roles. cmail picks one of two safe plans:
+Every recipient must see the same visible To/Cc roles. Stanchion picks one of two safe plans:
 
 - If a valid Cloudflare account ID and Email Sending API token are configured, one REST `send_raw` call carries only external SMTP-envelope recipients while its MIME headers keep the complete To/Cc lists. Local copies persist synchronously.
 - On the token-free native path, or with Postmark, one structured provider call carries the complete To/Cc set, and active local recipients return asynchronously through Cloudflare Email Routing. This avoids duplicate delivery and Cc-to-To promotion, but depends on working inbound routing, quotas, and storage.
 
 The REST raw-MIME path is automatically preferred for mixed messages once its credential pair is ready, even if `EMAIL_SERVICE` is also bound. External-only mail still prefers the token-free native binding. Test internal-only, external-only, and mixed To/Cc cases before launch.
 
-For local development, or a platform without service bindings, configure both `CLOUDFLARE_ACCOUNT_ID` and a narrowly scoped `CLOUDFLARE_EMAIL_API_TOKEN`; cmail then uses Cloudflare's [REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/). The REST success response reports delivered, queued, and permanently bounced recipients, and the generated API reference includes `result.message_id`, which cmail validates when returned. The same credentials enable the single-call raw-MIME plan for mixed recipients described above. Local email bindings simulate delivery unless deliberately configured for remote use — remote mode sends real mail. See the [local sending guide](https://developers.cloudflare.com/email-service/local-development/sending/).
+For local development, or a platform without service bindings, configure both `CLOUDFLARE_ACCOUNT_ID` and a narrowly scoped `CLOUDFLARE_EMAIL_API_TOKEN`; Stanchion then uses Cloudflare's [REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/). The REST success response reports delivered, queued, and permanently bounced recipients, and the generated API reference includes `result.message_id`, which Stanchion validates when returned. The same credentials enable the single-call raw-MIME plan for mixed recipients described above. Local email bindings simulate delivery unless deliberately configured for remote use — remote mode sends real mail. See the [local sending guide](https://developers.cloudflare.com/email-service/local-development/sending/).
 
 ### Postmark alternative
 
-Set `OUTBOUND_PROVIDER=postmark`, store `POSTMARK_API_KEY` as a Pages secret, and verify the sender or domain in Postmark. cmail checks Postmark's 50-recipient and 10 MB total-message limits before submission — confirm current limits in Postmark's [email API documentation](https://postmarkapp.com/developer/user-guide/send-email-with-api).
+Set `OUTBOUND_PROVIDER=postmark`, store `POSTMARK_API_KEY` as a Pages secret, and verify the sender or domain in Postmark. Stanchion checks Postmark's 50-recipient and 10 MB total-message limits before submission — confirm current limits in Postmark's [email API documentation](https://postmarkapp.com/developer/user-guide/send-email-with-api).
 
 The sender address used for invitations and system messages must be accepted by the chosen provider. Configure it in **Admin → Settings** after bootstrap, or supply a `SYSTEM_EMAIL` default.
 
@@ -212,7 +242,7 @@ The first manager is the only account that doesn't start with a manager-issued i
 | `BOOTSTRAP_ADMIN_EMAIL` | Yes | Exact expected access-token-backed UserInfo email allowed to create the first manager |
 | `BOOTSTRAP_ADMIN_TOKEN` | Yes | Strong one-time bootstrap credential; at least 32 cryptographically random characters |
 
-Generate a separate token of at least 32 strong random characters for every environment. The operator opens `<APP_URL>/bootstrap` and submits it in a same-origin POST. cmail exchanges it for a signed `cmail_bootstrap_proof` cookie, valid for 10 minutes, before starting OIDC — `HttpOnly`, `SameSite=Lax`, and `Secure` on production HTTPS. Never put the token or proof in a URL or query string, send it by email, or copy it into logs, screenshots, issue trackers, shell history, Wrangler files, or source.
+Generate a separate token of at least 32 strong random characters for every environment. The operator opens `<APP_URL>/bootstrap` and submits it in a same-origin POST. Stanchion exchanges it for a signed `cmail_bootstrap_proof` cookie, valid for 10 minutes, before starting OIDC — `HttpOnly`, `SameSite=Lax`, and `Secure` on production HTTPS. Never put the token or proof in a URL or query string, send it by email, or copy it into logs, screenshots, issue trackers, shell history, Wrangler files, or source.
 
 The accepted UserInfo email must match `BOOTSTRAP_ADMIN_EMAIL`: Google requires `email_verified=true`; Microsoft requires its non-empty OIDC UserInfo `email` claim alongside the independent bootstrap proof. The provider plus immutable UserInfo `sub` becomes the new manager's durable binding. Delete both bootstrap secrets and redeploy immediately after verifying that account. If an attempt expires, conflicts, or the token may have leaked, rotate `BOOTSTRAP_ADMIN_TOKEN`, clear the browser bootstrap state, and start again. Rotating `SESSION_SECRET` also invalidates signed bootstrap proofs and application sessions — plan that rotation as a sign-out event.
 
@@ -269,7 +299,7 @@ The public endpoint never selects user IDs, login addresses, personal contact da
 | `LOCALE` | `en` | Unicode locale identifier used by configurable formatting |
 | `TIME_ZONE` | `UTC` | IANA time-zone name used by configurable formatting |
 
-`REPO_URL` (default `https://github.com/RME-Solutions-Technology/cmail`) is the public GitHub repository the management console checks for updates and links for the update procedure. Point it at your fork if you deploy from one. Set `UPDATE_CHECK = "off"` to stop the console contacting GitHub at all. Neither value is secret. See [Updating an existing instance](deployment.md#updating-an-existing-instance).
+`REPO_URL` (default `https://github.com/RME-Solutions-Technology/stanchion`) is the public GitHub repository the management console checks for updates and links for the update procedure. Point it at your fork if you deploy from one. Set `UPDATE_CHECK = "off"` to stop the console contacting GitHub at all. Neither value is secret. See [Updating an existing instance](deployment.md#updating-an-existing-instance).
 
 ## Web guardrails
 
@@ -319,7 +349,7 @@ See [AI agents and MCP](mcp.md) for scopes, limits, and the threat model.
 
 ## Inbound Worker limits
 
-Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `apps/email-worker/wrangler.toml` record a generous per-colo (Cloudflare edge location) abuse threshold: 120 messages/minute for a trusted source IP (or, without a trusted boundary IP, the sender-controlled envelope sender), plus a 1,000 messages/minute per-colo aggregate circuit breaker. Actor inputs are SHA-256 pseudonymized — not anonymized — before reaching the counter key. This surfaces unavailable-recipient spraying without spending outbound-send quota. Cloudflare documents Email Workers `setReject()` as a permanent SMTP error, so cmail deliberately does **not** turn this signal into a misleading `451` or drop mail. The bindings fail open when absent or faulty, so this optional protection can't cause a mail outage; namespaces must be positive, account-unique integers, and preview must use different namespaces from production. Thresholds never alter delivery or block D1 reads. A third, one-per-minute-per-colo alert binding allows one generic no-PII Worker warning when either signal is over limit; if that binding is absent, denied, or faulty, cmail just omits the warning. Native counters are local to one colo, so the D1-backed limits below remain the durable mailbox and sender controls.
+Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `apps/email-worker/wrangler.toml` record a generous per-colo (Cloudflare edge location) abuse threshold: 120 messages/minute for a trusted source IP (or, without a trusted boundary IP, the sender-controlled envelope sender), plus a 1,000 messages/minute per-colo aggregate circuit breaker. Actor inputs are SHA-256 pseudonymized — not anonymized — before reaching the counter key. This surfaces unavailable-recipient spraying without spending outbound-send quota. Cloudflare documents Email Workers `setReject()` as a permanent SMTP error, so Stanchion deliberately does **not** turn this signal into a misleading `451` or drop mail. The bindings fail open when absent or faulty, so this optional protection can't cause a mail outage; namespaces must be positive, account-unique integers, and preview must use different namespaces from production. Thresholds never alter delivery or block D1 reads. A third, one-per-minute-per-colo alert binding allows one generic no-PII Worker warning when either signal is over limit; if that binding is absent, denied, or faulty, Stanchion just omits the warning. Native counters are local to one colo, so the D1-backed limits below remain the durable mailbox and sender controls.
 
 | Variable | Default | Hard maximum | Behavior |
 |---|---:|---:|---|
@@ -347,6 +377,9 @@ Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `
 | `STANDBY_SUBDOMAIN_LABEL` | `standby` | — | Optional [standby address](standby-probe.md): the subdomain label, so `name@standby.<MAIL_DOMAIN>` |
 | `STANDBY_PROBE_LOCAL_PART` | `cmail-standby-probe` | — | Local part of the standby probe's dedicated system mailbox |
 | `STANDBY_PROBE_TIMEOUT_MINUTES` | 10 | 60 | Minutes a standby test may take before it fails; values under 2 become 2 |
+| `M365_WELCOME_MAX_PER_HOUR` | 50 | 500 | Optional [welcome emails](m365-welcome-emails.md#configuration): most sends per rolling hour |
+| `M365_EXO_APP_ID`, `M365_EXO_ORGANIZATION`, `M365_PERMS_*` | unset | — | Optional [shared mailbox access](m365-mailbox-permissions.md#5-worker-settings-and-secrets); the certificate is two Worker secrets, `M365_EXO_CERT_PFX_B64` and `M365_EXO_CERT_PASSWORD` |
+| `M365_JOURNAL_ADDRESS`, `M365_JOURNAL_*` | unset | — | Optional [Exchange mirror](exchange-mirror.md#1-stanchion); the journal address is a Worker secret |
 
 The three inbound hourly limits and the shared storage quota accept an exact numeric `0` to disable that one control. Invalid, negative, non-finite, or sub-one positive values don't disable protection — they fall back to the default. Positive decimals are floored, and values above the hard maximum are clamped. Keep at least one mailbox-wide control enabled in production.
 
@@ -367,7 +400,7 @@ Hourly accounting uses a rolling 3,600-second window and charges the Cloudflare 
 
 The web application uses the same D1 reservation rule before contacting an external provider or writing any Sent, internal-recipient, or draft R2 object. Every copy reserves the exact UTF-8 escaped/sanitized HTML plus attachment bytes its message row records. A multi-mailbox send proceeds only once every mailbox reservation succeeds; a denied group is released with no provider side effects. The immutable outbound journal then stages the canonical body and attachments under private, deterministic R2 keys, records every target and reservation in D1, and atomically claims `dispatching` before calling the provider. Provider results are snapshotted before reconciliation. `accepted` and `materialized` per-compose or per-draft-generation keys are permanent idempotency tombstones: recovery creates any missing Sent/internal copies with stable IDs and keys, but never calls the provider again. A newer saved draft generation gets a new key without weakening recovery of the older accepted send. `dispatching` or `ambiguous` records need operator reconciliation and must never be blindly retried.
 
-An inserted message atomically converts its temporary storage reservation into the durable `messages.size_bytes` charge. Terminal failures release the pending storage charge but keep the one-hour abuse charge; confirmed non-acceptance and its reservation release share one D1 state transition. Ordinary interrupted pending charges expire after 15 minutes; journal-linked reservations stay held until the send is materialized or explicitly cancelled. The short-lived ledger prunes other old rows opportunistically. D1 and R2 share no cross-service transaction, so caught failures are cleaned up with deterministic recovery at the boundary. The one irreducible case — a runtime termination after a provider accepts mail but before cmail records the result — is marked for operator reconciliation instead of risking a duplicate send.
+An inserted message atomically converts its temporary storage reservation into the durable `messages.size_bytes` charge. Terminal failures release the pending storage charge but keep the one-hour abuse charge; confirmed non-acceptance and its reservation release share one D1 state transition. Ordinary interrupted pending charges expire after 15 minutes; journal-linked reservations stay held until the send is materialized or explicitly cancelled. The short-lived ledger prunes other old rows opportunistically. D1 and R2 share no cross-service transaction, so caught failures are cleaned up with deterministic recovery at the boundary. The one irreducible case — a runtime termination after a provider accepts mail but before Stanchion records the result — is marked for operator reconciliation instead of risking a duplicate send.
 
 Guardrail denials use a generic plain-text reason for quota and dependency failures; Cloudflare controls the permanent SMTP rejection. They add no sender, recipient, subject, source IP, message ID, or sender hash to audit/trace records, and Worker warnings stay generic so attacker-controlled mail can't enter new telemetry.
 
@@ -384,11 +417,15 @@ The Worker template schedules a daily retention pass that does nothing while `RE
 | Outbound provider selection and optional REST-fallback account ID | `apps/web/.dev.vars` or local `wrangler.toml` | Cloudflare Pages variables |
 | Native Cloudflare outbound bindings | Local Wrangler configuration | Email Worker `EMAIL` send binding plus Pages `EMAIL_SERVICE` service binding |
 | Inbound sender-HMAC key | `apps/email-worker/.dev.vars` | Email Worker secret `INBOUND_SENDER_HASH_KEY` |
+| Microsoft 365 app secrets, certificate and journal address | `apps/email-worker/.dev.vars` | Email Worker secrets (see [Credentials](credentials.md#worker-and-pages-secrets)) |
 | Organisation settings | Environment defaults or Admin UI | Environment defaults or Admin UI |
 
 The email Worker always needs the shared D1 and R2 bindings, and owns the native Cloudflare outbound `EMAIL` binding. When Web Push is enabled, it also needs the same public VAPID configuration and its own stored copy of `VAPID_PRIVATE_KEY`. Never copy OAuth, session, or outbound-provider API credentials into the Worker.
 
 ## Secret handling
+
+Every credential, with its exact permissions and where it is stored, is in
+[Credentials and permissions](credentials.md).
 
 - Use different secrets for development, staging, and production.
 - Never place secrets in `.env.example`, Wrangler templates, screenshots, issues, or support logs.

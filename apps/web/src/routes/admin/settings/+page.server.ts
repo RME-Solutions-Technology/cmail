@@ -7,14 +7,16 @@ import { normalizeDomain, normalizeEmail } from '#lib/server/validation.js';
 import { ORG_SETTING_MCP_ENABLED, isMcpEnabled, mcpResource } from '#lib/server/mcp/config.js';
 import { adminMcpOverview } from '#lib/server/mcp/grants.js';
 import { revokeAllGrantsStatements } from '#lib/server/mcp/oauth.js';
+import { focusedInboxOrgEnabled, setFocusedInboxOrgEnabled } from '#lib/server/focused-inbox.js';
 
 export const load: PageServerLoad = async ({ platform }) => {
   const env = platform?.env;
-  if (!env) return { settings: null, mailDomain: '', mcp: null };
+  if (!env) return { settings: null, mailDomain: '', mcp: null, focusedInbox: null };
   const settings = await loadOrgSettings(env as unknown as Record<string, unknown>);
-  const [mcpEnabled, mcpOverview] = await Promise.all([
+  const [mcpEnabled, mcpOverview, focusedInbox] = await Promise.all([
     isMcpEnabled(env.DB),
     adminMcpOverview(env.DB).catch(() => null),
+    focusedInboxOrgEnabled(env.DB),
   ]);
   return {
     settings,
@@ -24,6 +26,7 @@ export const load: PageServerLoad = async ({ platform }) => {
       url: mcpResource(env as unknown as Record<string, unknown>),
       overview: mcpOverview,
     },
+    focusedInbox: { enabled: focusedInbox },
   };
 };
 
@@ -77,6 +80,29 @@ export const actions: Actions = {
       detail: `AI agent (MCP) connections turned ${enabled ? 'on' : 'off'}`,
     });
     return { success: enabled ? 'AI app connections are on' : 'AI app connections are off. Connected apps are blocked immediately.' };
+  },
+
+  // Focused Inbox (docs/focused-inbox.md): an audited org switch, off by default.
+  focusedInbox: async ({ request, platform, locals }) => {
+    const env = platform?.env;
+    if (!env) return fail(503, { error: 'Service unavailable' });
+    if (!locals.user) return fail(401, { error: 'Authentication required' });
+    if (locals.user.role !== 'manager') return fail(403, { error: 'Manager role required' });
+    const value = (await request.formData()).get('focused_inbox_enabled');
+    if (value !== 'true' && value !== 'false') return fail(400, { error: 'Invalid Focused Inbox setting' });
+    const enabled = value === 'true';
+    await setFocusedInboxOrgEnabled(env.DB, enabled, locals.user.id);
+    await audit(env.DB, {
+      event_type: 'org.focused_inbox_toggled',
+      actor_id: locals.user.id,
+      actor_role: locals.user.role,
+      detail: `Focused Inbox turned ${enabled ? 'on' : 'off'}`,
+    });
+    return {
+      success: enabled
+        ? 'Focused Inbox is on. Each person sees Focused and Other tabs and can turn them off in Mail settings.'
+        : 'Focused Inbox is off. Every Inbox shows all its mail in one list again.',
+    };
   },
 
   mcpRevokeAll: async ({ platform, locals }) => {

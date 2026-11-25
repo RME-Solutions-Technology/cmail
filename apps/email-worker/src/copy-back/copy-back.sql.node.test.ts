@@ -388,7 +388,7 @@ describe('standby copy-back: idempotency and duplicates', () => {
     await t.tick();
     expect(t.graph.posts()).toHaveLength(0);
     expect(t.items()[0]).toMatchObject({ state: 'copied', reason: 'found_marker' });
-    // Unread in cmail: the found copy is set unread too.
+    // Unread in Stanchion: the found copy is set unread too.
     expect(t.graph.mailboxes.get(ALICE)![0]!.isRead).toBe(false);
   });
 
@@ -529,7 +529,7 @@ describe('standby copy-back: failures, throttling and bounded work', () => {
     expect(t.graph.calls).toHaveLength(0);
   });
 
-  it('never deletes or changes mail in cmail', async () => {
+  it('never deletes or changes mail in Stanchion', async () => {
     const t = setup();
     await t.addMessage();
     await t.addMessage({ mailbox: 'mb-bob' });

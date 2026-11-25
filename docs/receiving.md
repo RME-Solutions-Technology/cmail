@@ -1,3 +1,13 @@
+---
+title: "How receiving works"
+summary: "How inbound mail goes from Email Routing to the Inbox: rejects, limits, parsing, spam and storage."
+applies_to: both
+audience: [operator, developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [spam-and-quarantine.md, cloudflare-platform.md]
+---
+
 # How receiving works
 
 This page follows one message from Cloudflare Email Routing to a user's
@@ -15,7 +25,7 @@ A message can end in one of three ways:
   permanent error with a short, neutral reason. Nothing is stored except,
   for most rejects, a `mail_trace` row.
 - **Failed.** Storage threw an error. Email Routing retries the message later,
-  and cmail's de-duplication makes the retry safe.
+  and Stanchion's de-duplication makes the retry safe.
 
 ## Step by step
 
@@ -25,10 +35,10 @@ A message can end in one of three ways:
    `MAX_INBOUND_BYTES` defaults to 10 MiB, with a hard cap of 25 MiB.
 3. **Mailbox.** The envelope recipient must exactly match an active row in
    `mailboxes` (personal or shared). There are no aliases, no plus-addressing
-   (`name+tag@`) and no catch-all mailbox in cmail itself: Email Routing
-   decides which addresses reach the Worker, and cmail rejects any address
+   (`name+tag@`) and no catch-all mailbox in Stanchion itself: Email Routing
+   decides which addresses reach the Worker, and Stanchion rejects any address
    without a mailbox, using wording that doesn't reveal whether it exists.
-4. **De-duplication.** The message ID inside cmail is a SHA-256 of the mailbox
+4. **De-duplication.** The message ID inside Stanchion is a SHA-256 of the mailbox
    and the `Message-ID` header, and a unique index stops a second copy. A
    repeat delivery returns quietly.
 5. **Guardrails.** One D1 insert into `mailbox_reservations` reserves space,
@@ -46,7 +56,7 @@ A message can end in one of three ways:
    [Reading mail safely](reading-mail-safely.md)). Plain text is escaped. Limits:
    `MAX_INBOUND_DECODED_BODY_BYTES` (512 KiB default, 2 MiB hard), 10,000
    elements, nesting depth 128.
-8. **Sender authentication.** cmail reads the first `Authentication-Results`
+8. **Sender authentication.** Stanchion reads the first `Authentication-Results`
    header and records the SPF, DKIM, DMARC and ARC results, but only when the
    header's authserv-id matches `INBOUND_AUTHSERV_ID` (so a sender can't forge
    them). These results are shown to users and used for calendar updates. They
@@ -71,7 +81,7 @@ A message can end in one of three ways:
 13. **First contact.** If this mailbox has never exchanged mail with the
     sender, the message is flagged so the reading view can warn about it.
 14. **Inbox rules.** For mail going to the Inbox only. See
-    [Inbox rules: how they run](inbox-rules.md#how-rules-run).
+    [Inbox rules: how they run](inbox-rules.md#how-the-rules-engine-works-developers).
 15. **Store.** The body and attachments go to R2 under random UUID keys.
     Metadata goes to D1 (`messages`, `attachments`) in one transaction. If any
     write fails, the new R2 objects are deleted and the error is thrown, so

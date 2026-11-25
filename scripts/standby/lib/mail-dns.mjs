@@ -287,7 +287,7 @@ export function literalRuleWarnings(rules, domain, worker) {
     const actions = Array.isArray(rule.actions) ? rule.actions : [];
     const toWorker = actions.length > 0 && actions.every((a) => a?.type === 'worker' && Array.isArray(a.value) && a.value.every((v) => v === worker));
     if (!toWorker) {
-      warnings.push(`Rule "${rule.name || rule.id || 'unnamed'}" for ${addresses.join(', ')} does not go to the Worker; those addresses will not reach cmail after the switch.`);
+      warnings.push(`Rule "${rule.name || rule.id || 'unnamed'}" for ${addresses.join(', ')} does not go to the Worker; those addresses will not reach Stanchion after the switch.`);
     }
   }
   return warnings;

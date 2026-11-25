@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { loadM365SyncState } from '@cmail/shared/m365-sync';
-import { pausedAccountLockoutStatements } from '@cmail/shared/account-lockout';
+import { loadM365SyncState } from '@stanchion/shared/m365-sync';
+import { pausedAccountLockoutStatements } from '@stanchion/shared/account-lockout';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { runM365SyncTick, brakeCheck, type M365SyncDeps } from './sync';
 import { CLIENT_ID, DOMAIN, SHARED_GROUP, TENANT_ID, fakeGraph, oid, person } from './testing/fake-graph';

@@ -2,7 +2,7 @@
 export type UserRole = 'standard' | 'manager';
 export type UserStatus = 'pending' | 'active' | 'paused' | 'offboarded';
 /**
- * Every identity provider cmail can bind a user_identities row to. 'email'
+ * Every identity provider Stanchion can bind a user_identities row to. 'email'
  * is the invitation-scoped one-time-code method (see email-otp.ts) — it is
  * deliberately NOT a valid value of users.auth_provider below; that column
  * keeps its original narrower CHECK (see migration 0013's comment for why),
@@ -31,7 +31,7 @@ export interface User {
   last_auth_country: string | null;
 }
 
-/** Immutable OpenID Connect identity bound to one cmail user. */
+/** Immutable OpenID Connect identity bound to one Stanchion user. */
 export interface UserIdentity {
   provider: IdentityProvider;
   subject: string;
@@ -130,6 +130,10 @@ export interface Message {
   spam_score: number | null;
   /** 1 when the mailbox had no prior correspondence with the sender. */
   sender_first_contact: number;
+  /** Focused Inbox tab (migration 0031): null when never sorted, shown under Focused. */
+  focus_class?: 'focused' | 'other' | null;
+  /** Short code of the signal that sorted it (FOCUS_REASONS in focused-inbox.ts). */
+  focus_reason?: string | null;
   received_at: string;
   created_at: string;
 }
@@ -257,7 +261,7 @@ export interface Env {
   UPDATE_SUPPORT_EMAIL?: string; // Optional update service desk; otherwise use site support.
   LANDING_URL?: string;       // e.g. "https://mail.example.com"
   POLICY_URL?: string;        // e.g. "https://mail.example.com/policy"
-  REPO_URL?: string;          // Upstream for manager update checks; default https://github.com/RME-Solutions-Technology/cmail
+  REPO_URL?: string;          // Upstream for manager update checks; default https://github.com/RME-Solutions-Technology/stanchion
   UPDATE_CHECK?: string;      // "off" disables manager update checks
   SYSTEM_EMAIL?: string;      // sender used for invites/system mail
   SYSTEM_FROM_NAME?: string;
@@ -325,4 +329,6 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;  // e.g. "example.cloudflareaccess.com"
   ACCESS_AUD?: string;          // the Access application's AUD tag
   ACCESS_AUTO_PROVISION?: string; // "true" creates accounts for MAIL_DOMAIN emails
+  /** Entra tenant id (optional; Microsoft first sign-in and the multi-domain list check it). */
+  M365_TENANT_ID?: string;
 }

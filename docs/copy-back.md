@@ -1,7 +1,17 @@
+---
+title: "Copy standby mail back into Exchange"
+summary: "How to copy mail Stanchion received during an Exchange outage back into each Exchange Online mailbox."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Copy back to Exchange"
+last_reviewed: 2026-11-16
+related: [standby-switch.md, credentials.md, onboarding-microsoft-365.md]
+---
+
 # Copy standby mail back into Exchange
 
-Optional and off by default. When cmail has stood in for Exchange Online
-during an outage, mail that arrived in cmail meanwhile exists only in cmail.
+Optional and off by default. When Stanchion has stood in for Exchange Online
+during an outage, mail that arrived in Stanchion meanwhile exists only in Stanchion.
 This feature copies it into each person's Exchange Online mailbox through
 Microsoft Graph, once the outage is over, so their mail history in Outlook is
 complete again.
@@ -12,7 +22,7 @@ complete again.
 > [What is not verified yet](#what-is-not-verified-yet)); run it against a
 > test tenant before the first real use.
 
-- It **copies**: nothing is deleted or changed in cmail, and nothing is
+- It **copies**: nothing is deleted or changed in Stanchion, and nothing is
   deleted, moved or sent in Exchange.
 - It copies **each message at most once** per mailbox, even across several
   jobs with overlapping windows.
@@ -24,7 +34,7 @@ complete again.
   logs or the audit log.
 
 It depends on the [Microsoft 365 mailbox sync](m365-sync.md): the sync's link
-table (`m365_sync_links`, migration 0022) maps each cmail mailbox to the
+table (`m365_sync_links`, migration 0022) maps each Stanchion mailbox to the
 immutable Entra object id of the Exchange mailbox it copies into. Mailboxes
 without a link are never copied (the dry run counts them as "not linked").
 
@@ -37,6 +47,19 @@ without a link are never copied (the dry run counts them as "not linked").
   `standby_copyback_items`); the switch and last dry run live in `org_settings`.
 - Tests: `apps/email-worker/src/copy-back/*.test.ts` (fake Graph and R2 over
   every real migration) and `apps/web/src/lib/server/copy-back-admin.test.ts`.
+
+**In this article**
+
+- [How it works](#how-it-works)
+- [Choosing the Graph method](#choosing-the-graph-method)
+- [What a copy keeps](#what-a-copy-keeps)
+- [Never twice, and safe to stop at any point](#never-twice-and-safe-to-stop-at-any-point)
+- [Troubleshoot failures and throttling](#troubleshoot-failures-and-throttling)
+- [How to set up copy-back (least privilege)](#how-to-set-up-copy-back-least-privilege)
+- [How to run a copy-back](#how-to-run-a-copy-back)
+- [Runbook](#runbook)
+- [What is not verified yet](#what-is-not-verified-yet)
+- [Sources](#sources)
 
 ## How it works
 
@@ -77,11 +100,11 @@ flowchart LR
 
 | Step | Graph call | Why |
 |---|---|---|
-| a | `GET /users/{id}/messages?$filter=singleValueExtendedProperties/Any(ep: ep/id eq '<marker>' and ep/value eq '<cmail id>')&$select=id&$top=1` | Did an earlier attempt already create it (for example the run was cut off after Exchange accepted it)? Then it is recorded as copied, not created again. The filter covers the whole mailbox, so a copy the user has moved is still found. |
+| a | `GET /users/{id}/messages?$filter=singleValueExtendedProperties/Any(ep: ep/id eq '<marker>' and ep/value eq '<Stanchion id>')&$select=id&$top=1` | Did an earlier attempt already create it (for example the run was cut off after Exchange accepted it)? Then it is recorded as copied, not created again. The filter covers the whole mailbox, so a copy the user has moved is still found. |
 | b | `GET /users/{id}/messages?$filter=internetMessageId eq '<Message-ID>'&$select=id,parentFolderId&$expand=singleValueExtendedProperties($filter=id eq '<marker>')&$top=10` (plus, once per mailbox and run, `GET /users/{id}/mailFolders/sentitems` and `/drafts` for their ids) | Did Exchange receive this message itself (for example some mail still reached it)? Then it is skipped as `already_in_exchange`. Our own copies (they carry the marker) and messages in the user's Sent Items or Drafts do not count: a message someone sent to themselves from Outlook is in their Sent Items but was never delivered to their Inbox. Every other folder counts, so mail an inbox rule moved is still recognised. Not done for Sent items. |
 | c | none | Build the message from D1 and R2. Over the size cap: skipped as `too_large`. |
 | d | `POST /users/{id}/mailFolders/{inbox\|archive\|sentitems}/messages` | Create the copy. It is **never retried in place**: a 503 or 504 can arrive after Exchange stored the copy, so the item is recorded as an attempt and the next attempt starts with the marker lookup (a). **Draft canary:** unless the answer says `isDraft: false`, the job halts at once (see below). |
-| e | `PATCH /users/{id}/messages/{id}` `{ "isRead": false }` | Only when the message was unread in cmail (see below). |
+| e | `PATCH /users/{id}/messages/{id}` `{ "isRead": false }` | Only when the message was unread in Stanchion (see below). |
 
 The item is recorded only after the last call succeeds, and step (a) makes
 any retry safe.
@@ -95,7 +118,7 @@ unless Exchange reports `isDraft: false`, that item is recorded as failed
 `isDraft`, which every create example on Microsoft Learn includes: it fails closed), no
 retry, the job is set to **halted**, and nothing more is created. A draft is never counted as copied, so a later job that finds it
 by its marker halts too instead of treating it as done. To recover: find the
-drafts in Outlook by the category "cmail standby copy", remove them (cmail
+drafts in Outlook by the category "cmail standby copy", remove them (Stanchion
 never deletes anything in Exchange), find the cause (see
 [Permissions](#which-permission)), then start a new job.
 
@@ -111,12 +134,12 @@ example's `receivedDateTime` is the upload time. Options considered:
 
 | Method | Result | Verdict |
 |---|---|---|
-| MIME upload | Keeps the original headers, but the item is a draft with today's received time, and the same request cannot set extended properties. Microsoft Q&A threads report no way to make a MIME-created item non-draft afterwards. cmail also does not keep the original MIME. | Rejected |
+| MIME upload | Keeps the original headers, but the item is a draft with today's received time, and the same request cannot set extended properties. Microsoft Q&A threads report no way to make a MIME-created item non-draft afterwards. Stanchion also does not keep the original MIME. | Rejected |
 | JSON resource **with extended properties** | `PidTagMessageFlags` (`Integer 0x0E07`) set on creation, without the "unsent" bit, makes a normal received item; `PidTagMessageDeliveryTime` (`SystemTime 0x0E06`) and `PidTagClientSubmitTime` (`SystemTime 0x0039`) keep the original time. This is the long-standing pattern for uploading mail into an Inbox with Graph (Glen Scales, Exchange MVP). Extended properties can also carry our marker. | **Chosen** |
-| Mailbox import/export API (`createImportSession`, GA May 2026) | Faithful, but needs items in FastTransfer stream (FTS) format, which cmail cannot produce from a stored message, uploads to a pre-authenticated `outlook.office365.com` URL, and needs `MailboxItem.ImportExport.All`. | Rejected: wrong format, and the token rule below |
+| Mailbox import/export API (`createImportSession`, GA May 2026) | Faithful, but needs items in FastTransfer stream (FTS) format, which Stanchion cannot produce from a stored message, uploads to a pre-authenticated `outlook.office365.com` URL, and needs `MailboxItem.ImportExport.All`. | Rejected: wrong format, and the token rule below |
 | Upload sessions for attachments over 3 MB | Upload to a pre-authenticated `outlook.office.com` URL. | Not used: messages over the cap are skipped |
 
-The cmail Worker sends its token **only** to
+The Stanchion Worker sends its token **only** to
 `https://graph.microsoft.com/v1.0/` URLs (the [sync's client](m365-sync.md),
 which this feature extends, refuses any other host, and follows no
 redirects). Features that hand back a URL on another host are out by design.
@@ -126,7 +149,7 @@ redirects). Features that hand back a URL on another host are out by design.
 `PidTagMessageFlags` can only be set when the item is created. We create
 every copy with `mfRead` (`1`), the value the community pattern documents for
 a non-draft item that does not trigger new-mail notifications on phones, and
-then, for messages that were unread in cmail, set `isRead: false` with a
+then, for messages that were unread in Stanchion, set `isRead: false` with a
 normal [Update message](https://learn.microsoft.com/en-us/graph/api/message-update?view=graph-rest-1.0)
 call. So the unread state uses only documented, updatable properties, and
 people do not get a notification storm for old mail.
@@ -135,19 +158,19 @@ people do not get a notification storm for old mail.
 
 | Kept | How |
 |---|---|
-| Received time | `PidTagMessageDeliveryTime` and `PidTagClientSubmitTime` = cmail `received_at` (cmail does not store the original Date header, so sent time = received time) |
+| Received time | `PidTagMessageDeliveryTime` and `PidTagClientSubmitTime` = Stanchion `received_at` (Stanchion does not store the original Date header, so sent time = received time) |
 | Sender | `from` and `sender` (address and display name) |
 | To, Cc, Reply-To | `toRecipients`, `ccRecipients`, `replyTo` |
-| Bcc | `bccRecipients`, on **Sent** copies only. cmail stores Bcc only on the sender's own draft and sent copy (migration 0015); received copies never reveal it. |
+| Bcc | `bccRecipients`, on **Sent** copies only. Stanchion stores Bcc only on the sender's own draft and sent copy (migration 0015); received copies never reveal it. |
 | Subject, importance | `subject`, `importance` |
-| Body | cmail's stored, sanitised HTML body (cmail never keeps the raw original) |
+| Body | Stanchion's stored, sanitised HTML body (Stanchion never keeps the raw original) |
 | Attachments, inline images | `fileAttachment` with `contentBytes`; inline parts keep `isInline` and `contentId`, so `cid:` images still show |
 | Threading | `internetMessageId`, `In-Reply-To` (`String 0x1042`), `References` (`String 0x1039`) |
 | Read/unread | see above |
-| Marker | named property `String {8d0b7a4e-3c1f-4b6e-9a52-6f1e2d4c7b90} Name cmailStandbyCopyId` = cmail message id, and category **cmail standby copy** (visible in Outlook) |
+| Marker | named property `String {8d0b7a4e-3c1f-4b6e-9a52-6f1e2d4c7b90} Name cmailStandbyCopyId` = Stanchion message id, and category **cmail standby copy** (visible in Outlook) |
 
 **Not kept:** the full original header block (`Received`, authentication
-results and so on), because cmail stores parsed fields, not the raw message.
+results and so on), because Stanchion stores parsed fields, not the raw message.
 Graph only lets an app add `x-` custom headers on creation, so the original
 transport headers could not be recreated anyway.
 
@@ -158,7 +181,7 @@ at most 3 MB, in line with Microsoft's
 Larger messages are skipped as `too_large`; the dry run shows a first
 estimate. The Worker checks the real stored size of the body and of each
 attachment before reading it into memory, so nothing over the cap is
-buffered. They stay in cmail, where the user can forward them.
+buffered. They stay in Stanchion, where the user can forward them.
 
 **Skipped is final.** Skipped items (`too_large`, `already_in_exchange`,
 `body_missing`, `attachment_missing`, `message_gone`, `folder_not_in_scope`)
@@ -167,20 +190,20 @@ fault.
 
 ## Never twice, and safe to stop at any point
 
-- `standby_copyback_items` has one row per (cmail message id, Entra object
+- `standby_copyback_items` has one row per (Stanchion message id, Entra object
   id). Triggers in `0024` make a `copied` row final: it cannot go back to
   pending or failed, change its key, be deleted, or be inserted as already
   copied. A later job with an overlapping window finds the row and skips it.
 - The marker lookup (step a) covers the gap between Exchange accepting a
-  create and cmail recording it: a retry finds the copy and records it instead
+  create and Stanchion recording it: a retry finds the copy and records it instead
   of creating a second one.
 - An insert of any kind for a key that is already copied, including
   `INSERT OR REPLACE` (whose implicit delete does not fire delete triggers),
   is dropped by a `BEFORE INSERT` trigger, and no item can ever be re-keyed,
   so `UPDATE OR REPLACE` cannot overwrite a copied row either.
-- Ids allow up to 128 characters: cmail message ids are UUIDs (36) or, for
+- Ids allow up to 128 characters: Stanchion message ids are UUIDs (36) or, for
   inbound mail with a Message-ID, `inbound-` plus 64 hex characters (72).
-- There is no foreign key to `messages`, so a message deleted in cmail later
+- There is no foreign key to `messages`, so a message deleted in Stanchion later
   (retention, a manager) neither blocks anything nor erases the record.
 - Only idempotent calls (lookups and the unread update) are retried in place
   on a short 429/503/504; the create is not (see step d).
@@ -188,7 +211,7 @@ fault.
   invocation that holds it) stops overlapping cron
   invocations from working it twice.
 
-## Failures, throttling and bounded work
+## Troubleshoot failures and throttling
 
 | Answer | What happens |
 |---|---|
@@ -201,7 +224,7 @@ fault.
 | Network error | The item fails as `network`; three in one run stop the run (the network, not the item). |
 | 400, 422 | The item fails as `rejected`. |
 | 413 | The item is skipped as `too_large`. |
-| cmail could not read the message (D1 or R2 error) | The item fails as `internal` (an attempt counted); the run carries on. |
+| Stanchion could not read the message (D1 or R2 error) | The item fails as `internal` (an attempt counted); the run carries on. |
 
 A failed item is retried after 5, 10, 20, 40 and 80 minutes; after 6 attempts
 it stays failed ("gave up") until a manager presses **Retry failed**, which
@@ -211,11 +234,11 @@ a halted or cancelled job). Because items are worked fewest attempts first,
 one item that keeps failing never holds up the others.
 **Cancel** stops a running job; copies already made stay in Exchange.
 
-## Setup (least privilege)
+## How to set up copy-back (least privilege)
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#12-standby-test-switch-and-copy-back-optional), step 12.
 
-Do these on a **test tenant first**. Everything below is per instance; cmail's
+Do these on a **test tenant first**. Everything below is per instance; Stanchion's
 code has no tenant data.
 
 ### 1. A separate Entra app for copy-back
@@ -353,14 +376,14 @@ Apply migration `0024` (additive: two tables, three indexes including one on
 **Admin > Copy back to Exchange**, check that no settings are listed as
 missing and turn the switch on.
 
-## Using it
+## How to run a copy-back
 
-1. Make sure the sync has linked the mailboxes (Admin > Microsoft 365 sync).
+1. Make sure the sync has linked the mailboxes (Admin > Microsoft 365 > Directory sync).
 2. Enter the window in UTC, from when Exchange stopped receiving to when mail
    flowed to Exchange again. Prefer a little too wide: messages Exchange
    already has are skipped by Message-ID.
 3. Choose all linked mailboxes or one; keep Inbox; add Archive or Sent only if
-   people filed or sent mail in cmail during the outage.
+   people filed or sent mail in Stanchion during the outage.
 4. **Dry run**, read the counts, tick the confirmation, **Start copy**.
 5. Watch Copied rise every 15 minutes. Check the failures table at the end.
 
@@ -378,13 +401,13 @@ with attachments, read state and the "cmail standby copy" category.
 | Many `access_denied` | Mailboxes outside the RBAC scope, or the cache has not caught up | Check group membership and `Test-ServicePrincipalAuthorization`; wait up to 2 hours; **Retry failed**. |
 | `mailbox_not_found` | No Exchange mailbox for that object | Check the person's license and mailbox; **Retry failed**. |
 | `backoff` | Microsoft throttled | Nothing; it resumes. |
-| `too_large` | Over 3 MB | The message stays in cmail; the user forwards it. |
+| `too_large` | Over 3 MB | The message stays in Stanchion; the user forwards it. |
 | Job `halted`, `created_as_draft` | Exchange stored a copy as a draft | See [Draft canary](#draft-canary) and [Which permission](#which-permission). |
 | `server_error`, `network`, `internal` | A passing fault on one item | Nothing: it is retried with backoff; Retry failed after it gives up. |
-| `body_missing`, `attachment_missing` | The R2 object is gone | Check backups; the message is otherwise readable in cmail. |
+| `body_missing`, `attachment_missing` | The R2 object is gone | Check backups; the message is otherwise readable in Stanchion. |
 
 To undo copies in Exchange, search by the category "cmail standby copy" in
-Outlook, or by the marker property with Graph. cmail never deletes them.
+Outlook, or by the marker property with Graph. Stanchion never deletes them.
 
 ## What is not verified yet
 

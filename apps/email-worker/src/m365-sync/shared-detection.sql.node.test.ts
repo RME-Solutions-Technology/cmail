@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadM365SyncState } from '@cmail/shared/m365-sync';
+import { loadM365SyncState } from '@stanchion/shared/m365-sync';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { runM365SyncTick, type M365SyncDeps, type M365SyncWorkerEnv } from './sync';
 import {
@@ -99,7 +99,7 @@ describe('shared mailbox detection: off by default', () => {
 });
 
 describe('shared mailbox detection: mailbox types', () => {
-  it('creates a disabled, unlicensed shared mailbox as a cmail shared mailbox with nobody assigned', async () => {
+  it('creates a disabled, unlicensed shared mailbox as a Stanchion shared mailbox with nobody assigned', async () => {
     const t = await live([[person(1, 'alex'), sharedObject(9, 'team')]], {}, { 9: 'shared' });
     expect(t.mailboxes()).toEqual([
       expect.objectContaining({ address: 'alex@example.test', type: 'personal' }),
@@ -297,7 +297,7 @@ describe('shared mailbox detection: dry run', () => {
   });
 });
 
-describe('shared mailbox detection: existing cmail mailboxes and accounts', () => {
+describe('shared mailbox detection: existing Stanchion mailboxes and accounts', () => {
   it('links an existing shared mailbox with the same address instead of creating one', async () => {
     const t = setup();
     t.sqlite.prepare(`INSERT INTO mailboxes (id, address, display_name, type) VALUES ('m-team', 'team@example.test', 'Team', 'shared')`).run();

@@ -1,3 +1,13 @@
+---
+title: "Developer guide"
+summary: "How to run Stanchion locally, test, add migrations and endpoints, and release, for contributors."
+applies_to: both
+audience: [developer]
+switch: none
+last_reviewed: 2026-11-16
+related: [maintainer-guide.md, cloudflare-platform.md]
+---
+
 # Developer guide
 
 How to do the common development jobs in this repository. For first-time
@@ -5,14 +15,28 @@ resource setup see [Getting started](getting-started.md); for the rules every
 change must meet see [CONTRIBUTING.md](../CONTRIBUTING.md) and
 [AGENTS.md](../AGENTS.md). Run every command from the repository root.
 
+**In this article**
+
+- [Layout](#layout)
+- [1. Run it locally](#1-run-it-locally)
+- [2. Run the tests](#2-run-the-tests)
+- [3. Add a D1 migration](#3-add-a-d1-migration)
+- [4. Add a route or server endpoint](#4-add-a-route-or-server-endpoint)
+- [5. Change the email Worker](#5-change-the-email-worker)
+- [6. Change the shared package](#6-change-the-shared-package)
+- [7. Update dependencies](#7-update-dependencies)
+- [8. Preview deployments and config:check](#8-preview-deployments-and-configcheck)
+- [9. Common errors](#9-common-errors)
+- [10. Release](#10-release)
+
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `apps/web` | SvelteKit app on Cloudflare Pages (`@cmail/web`). Server code is in `src/lib/server`, imported as `#lib/server/...`. Routes are in `src/routes`. |
-| `apps/email-worker` | Email Routing Worker (`@cmail/email-worker`). Inbound mail, the scheduled link-list refresh and retention, and the private native-outbound path. |
-| `apps/backup-worker` | Optional scheduled backup Worker (`@cmail/backup-worker`). No HTTP surface. |
-| `packages/shared` | Code both apps import (`@cmail/shared`), plus the D1 migrations in `packages/shared/migrations`. |
+| `apps/web` | SvelteKit app on Cloudflare Pages (`@stanchion/web`). Server code is in `src/lib/server`, imported as `#lib/server/...`. Routes are in `src/routes`. |
+| `apps/email-worker` | Email Routing Worker (`@stanchion/email-worker`). Inbound mail, the scheduled link-list refresh and retention, and the private native-outbound path. |
+| `apps/backup-worker` | Optional scheduled backup Worker (`@stanchion/backup-worker`). No HTTP surface. |
+| `packages/shared` | Code both apps import (`@stanchion/shared`), plus the D1 migrations in `packages/shared/migrations`. |
 | `scripts` | Repository checks and setup (`setup.mjs`, `verify-*.mjs`, `check-*secrets.mjs`). |
 | `e2e/mobile` | Playwright mobile and accessibility suite. |
 | `landing` | Static product page, deployed on its own. |
@@ -20,7 +44,7 @@ change must meet see [CONTRIBUTING.md](../CONTRIBUTING.md) and
 ## 1. Run it locally
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git
+git clone https://github.com/RME-Solutions-Technology/stanchion.git
 cd cmail
 corepack enable
 pnpm install --frozen-lockfile
@@ -90,9 +114,9 @@ environment.
 | Lint (ESLint in web, `tsc` in the Workers and shared) | `pnpm lint` |
 | Type checks (`svelte-check`, `tsc`) | `pnpm check` |
 | All unit tests | `pnpm test` |
-| One package | `pnpm --filter @cmail/web test` (also `@cmail/email-worker`, `@cmail/backup-worker`, `@cmail/shared`) |
-| One Vitest file | `pnpm --filter @cmail/web exec vitest run src/hooks.csrf.test.ts` |
-| Tests matching a name | `pnpm --filter @cmail/web exec vitest run -t "<test name>"` |
+| One package | `pnpm --filter @stanchion/web test` (also `@stanchion/email-worker`, `@stanchion/backup-worker`, `@stanchion/shared`) |
+| One Vitest file | `pnpm --filter @stanchion/web exec vitest run src/hooks.csrf.test.ts` |
+| Tests matching a name | `pnpm --filter @stanchion/web exec vitest run -t "<test name>"` |
 | Mobile and accessibility suite, every device | `pnpm test:mobile` |
 | Refresh screenshot baselines after an intended UI change | `pnpm test:mobile:update` |
 | Open the Playwright report | `pnpm test:mobile:report` |
@@ -237,7 +261,7 @@ in `email()` runs in this order, and each step that rejects stops the rest:
    per-mailbox, per-sender and storage guards (`inbound-guard.ts`).
 5. Parse with `postal-mime`, enforcing body and attachment-count limits.
 6. The rest (sanitising HTML and filenames, authentication results, spam
-   scoring and placement through `@cmail/shared/inbound-risk`, inbox rules,
+   scoring and placement through `@stanchion/shared/inbound-risk`, inbox rules,
    calendar parts, the D1 and R2 writes, push notifications) is in the same
    function and the modules it imports. Read `index.ts` before changing the
    order, because the guards above must stay ahead of any D1 write.
@@ -258,8 +282,8 @@ Testing:
   `inbound-guard.sql.node.test.ts`.
 - MIME parsing changes: see `postal-mime-fixtures.ts`,
   `postal-mime-fixtures.expected.json` and `postal-mime-upgrade.test.ts`.
-- Run `pnpm --filter @cmail/email-worker test` and `pnpm --filter
-  @cmail/email-worker lint`.
+- Run `pnpm --filter @stanchion/email-worker test` and `pnpm --filter
+  @stanchion/email-worker lint`.
 - New Worker settings go in `apps/email-worker/wrangler.toml.example` (public
   values) or `.dev.vars.example` (secrets, with an empty value), then in
   [Configuration](configuration.md). Run `pnpm config:check` afterwards.
@@ -267,7 +291,7 @@ Testing:
 ## 6. Change the shared package
 
 `packages/shared` is not built or published. Each file is listed under
-`exports` in its `package.json` (for example `@cmail/shared/inbox-rules`) and
+`exports` in its `package.json` (for example `@stanchion/shared/inbox-rules`) and
 both apps import the TypeScript source directly, so a change is picked up by
 the next `pnpm dev`, test run or build with no extra step.
 
@@ -281,7 +305,7 @@ When you add a file:
 
 Anything here runs in the Worker, the Pages runtime and the tests, so keep it
 free of Node-only and browser-only APIs. After a change run
-`pnpm --filter @cmail/shared test`, then `pnpm check` and `pnpm test` so both
+`pnpm --filter @stanchion/shared test`, then `pnpm check` and `pnpm test` so both
 apps are re-checked against it. Migrations also live in this package; a
 change to a table a shared helper reads or writes needs both together.
 
@@ -369,7 +393,7 @@ In short:
    `[Unreleased]` above it.
 2. Bump `version` to match in the root `package.json` and in each of
    `apps/web`, `apps/email-worker`, `apps/backup-worker` and `packages/shared`
-   (all are 0.2.0 today), and in `CITATION.cff` (`version` and
+   (all are 0.9.0-beta.3 today), and in `CITATION.cff` (`version` and
    `date-released`). `.zenodo.json` has no version field; check its title,
    description and keywords are still accurate.
 3. Run `pnpm release:check` and complete the manual staging checks.

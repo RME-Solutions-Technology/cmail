@@ -5,7 +5,7 @@ tested on a deployed Worker.** This is the first part of the Microsoft 365
 setup wizard. Later releases let the wizard store the keys and secrets it
 creates here, so nobody has to paste them into `wrangler secret put`.
 
-The vault is an encrypted table in D1 (`secret_vault`, migration `0030`). It
+The vault is an encrypted table in D1 (`secret_vault`, migration `0035`). It
 holds values that cMail itself generates or receives during setup, for
 example an Entra app's private key or the Exchange journal address. Only the
 email Worker can decrypt them. The web app can store a value or ask for
@@ -20,7 +20,7 @@ Nothing. Every existing Worker secret keeps working exactly as before:
   vault is used only when that env secret is absent, which means only for
   values the wizard stored.
 - No feature reads the vault in this release. Without `CMAIL_VAULT_KEY` and
-  without migration `0030`, behaviour is unchanged.
+  without migration `0035`, behaviour is unchanged.
 
 ## How it works
 
@@ -140,7 +140,7 @@ key in your password manager **before** you give it to Wrangler:
 
 On Windows use PowerShell 7 the same way
 (`Get-Content vault-key.txt | wrangler secret put ...`, then
-`Remove-Item vault-key.txt`). Then apply migration `0030` with the normal
+`Remove-Item vault-key.txt`). Then apply migration `0035` with the normal
 `pnpm db:migrate`.
 
 ### Custody: the organisation keeps the key
@@ -209,7 +209,7 @@ Rotating a single **value** (for example a new app secret) is simply another
 
 ## Setup runs (`setup_run`)
 
-Migration `0030` also adds `setup_run`, one row per wizard session. It holds
+Migration `0035` also adds `setup_run`, one row per wizard session. It holds
 the manager who started it, the step state, the plans (no secrets) and the
 session's delegated admin tokens. The tokens are one blob encrypted under
 the same key, bound to the instance id and the run id. They are deleted at Finish, Disconnect or

@@ -1,16 +1,16 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import type { Attachment, Mailbox, Message, MessageImportance } from '@cmail/shared/types';
-import { sendNewMailNotifications } from '@cmail/shared/push';
-import { normalizeMessageImportance } from '@cmail/shared/message-importance';
-import { sanitizeParticipantName } from '@cmail/shared/message-participants';
-import { contactUpsertStatements } from '@cmail/shared/contacts';
+import type { Attachment, Mailbox, Message, MessageImportance } from '@stanchion/shared/types';
+import { sendNewMailNotifications } from '@stanchion/shared/push';
+import { normalizeMessageImportance } from '@stanchion/shared/message-importance';
+import { sanitizeParticipantName } from '@stanchion/shared/message-participants';
+import { contactUpsertStatements } from '@stanchion/shared/contacts';
 import { buildReplyRecipients } from '#lib/server/reply-recipients.js';
 import {
   releaseMailboxStorageReservations,
   reserveMailboxStorage,
   type MailboxStorageReservation,
-} from '@cmail/shared/mailbox-storage';
+} from '@stanchion/shared/mailbox-storage';
 import {
   draftSaveRatePerHour,
   maxDraftsPerMailboxUser,
@@ -64,7 +64,8 @@ import {
   suppressionApiAvailable,
   unblockRecipient,
 } from '#lib/server/suppressions.js';
-import { planRecipientDelivery } from '#lib/server/recipient-delivery.js';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from '#lib/server/recipient-delivery.js';
+import { addressDomain, orgDomains, sendingDomainRefusal, type OrgDomains } from '@stanchion/shared/org-domains';
 import {
   deriveReplyThreading,
   safeMessageId,
@@ -84,7 +85,7 @@ import {
 import { formatQuoteDate } from '#lib/dates.js';
 import { appendSignatureToAuthoredHtml, getEffectiveSignature } from '#lib/server/signatures.js';
 import { getComposeDefaults } from '#lib/server/compose-preferences.js';
-import { wrapWithComposeDefaults } from '@cmail/shared/compose-style';
+import { wrapWithComposeDefaults } from '@stanchion/shared/compose-style';
 import { messageOwnershipPredicate } from '#lib/server/message-access.js';
 
 const BLOCKED_EXTENSIONS = new Set([
@@ -567,7 +568,7 @@ export const actions: Actions = {
       } catch (caught) {
         if (caught && typeof caught === 'object' && 'status' in caught && 'location' in caught) throw caught;
         return fail(503, {
-          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — cmail won\'t send it again.',
+          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — Stanchion won\'t send it again.',
         });
       }
     }
@@ -597,6 +598,18 @@ export const actions: Actions = {
        WHERE m.address = ? AND ma.user_id = ? AND ma.permissions IN ('send-as', 'full') AND m.status = 'active'`,
     ).bind(from, locals.user.id).first<{ id: string; address: string; display_name: string }>();
     if (!mailbox) return fail(403, { error: 'You don\'t have permission to send from this address' });
+    let domains: OrgDomains;
+    try {
+      domains = await orgDomains(env, env.DB);
+    } catch (caught) {
+      console.error('Organisation domains could not be read for a send', caught instanceof Error ? caught.message : 'unknown');
+      return fail(503, { error: 'Delivery settings are temporarily unavailable. Your draft is safe; try again shortly.' });
+    }
+    if (!domains.primary) {
+      return fail(503, { error: 'Mail domain is not configured. Contact an administrator.' });
+    }
+    const sendingRefused = sendingDomainRefusal(mailbox.address, domains);
+    if (sendingRefused) return fail(403, { error: sendingRefused });
     const fromName = sanitizeSenderDisplayName(
       mailbox.display_name.trim() || locals.user.display_name.trim(),
     );
@@ -665,7 +678,19 @@ export const actions: Actions = {
     const internalRows = await env.DB.prepare(
       `SELECT address, id FROM mailboxes WHERE status = 'active' AND address IN (${allRecipients.map(() => '?').join(',')})`,
     ).bind(...allRecipients).all<{ address: string; id: string }>();
-    const internalMap = new Map((internalRows.results || []).map((row) => [row.address.toLowerCase(), row.id]));
+    // With the Exchange mirror and "Send colleague mail through Exchange" on,
+    // recipients on the organisation's domains (all Exchange-hosted) go through
+    // the provider so Exchange (and Outlook) gets the message too.
+    let hostedDomains: ReadonlySet<string>;
+    try {
+      hostedDomains = await exchangeHostedDomains(env.DB, domains.domains);
+    } catch (caught) {
+      console.error('Exchange mirror switches could not be read for a send', caught instanceof Error ? caught.message : 'unknown');
+      return fail(503, { error: 'Delivery settings are temporarily unavailable. Your draft is safe; try again shortly.' });
+    }
+    const internalMap = new Map(
+      locallyDeliverable(internalRows.results || [], hostedDomains).map((row) => [row.address.toLowerCase(), row.id]),
+    );
     const {
       providerTo,
       providerCc,
@@ -702,12 +727,12 @@ export const actions: Actions = {
       signature.text,
       preparedBody.quotedText,
     ].filter(Boolean).join('\n\n');
-    const mailDomain = normalizeDomain(env.MAIL_DOMAIN);
-    if (!mailDomain) {
-      return fail(503, { error: 'Mail domain is not configured. Contact an administrator.' });
-    }
+    // The Message-ID uses the From domain when it is an organisation domain
+    // (today always the primary: see the check above), else MAIL_DOMAIN.
+    const fromDomain = addressDomain(mailbox.address);
+    const messageIdDomain = domains.domains.includes(fromDomain) ? fromDomain : domains.primary;
     const messageId = generateId();
-    const localMessageIdHeader = `<${messageId}@${mailDomain}>`;
+    const localMessageIdHeader = `<${messageId}@${messageIdDomain}>`;
 
     const outboundEmail: OutboundEmail | null = hasExternalRecipients ? {
       from,
@@ -967,7 +992,7 @@ export const actions: Actions = {
         }
         if (!recoveryReadSucceeded) {
           return fail(503, {
-            error: 'The send reservation couldn\'t be confirmed. No provider call was made; retry after the database recovers so cmail can reconcile it safely.',
+            error: 'The send reservation couldn\'t be confirmed. No provider call was made; retry after the database recovers so Stanchion can reconcile it safely.',
           });
         }
         if (!recovered || recovered.payload_hash !== fingerprint.payloadHash) {
@@ -1171,7 +1196,7 @@ export const actions: Actions = {
         if (caught && typeof caught === 'object' && 'status' in caught && 'location' in caught) throw caught;
         console.error('Accepted-send materialization failed', caught instanceof Error ? caught.message : String(caught));
         return fail(503, {
-          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — cmail won\'t send it again.',
+          error: 'The provider accepted this message, but its Sent copy is still recovering. Retry this draft — Stanchion won\'t send it again.',
         });
       }
     }
@@ -1583,7 +1608,7 @@ export const actions: Actions = {
     const notAllowed = outcomes.filter((item) => item.outcome === 'not_allowed').map((item) => item.address);
     if (notAllowed.length) {
       return fail(422, {
-        error: `${notAllowed.join(', ')} can't be unblocked from cmail: the recipient reported spam, or Cloudflare locked the block. Ask an administrator.`,
+        error: `${notAllowed.join(', ')} can't be unblocked from Stanchion: the recipient reported spam, or Cloudflare locked the block. Ask an administrator.`,
       });
     }
     if (outcomes.some((item) => item.outcome === 'unavailable')) {

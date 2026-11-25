@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { OAUTH_NONCE_COOKIE_PREFIX, exchangeCode, fetchUserInfo, getOAuthCallbackUrl, isAuthProvider } from '#lib/server/auth.js';
 import {
   BOOTSTRAP_PROOF_COOKIE,
@@ -16,7 +16,7 @@ import {
   findEnrollment,
 } from '#lib/server/identity.js';
 import { loadOrgSettings } from '#lib/server/org-settings.js';
-import { buildSessionCookie, createSessionToken } from '#lib/server/session.js';
+import { buildSessionCookie, createSessionToken, sqlDateTime } from '#lib/server/session.js';
 import { assertStrongSessionSecret, maxSessionsPerUser, sessionTtlMs } from '#lib/server/config.js';
 import { recordTravelRequest, requestCountry, signInCountryGate } from '#lib/server/travel.js';
 import { normalizeDomain, normalizeEmail } from '#lib/server/validation.js';
@@ -275,7 +275,7 @@ export const GET: RequestHandler = async ({ params, url, platform, cookies, requ
   await env.DB.prepare(
     `INSERT INTO sessions (id, user_id, token_hash, issued_at, expires_at, ip_address, revoked)
      VALUES (?, ?, ?, datetime('now'), ?, ?, 0)`,
-  ).bind(sessionId, user.id, hash, expiresAt.toISOString(), clientIp).run();
+  ).bind(sessionId, user.id, hash, sqlDateTime(expiresAt), clientIp).run();
 
   // Eviction keeps the most-recently-renewed sessions (sliding TTL), not the
   // most-recently-issued ones — a long-lived, actively used session should

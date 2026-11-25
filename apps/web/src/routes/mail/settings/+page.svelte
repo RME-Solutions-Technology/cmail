@@ -3,11 +3,21 @@
   import Icon from '#lib/ui/Icon.svelte';
   import SignatureEditor from '#lib/SignatureEditor.svelte';
   import { signaturePreviewDocument } from '#lib/signature-preview.js';
-  import { COMPOSE_FONTS, COMPOSE_FONT_SIZES_PT, DEFAULT_COMPOSE_DEFAULTS, composeDefaultsStyle } from '@cmail/shared/compose-style';
+  import { COMPOSE_FONTS, COMPOSE_FONT_SIZES_PT, DEFAULT_COMPOSE_DEFAULTS, composeDefaultsStyle } from '@stanchion/shared/compose-style';
 
   let { data, form: rawForm } = $props();
   // Each action returns its own message keys.
-  const form = $derived(rawForm as { error?: string; success?: string; fontError?: string; fontSuccess?: string } | null);
+  const form = $derived(rawForm as {
+    error?: string; success?: string; fontError?: string; fontSuccess?: string;
+    focusError?: string; focusSuccess?: string; focusMailbox?: string;
+  } | null);
+  // Focused Inbox: null while the organisation switch is off (no section then).
+  const focusedInbox = $derived(data.focusedInbox ?? null);
+  const backfillText = (backfill: { status: string; count: number }) =>
+    backfill.status === 'running' ? 'Sorting recent mail now.'
+      : backfill.status === 'done' ? `Sorted ${backfill.count.toLocaleString()} recent ${backfill.count === 1 ? 'message' : 'messages'}.`
+        : backfill.status === 'failed' ? 'Recent mail could not be sorted.'
+          : 'Recent mail will be sorted the next time you open the Inbox.';
   const personal = $derived(data.personalSignature);
   const organisation = $derived(data.organisationSignature);
   let previewHtml = $state(untrack(() => data.personalSignature?.html || ''));
@@ -18,14 +28,14 @@
   const fontChanged = $derived(fontFamily !== savedDefaults.fontFamily || Number(fontSizePt) !== savedDefaults.fontSizePt);
 </script>
 
-<svelte:head><title>Font and signature · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Font and signature · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="settings-page nb-quiet" aria-labelledby="signature-heading">
   <header class="page-header">
     <div>
       <p class="eyebrow">Mail settings</p>
       <h1 id="signature-heading">Font and signature</h1>
-      <p>How your new messages, replies, and forwards start, and the sign-off cmail adds to them.</p>
+      <p>How your new messages, replies, and forwards start, and the sign-off Stanchion adds to them.</p>
     </div>
     <a href="/mail/compose" class="btn"><Icon name="compose" size={15} /> Preview in a message</a>
   </header>
@@ -154,6 +164,87 @@
       </div>
     </aside>
   </div>
+
+  {#if focusedInbox}
+    <section class="card focus-card" aria-labelledby="focus-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="focus-heading">Focused Inbox</h2>
+          <p>Focused and Other tabs above your Inbox. Newsletters, notifications and other automated mail go to Other; mail from people stays in Focused. Other is still your Inbox: nothing is hidden or deleted.</p>
+        </div>
+      </div>
+      {#if focusedInbox.mailboxes.length === 0}
+        <p class="focus-empty">You don't have full access to any mailbox, so there is nothing to change here.</p>
+      {/if}
+      {#each focusedInbox.mailboxes as mailbox (mailbox.id)}
+        <article class="focus-mailbox" aria-labelledby={`focus-mb-${mailbox.id}`}>
+          <header class="focus-mailbox-head">
+            <h3 id={`focus-mb-${mailbox.id}`}>{mailbox.displayName || mailbox.address} <span>{mailbox.address}</span></h3>
+            <form method="POST" action="?/focusToggle">
+              <input type="hidden" name="mailbox_id" value={mailbox.id} />
+              <input type="hidden" name="enabled" value={mailbox.enabled ? 'false' : 'true'} />
+              <span class="focus-state" class:on={mailbox.enabled}>{mailbox.enabled ? 'On' : 'Off'}</span>
+              <button type="submit" class="btn btn-sm">{mailbox.enabled ? 'Turn off' : 'Turn on'}<span class="sr-only"> Focused Inbox for {mailbox.address}</span></button>
+            </form>
+          </header>
+          {#if form?.focusMailbox === mailbox.id && form?.focusError}<div class="notice notice-error" role="alert">{form.focusError}</div>{/if}
+          {#if form?.focusMailbox === mailbox.id && form?.focusSuccess}<div class="notice notice-success" role="status">{form.focusSuccess}</div>{/if}
+          {#if mailbox.enabled}
+            <div class="focus-status" role="status">
+              <span>{backfillText(mailbox.backfill)}</span>
+              {#if mailbox.backfill.status === 'failed'}
+                <form method="POST" action="?/focusResort" class="inline-form">
+                  <input type="hidden" name="mailbox_id" value={mailbox.id} />
+                  <button type="submit" class="btn btn-sm">Try again</button>
+                </form>
+              {/if}
+            </div>
+            <h4>Always sort these senders</h4>
+            {#if mailbox.overrides.length}
+              <div class="table-wrap">
+                <table class="focus-table">
+                  <thead><tr><th scope="col">Sender or domain</th><th scope="col">Goes to</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead>
+                  <tbody>
+                    {#each mailbox.overrides as entry (`${entry.kind}:${entry.pattern}`)}
+                      <tr>
+                        <td>{entry.kind === 'domain' ? `Anyone at ${entry.pattern}` : entry.pattern}</td>
+                        <td>{entry.focusClass === 'other' ? 'Other' : 'Focused'}</td>
+                        <td>
+                          <form method="POST" action="?/focusRemoveEntry">
+                            <input type="hidden" name="mailbox_id" value={mailbox.id} />
+                            <input type="hidden" name="kind" value={entry.kind} />
+                            <input type="hidden" name="pattern" value={entry.pattern} />
+                            <button type="submit" class="btn btn-sm">Remove<span class="sr-only"> {entry.pattern}</span></button>
+                          </form>
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <p class="focus-empty">None yet. Use "Always move messages from this sender" on a message, or add a sender or domain here.</p>
+            {/if}
+            <form method="POST" action="?/focusAddEntry" class="focus-add">
+              <input type="hidden" name="mailbox_id" value={mailbox.id} />
+              <div class="field">
+                <label for={`focus-pattern-${mailbox.id}`}>Sender or domain</label>
+                <input id={`focus-pattern-${mailbox.id}`} name="pattern" type="text" maxlength="320" required placeholder="news@example.org or example.org" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="field">
+                <label for={`focus-class-${mailbox.id}`}>Goes to</label>
+                <select id={`focus-class-${mailbox.id}`} name="focus_class">
+                  <option value="other">Other</option>
+                  <option value="focused">Focused</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-primary btn-sm">Add</button>
+            </form>
+          {/if}
+        </article>
+      {/each}
+    </section>
+  {/if}
 </section>
 
 <style>
@@ -226,6 +317,29 @@
   .privacy-note p { margin: 0; }
   .privacy-note strong { color: var(--text); font-weight: 600; }
 
+  .focus-card { padding: 0; margin-top: 36px; }
+  .focus-empty { margin: 4px 0 10px; color: var(--text-muted); font-size: 13px; }
+  .focus-mailbox { padding: 14px 0; border-top: 1px solid var(--divider, var(--border)); }
+  .focus-mailbox-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+  .focus-mailbox-head h3 { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+  .focus-mailbox-head h3 span { margin-left: 4px; color: var(--text-muted); font-weight: 400; }
+  .focus-mailbox-head form { display: flex; align-items: center; gap: 10px; }
+  .focus-state { padding: 2px 10px; border-radius: var(--radius-pill, 999px); background: var(--bg-subtle); color: var(--text-muted); font-size: 12px; font-weight: 650; }
+  .focus-state.on { background: var(--success-soft); color: var(--success); }
+  .focus-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 12px; color: var(--text-muted); font-size: 13px; }
+  .inline-form { display: inline; }
+  .focus-mailbox h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+  .table-wrap { overflow-x: auto; }
+  .focus-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .focus-table th, .focus-table td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--divider, var(--border)); text-align: left; overflow-wrap: anywhere; }
+  .focus-table th { color: var(--text-muted); font-weight: 500; }
+  .focus-table td:last-child { width: 1%; white-space: nowrap; text-align: right; }
+  .focus-add { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; margin-top: 12px; }
+  .focus-add .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .focus-add .field:first-of-type { flex: 1 1 260px; }
+  .focus-add label { color: var(--text-muted); font-size: 13px; font-weight: 500; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
   @media (max-width: 920px) {
     .signature-order, .settings-grid { grid-template-columns: 1fr; }
   }
@@ -238,5 +352,8 @@
     .font-fields { align-items: stretch; flex-direction: column; gap: 12px; }
     .font-fields select { width: 100%; min-width: 0; min-height: 44px; }
     .section-head, .form-actions { align-items: flex-start; flex-direction: column; }
+    .focus-add { align-items: stretch; flex-direction: column; }
+    .focus-add .field:first-of-type { flex: none; }
+    .focus-add input, .focus-add select, .focus-add .btn, .focus-mailbox .btn { min-height: 44px; }
   }
 </style>

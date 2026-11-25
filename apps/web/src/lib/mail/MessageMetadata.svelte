@@ -1,6 +1,6 @@
 <script>
   import { dateTimeAttribute, formatDateTime, formatDate } from '#lib/dates.js';
-  import { sanitizeParticipantName } from '@cmail/shared/message-participants';
+  import { sanitizeParticipantName } from '@stanchion/shared/message-participants';
   import { quarantineReasonPhrase } from '#lib/quarantine-reason.js';
 
   /** delivery: the provider's delivery status for the sender's own copy, or null (see delivery-status.ts). */

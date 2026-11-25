@@ -13,7 +13,7 @@
 
 <section class="help-home">
   <header>
-    <p class="eyebrow">{page.data?.appName || 'cmail'} help</p>
+    <p class="eyebrow">{page.data?.appName || 'Stanchion'} help</p>
     <h1>What do you need to do?</h1>
     <p>Guidance for everyday mail and administration.</p>
   </header>
@@ -32,7 +32,7 @@
   <aside class="privacy-note">
     <div>
       <strong>Sign-in verifies identity only.</strong>
-      <p>{page.data?.appName || 'cmail'} cannot read your personal Google or Microsoft inbox, drive, contacts, or search history — only mailboxes assigned here.</p>
+      <p>{page.data?.appName || 'Stanchion'} cannot read your personal Google or Microsoft inbox, drive, contacts, or search history — only mailboxes assigned here.</p>
     </div>
     {#if page.data?.supportEmail}<a class="btn" href={`mailto:${page.data.supportEmail}`}>Contact support</a>{/if}
   </aside>

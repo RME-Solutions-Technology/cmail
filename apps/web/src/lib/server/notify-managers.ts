@@ -5,7 +5,7 @@ import { audit } from './db';
 import { loadOrgSettings } from './org-settings';
 import { detectProvider, sendEmail } from './outbound';
 import { consumeRateLimit } from './rate-limit';
-import type { Env } from '@cmail/shared/types';
+import type { Env } from '@stanchion/shared/types';
 
 const GLOBAL_LIMIT = 20;
 const GLOBAL_WINDOW_SECONDS = 60 * 60; // 1 hour
@@ -68,6 +68,7 @@ export async function notifyManagers(
   try {
     const result = await sendEmail(
       {
+        system: true,
         from: settings.systemEmail,
         fromName: settings.systemFromName,
         to: recipients,

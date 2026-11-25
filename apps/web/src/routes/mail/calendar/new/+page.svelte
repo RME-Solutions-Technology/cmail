@@ -40,7 +40,7 @@
   }
 </script>
 
-<svelte:head><title>New meeting · {d.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>New meeting · {d.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="calendar-new-page nb-quiet">
   <header class="page-header">

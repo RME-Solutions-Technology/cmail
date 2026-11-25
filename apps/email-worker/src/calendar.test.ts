@@ -7,7 +7,7 @@ import {
   planCalendarWrites,
   type ExistingCalendarEvent,
 } from './calendar';
-import type { ParsedEvent } from '@cmail/shared/ics';
+import type { ParsedEvent } from '@stanchion/shared/ics';
 
 function baseEvent(overrides: Partial<ParsedEvent> = {}): ParsedEvent {
   return {

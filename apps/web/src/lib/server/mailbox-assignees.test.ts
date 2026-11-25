@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL,
+  assigneeDomainsParam,
   getEligibleMailboxAssignee,
   searchEligibleMailboxAssignees,
 } from './mailbox-assignees';
@@ -48,14 +49,22 @@ describe('canonical mailbox assignees', () => {
     expect(captured.calls[0].sql).toContain("personal.status = 'active'");
     expect(captured.calls[0].sql).toContain('personal.owner_user_id = u.id');
     expect(captured.calls[0].sql).toContain('HAVING COUNT(*) = 1');
-    expect(captured.calls[0].values).toEqual(['example.com', '%al\\%\\_%', '%al\\%\\_%', 8]);
+    expect(captured.calls[0].values).toEqual(['["example.com"]', '%al\\%\\_%', '%al\\%\\_%', 8]);
   });
 
   it('looks up forged action ids through the same eligibility boundary', async () => {
     const captured = capturedDatabase();
     await expect(getEligibleMailboxAssignee(captured.db, 'example.com', 'offboarded-user')).resolves.toBeNull();
-    expect(captured.calls[0].values).toEqual(['example.com', 'offboarded-user']);
+    expect(captured.calls[0].values).toEqual(['["example.com"]', 'offboarded-user']);
     expect(ELIGIBLE_MAILBOX_ASSIGNEE_EXISTS_SQL).toContain('HAVING COUNT(*) = 1');
+  });
+
+  it('accepts every organisation domain (docs/multi-domain.md) and ignores invalid ones', async () => {
+    const captured = capturedDatabase();
+    await getEligibleMailboxAssignee(captured.db, ['example.com', 'EXAMPLE.org', 'not a domain', 'example.com'], 'user-1');
+    expect(captured.calls[0].values).toEqual(['["example.com","example.org"]', 'user-1']);
+    expect(assigneeDomainsParam([])).toBeNull();
+    expect(assigneeDomainsParam('example.com')).toBe('["example.com"]');
   });
 
   it('does not query for a blank search or invalid domain', async () => {

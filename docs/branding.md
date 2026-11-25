@@ -1,6 +1,16 @@
+---
+title: "Branding and first customisation"
+summary: "How to set the app name, colours, logo and organisation details for a deployment."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [configuration.md]
+---
+
 # Branding and first customisation
 
-cmail ships neutral fallback assets so a new deployment is usable immediately. Override branding through environment variables rather than editing application code:
+Stanchion ships neutral fallback assets so a new deployment is usable immediately. Override branding through environment variables rather than editing application code:
 
 | Variable | Purpose |
 |---|---|

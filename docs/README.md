@@ -1,103 +1,115 @@
-# cmail documentation
+---
+title: "Stanchion documentation"
+summary: "The index of every Stanchion guide, with where to start for primary mail or a Microsoft 365 standby."
+applies_to: both
+audience: [operator, manager, user]
+switch: none
+last_reviewed: 2026-11-16
+related: [credentials.md, glossary.md, getting-started.md, onboarding-microsoft-365.md]
+---
 
-This page is the map for all cmail documentation. cmail is pre-1.0 software: operators should read the deployment and security guides before sending real mail through it.
+# Stanchion documentation
 
-## Use cmail
+Stanchion is beta software (0.9, before 1.0). Operators should read the deployment and security
+guides before sending real mail through it. Words like *switch*, *dry run*
+and *standby* are defined in the [Glossary](glossary.md).
 
-- [User guide](user-guide.md) — for anyone reading and sending mail. First sign-in, navigation, reading, composing, folders, safety, and support.
-- [Calendar](calendar.md) — for anyone sending or receiving meeting invitations. Accepting and declining, creating a meeting, cancelling, and what's not included yet.
-- [Mobile app and notifications](mobile-pwa.md) — for anyone on iPhone, iPad, or Android. Installing cmail and turning on new-mail alerts, plus troubleshooting.
-- [Push notification reliability blueprint](push-notification-reliability.md) — for engineers planning ahead. A design, not yet built, for a more durable notification pipeline.
-- [Mail client connectivity architecture](mail-client-connectivity.md) — for anyone asking "can I use Outlook or Gmail instead?". The current PWA-only boundary and the staged plan for JMAP and optional IMAP support.
-- [AI agents and MCP](mcp.md) — for anyone connecting Claude or another AI assistant, and for Managers. Browser sign-in and consent, scopes, per-mailbox sharing, the organisation switch, revocation, audit, prompt-injection stance, threat model, and limits.
-- [Shared mailboxes](shared-mailboxes.md) — for anyone using a team address. Delegation, Send as, Full access, shared folders and read state, and lifecycle.
-- [Email signatures](signatures.md) — for anyone who sends mail, and for Managers. Personal sign-offs, the optional organisation footer, locking, and safe formatting.
-- [Manager handbook](manager-handbook.md) — for the Manager role. People, Mailboxes, Organisation, Usage policy, Mail trace, Audit log, Settings, and safe operating practice.
-- [Travel approvals](travel-approvals.md) — for Managers. Restricting sign-in to approved countries, the notification and approval flow, and the bootstrap exemption.
-- [Inbox rules](inbox-rules.md) — for anyone who wants mail filed automatically. Outlook-style rules per mailbox: conditions, exceptions, actions, ordering, and running a rule on mail that already arrived.
-- [Spam and quarantine](spam-and-quarantine.md) — for anyone whose mail lands in Spam, and for Managers. How scoring works, what quarantine means, releasing your own mail, and organisation-wide sender allow/block rules.
-- [Support process](support-process.md) — for Managers and internal support staff. L1 triage, safe evidence handling, and when to escalate to RME Solutions Technology.
+## Start here
 
-## Deploy cmail
+- **Primary mail for your organisation:** [Getting started](getting-started.md),
+  then [Deployment and verification](deployment.md).
+- **Standby for an organisation on Microsoft 365:** [Onboarding an
+  organisation that uses Microsoft 365](onboarding-microsoft-365.md).
+- **Either way:** [Credentials and permissions](credentials.md) lists every
+  token, app and secret, with exact permissions.
 
-For engineers and operators setting up a deployment, roughly in this order:
+## Use Stanchion
 
-1. [Getting started](getting-started.md) — choose resource names, install dependencies, create Cloudflare storage, and start local development.
-2. [Configuration reference](configuration.md) — set the deployment origin, mail domain, OAuth providers, safety limits, and organisation defaults.
-3. [Email authentication and sender requirements](email-authentication.md) — read before changing mail DNS or enabling external delivery.
-4. [Architecture and trust boundaries](architecture.md) — read before changing authentication, authorisation, mail flow, public data, or storage.
-5. [Deployment and verification](deployment.md) — the production sequence, including identity providers, DNS, bootstrap, and controlled mail tests.
-6. [Security checklist](security-checklist.md) and [Operations checklist](operations-checklist.md) — complete both for every environment.
-7. [Running cmail](operations.md) — upgrade, back up, restore, roll back, monitor, and rotate secrets on a live deployment.
-8. [Upgrading and keeping your settings](upgrading.md) — where each setting lives, what an upgrade changes, upgrading a plain copy or a fork, and checking for new settings.
+- [User guide](user-guide.md): first sign-in, reading, composing, folders, safety.
+- [Calendar](calendar.md): meeting invitations.
+- [Mobile app and notifications](mobile-pwa.md): install on a phone, new-mail alerts.
+- [Shared mailboxes](shared-mailboxes.md): team addresses, Send as, Full access.
+- [Email signatures](signatures.md): personal and organisation signatures.
+- [Inbox rules](inbox-rules.md): file mail automatically.
+- [Focused Inbox](focused-inbox.md): Focused and Other tabs (off by default), how mail is sorted and why.
+- [Spam and quarantine](spam-and-quarantine.md): scoring, quarantine, sender rules.
+- [AI agents and MCP](mcp.md): connect Claude or another AI app.
+- [Mail client connectivity](mail-client-connectivity.md): why there is no IMAP yet, and the plan.
 
-Onboarding an organisation that uses Microsoft 365? Follow
-[Onboarding an organisation that uses Microsoft 365](onboarding-microsoft-365.md):
-the tested order from an empty instance to staff signing in with Microsoft,
-then the optional standby steps, with a one-page checklist and the setup
-scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
+## Manage Stanchion
 
-To keep accounts in step with a Microsoft 365 tenant (read-only, off by
-default, with a manager switch and dry run), see
-[Microsoft 365 mailbox sync](m365-sync.md). To email each person the sync
-creates once with first sign-in steps (off by default), see
-[Microsoft 365 welcome emails](m365-welcome-emails.md). To copy Full Access and Send As
-on shared mailboxes from Exchange Online into cmail daily (off by default,
-read-only, needs a Cloudflare Container), see
-[Shared mailbox access from Exchange Online](m365-mailbox-permissions.md). After an Exchange outage, mail
-that arrived in cmail meanwhile can be copied into each person's Exchange
-mailbox: see [Copy standby mail back into Exchange](copy-back.md). To move
-a domain's incoming mail to cmail and back in one DNS change each, see
-[Switch mail to the cmail standby, and back](standby-switch.md).
+- [Manager handbook](manager-handbook.md): people, mailboxes, organisation, policy, mail trace, audit.
+- [Travel approvals](travel-approvals.md): limit sign-in to approved countries.
+- [Support process](support-process.md): triage, evidence, escalation.
+- [Acceptable-use policy template](acceptable-use-policy-template.md).
 
-To give every mailbox a second address on a standby subdomain and test it
-daily (off by default), see
-[Standby test address and daily probe](standby-probe.md). To keep cmail a
-live copy of an Exchange Online tenant with no setup per address (one
-Exchange journal rule), see [Exchange mirror](exchange-mirror.md).
+## Deploy and run Stanchion
 
-For staff-portal links and optional provider-session reuse, see the
-[staff sign-in contract](staff-sign-in.md), including the Cloudflare Access
-identity boundary and live configuration checks.
+1. [Getting started](getting-started.md): local setup and Cloudflare storage.
+2. [Configuration reference](configuration.md): every setting.
+3. [Credentials and permissions](credentials.md): every token, app and secret.
+4. [Email authentication](email-authentication.md): read before changing mail DNS.
+5. [Architecture and trust boundaries](architecture.md).
+6. [Deployment and verification](deployment.md): the production sequence.
+7. [Security checklist](security-checklist.md) and [Operations checklist](operations-checklist.md).
+8. [Running Stanchion](operations.md): upgrade, back up, restore, roll back, monitor, rotate secrets.
+9. [Upgrading and keeping your settings](upgrading.md).
 
-For sign-in that works when Microsoft or Cloudflare Access is down (off by
-default, with a manager switch), see
-[Passkey break-glass sign-in](passkeys.md), including the one path to exclude
-from Access.
+## Sign-in
+
+- [Staff sign-in](staff-sign-in.md): staff-portal links, the Cloudflare Access bridge, Microsoft sign-in for synced people.
+- [Passkey break-glass sign-in](passkeys.md): sign in when Microsoft or Access is down.
 
 For the encrypted store that keeps setup-wizard secrets in D1 under one
 Worker key (`CMAIL_VAULT_KEY`, held by the organisation, env secrets still
 win), see [Secret vault](secret-vault.md), including key custody, rotation
 and restores.
 
-## How cmail works
+## Microsoft 365 standby
 
-Technical guides for developers and operators, one feature at a time, with the code paths, data, limits and tests behind each.
+All off by default, each with its own Admin switch. Order and setup:
+[Onboarding an organisation that uses Microsoft 365](onboarding-microsoft-365.md),
+with scripts in [`scripts/onboarding/`](../scripts/onboarding/README.md).
 
-- [How cmail runs on Cloudflare](cloudflare-platform.md) — the four deployables, their bindings and schedules, the Cloudflare products used, migrations, and what `config:check` enforces.
-- [How sending works](sending.md) — from compose to the provider: drafts, checks, limits, the outbound journal, providers, and every error a user can see.
-- [Delivery status and bounces](delivery-and-bounces.md) — delivery events, Sent tags, Undeliverable notices, and blocked addresses with Send again and Unblock.
-- [How receiving works](receiving.md) — from Email Routing to the Inbox: rejects, guardrails, parsing, spam placement, storage, and scheduled jobs.
-- [Reading mail safely](reading-mail-safely.md) — HTML cleaning, the sandboxed frame, image blocking, and link checks against a phishing list.
-- [Inbox rules: how they run](inbox-rules.md#how-rules-run) — the rules engine: storage, matching, order, and when rules run.
+- [Microsoft 365 sync](m365-sync.md): keep accounts and shared mailboxes in step with the tenant.
+- [Multiple mail domains](multi-domain.md): every verified domain of the tenant, found by the sync, no setup.
+- [Microsoft 365 welcome emails](m365-welcome-emails.md): first sign-in steps for each new synced person.
+- [Shared mailbox access from Exchange Online](m365-mailbox-permissions.md): copy Full Access and Send As daily.
+- [Exchange mirror](exchange-mirror.md): a live copy of every mailbox from one journal rule.
+- [Standby test address and daily probe](standby-probe.md): prove the standby path every day.
+- [Standby switch](standby-switch.md): move incoming mail to Stanchion and back, one DNS change each.
+- [Copy-back](copy-back.md): copy standby mail into Exchange after an outage.
 
-## Customisation and governance
+## How Stanchion works
 
-- [Security, privacy, and assurance](assurance.md) — for managers, reviewers, and auditors. The public responsibility boundary, control matrix, limitations, and a deployment evidence checklist.
-- [ISO and ITIL alignment](standards-alignment.md) — for compliance reviewers. Applicable standards, current editions, service-management practices, and the evidence an operator or support provider must establish.
-- [Privacy and data-handling guide](privacy-and-data-handling.md) — for operators and privacy reviewers. Data inventory, provider boundary, public-directory, retention, rights, and a privacy-notice checklist.
-- [Branding and first customisation](branding.md) — for whoever brands the deployment.
-- [Downstream and private implementations](downstream-implementations.md) — for teams maintaining a private fork. Keeping proprietary work separate while tracking public cmail.
-- [Acceptable-use policy template](acceptable-use-policy-template.md) — for Managers publishing a usage policy. A starting point to adapt and have reviewed.
-- [Project roadmap](../ROADMAP.md) — where cmail is headed.
-- [Maintainer release guide](maintainer-guide.md) — for maintainers cutting a release.
-- [September 2026 dependency upgrade review](dependency-review-2026-09-22.md) — current toolchain, major-version migrations, and compatibility boundaries.
-- [Developer guide](development.md) — for contributors. Running locally, tests, migrations, endpoints, the email Worker, the shared package, dependencies, previews, common errors, and releasing.
-- [Contributing](../CONTRIBUTING.md), [Support](../SUPPORT.md), [Security policy](../SECURITY.md), [Code of Conduct](../CODE_OF_CONDUCT.md) — standard project files, for contributors.
+- [How Stanchion runs on Cloudflare](cloudflare-platform.md): the deployables, bindings, schedules and migrations.
+- [How sending works](sending.md).
+- [Delivery status and bounces](delivery-and-bounces.md).
+- [How receiving works](receiving.md).
+- [Reading mail safely](reading-mail-safely.md).
+- [Inbox rules: how the engine works](inbox-rules.md#how-the-rules-engine-works-developers).
+- [Push notification reliability](push-notification-reliability.md): a design, not built.
+
+## Governance
+
+- [Security, privacy, and assurance](assurance.md).
+- [ISO and ITIL alignment](standards-alignment.md).
+- [Privacy and data handling](privacy-and-data-handling.md).
+- [Branding](branding.md).
+- [Downstream and private implementations](downstream-implementations.md).
+- [Project roadmap](../ROADMAP.md).
+
+## Contributors and maintainers
+
+- [Developer guide](development.md).
+- [Local gate and deploys in WSL](wsl-gate.md).
+- [Maintainer release guide](maintainer-guide.md).
+- Reviews: [security review, September 2026](security-review-2026-09-13.md), [dependency review, 22 September 2026](dependency-review-2026-09-22.md), [dependency review, 9 September 2026](dependency-review-2026-09-09.md).
+- [Contributing](../CONTRIBUTING.md), [Support](../SUPPORT.md), [Security policy](../SECURITY.md), [Code of Conduct](../CODE_OF_CONDUCT.md).
 
 ## Command reference
 
-Run commands from the repository root:
+Run from the repository root:
 
 | Command | Use |
 |---|---|
@@ -114,4 +126,10 @@ Run commands from the repository root:
 | `pnpm validate` | Run source, lint, type, test, migration, build, and dependency checks |
 | `pnpm release:check` | Run validation plus the reachable Git-history secret gate |
 
-The [README](../README.md#quick-start) has the shortest deployment path. These guides give the operational and security context behind it.
+## Page metadata
+
+Each page starts with a metadata block between `---` lines: `title`,
+`summary`, `applies_to` (`primary`, `standby` or `both`), `audience` (any of `operator`, `manager`, `user`),
+`switch` (the Admin label that turns the feature on, or `none`),
+`last_reviewed` and `related` (file names). The docs site reads it for
+search; GitHub shows it as a table.

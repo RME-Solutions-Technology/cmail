@@ -48,7 +48,7 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import type { Env, User } from '@cmail/shared/types';
+import type { Env, User } from '@stanchion/shared/types';
 
 // The WebAuthn library is loaded only when a passkey ceremony runs. This
 // module is also imported by hooks.server.ts (for the session check), so a
@@ -176,7 +176,7 @@ async function sendUserNotice(
     });
     return;
   }
-  const result = await sendEmail({ from: settings.systemEmail, fromName: settings.systemFromName, to: user.email, ...message }, envRecord);
+  const result = await sendEmail({ from: settings.systemEmail, fromName: settings.systemFromName, to: user.email, ...message, system: true }, envRecord);
   if (!result.success) {
     await audit(env.DB, { event_type: 'email.failed', actor_id: user.id, target: user.id, detail: `Passkey notice not delivered: ${message.subject.slice(0, 120)}` });
   }
@@ -232,7 +232,7 @@ export function relyingParty(env: Record<string, unknown>): RelyingParty | null 
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null;
     // WebAuthn rejects an IP address as an RP ID; localhost is allowed.
     if (/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname) || url.hostname.startsWith('[')) return null;
-    const name = typeof env.APP_NAME === 'string' && env.APP_NAME.trim() ? env.APP_NAME.trim().slice(0, 64) : 'cmail';
+    const name = typeof env.APP_NAME === 'string' && env.APP_NAME.trim() ? env.APP_NAME.trim().slice(0, 64) : 'Stanchion';
     return { rpID: url.hostname, origin: url.origin, name };
   } catch {
     return null;
@@ -574,7 +574,7 @@ export async function finishRegistration(
 }
 
 async function appNameOf(env: EnvLike): Promise<string> {
-  return (await loadOrgSettings(env as Record<string, unknown>)).appName || 'cmail';
+  return (await loadOrgSettings(env as Record<string, unknown>)).appName || 'Stanchion';
 }
 
 export async function removeOwnPasskey(
@@ -853,7 +853,7 @@ export async function finishAuthentication(
       ip_address: clientIp,
       session_id: sessionId,
     });
-    const appName = settings.appName || 'cmail';
+    const appName = settings.appName || 'Stanchion';
     await passkeyNotice(env, options.waitUntil, {
       subject: `Manager signed in to ${appName} with a passkey`,
       text: `${user.email} signed in to ${appName} with a passkey (break-glass sign-in).\n\nIf this wasn't expected, check Admin > Audit log and Admin > Passkey sign-in.`,

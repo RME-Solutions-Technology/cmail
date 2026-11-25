@@ -3,7 +3,7 @@
 -- Admin > Microsoft 365 sync and the email Worker has its Entra settings.
 --
 -- m365_sync_links ties one Entra object (by its immutable object id, never a
--- UPN or address) to the cmail account or shared mailbox it feeds. An
+-- UPN or address) to the Stanchion account or shared mailbox it feeds. An
 -- address or name change in Microsoft 365 updates the linked row; it never
 -- creates a second one. One object links to at most one account and one
 -- mailbox, and the other way round.

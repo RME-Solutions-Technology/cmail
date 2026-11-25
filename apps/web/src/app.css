@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   cmail design system
+   Stanchion design system
    ───────────────────────────────────────────────────────────────────────
    A Fluent-informed system tuned for administrators: high information
    density, unambiguous state, and no decoration that isn't load-bearing.
@@ -383,6 +383,15 @@ select {
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%23adadad' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><polyline points='4 6 8 10 12 6'/></svg>");
   }
 }
+
+/* The open list of a select is drawn by the browser. Without these colours it keeps the system
+   white background while the text inherits the (light) text colour in dark mode, so the options
+   are unreadable (From address on the compose page). Same tokens as the select itself. */
+select option, select optgroup {
+  background-color: var(--bg-surface);
+  color: var(--text);
+}
+select option:disabled { color: var(--text-disabled); }
 
 /* Global field pattern. Page-scoped .field rules still win where they exist. */
 .field { display: flex; flex-direction: column; gap: 4px; }

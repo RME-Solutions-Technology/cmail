@@ -1,15 +1,16 @@
 // Exchange mirror: file the original message of each Exchange Online journal
-// report into every recipient's cmail mailbox (docs/exchange-mirror.md).
+// report into every recipient's Stanchion mailbox (docs/exchange-mirror.md).
 //
 // Called by the inbound handler only for mail to the exact configured
 // journal address. With the manager switch off it returns false at once and
 // the inbound handler treats the address like any unknown one.
 //
-// What a mirrored copy never does: it raises no new-mail notification, runs
-// no inbox rule, records no contact or calendar change, and nothing here can
+// What a mirrored copy never does: it raises no new-mail notification (except
+// Stanchion's own colleague mail coming back through Exchange: see
+// recordedSendRecipients), runs no inbox rule, records no contact or calendar change, and nothing here can
 // send mail (no reply, forward, bounce or read receipt). The only SMTP answer
 // is Cloudflare's own reject of a report that fails the checks in verify.ts.
-import PostalMime from 'postal-mime';
+import PostalMime, { type Email } from 'postal-mime';
 import {
   aliasImportState,
   emptyMirrorCounts,
@@ -19,22 +20,24 @@ import {
   type ExchangeMirrorConfig,
   type ExchangeMirrorCounts,
   type ExchangeMirrorEnv,
-} from '@cmail/shared/exchange-mirror';
-import { decideInboundPlacement } from '@cmail/shared/inbound-risk';
-import { parseMessageImportance } from '@cmail/shared/message-importance';
+} from '@stanchion/shared/exchange-mirror';
+import { decideInboundPlacement } from '@stanchion/shared/inbound-risk';
+import { orgDomains } from '@stanchion/shared/org-domains';
+import { decideFocusAtDelivery, focusUpdateStatement, focusedInboxOrgEnabled } from '@stanchion/shared/focused-inbox';
+import { parseMessageImportance } from '@stanchion/shared/message-importance';
 import {
   normalizeParticipants,
   serializeParticipants,
   type MessageParticipant,
-} from '@cmail/shared/message-participants';
-import { mailboxStorageQuotaBytes } from '@cmail/shared/mailbox-storage';
+} from '@stanchion/shared/message-participants';
+import { mailboxStorageQuotaBytes } from '@stanchion/shared/mailbox-storage';
 import { releaseInboundReservation, type InboundGuardEnv } from '../inbound-guard';
 import { attachedOriginal, envelopeText, parseJournalEnvelope, type JournalEnvelope } from './report';
 import { headerBlockWellFormed, headerValues, verifyJournalReport } from './verify';
 import { MAX_DIAGNOSTIC, journalDiagnostic } from './diagnostic';
 
 /** SMTP text for a refused report. Deliberately says nothing about why. */
-export const JOURNAL_REJECT_RESPONSE = 'cmail: journal report refused';
+export const JOURNAL_REJECT_RESPONSE = 'Stanchion: journal report refused';
 /** Cloudflare Email Routing's inbound ceiling. */
 const HARD_MAX_REPORT_BYTES = 25 * 1024 * 1024;
 const DEFAULT_SUBREQUEST_BUDGET = 8_000;
@@ -114,6 +117,12 @@ export interface JournalEnv extends InboundGuardEnv, ExchangeMirrorEnv {
 
 export interface JournalDeps {
   now?: () => number;
+  /**
+   * New-mail notification for a filed Inbox copy of mail this instance sent
+   * (see recordedSendRecipients). Absent: no notification, as for every other
+   * mirrored copy.
+   */
+  notify?: (mailboxId: string, messageId: string) => void;
 }
 
 type Rejected = { kind: 'rejected'; reason: string; diagnostic?: string };
@@ -132,7 +141,7 @@ interface Processed {
   size: number;
 }
 
-interface Target {
+export interface MirrorTarget {
   mailboxId: string;
   address: string;
   role: 'inbound' | 'sent';
@@ -153,7 +162,8 @@ function firstHeader(headers: readonly Header[] | undefined, name: string): stri
   return headers?.find((header) => header.key.toLowerCase() === name)?.value;
 }
 
-async function sentCopyId(mailboxId: string, messageIdHeader: string): Promise<string> {
+/** A Sent copy's id: the same for the journal and Graph sources, so either files it once. */
+export async function sentCopyId(mailboxId: string, messageIdHeader: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', ENCODER.encode(`exchange-mirror-sent\u0000${mailboxId}\u0000${messageIdHeader}`));
   return `mirror-sent-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
@@ -241,6 +251,57 @@ export async function reserveMirrorStorage(
   }
 }
 
+/** A recorded send proves a mirrored copy only within this window. */
+export const OWN_SEND_WINDOW_DAYS = 2;
+
+/**
+ * The visible recipients (To and Cc) of a message this instance sent from
+ * `mailboxId` in the last OWN_SEND_WINDOW_DAYS days, with this Message-ID
+ * (as the provider reported it) and this subject, or null when there is
+ * none. A mirrored copy for one of them is Stanchion's own colleague mail coming
+ * back through Exchange ("Send colleague mail through Exchange"), so it is
+ * treated as proven. Read from the sender's Sent copy (indexed by mailbox,
+ * folder and time). The mirror's own Sent copies (ids `mirror-sent-…`) are
+ * not sends from this instance and never count. A copy that fails the original's authentication
+ * (`ownSendSpoofSignals`) is never proven.
+ */
+export async function recordedSendRecipients(
+  db: D1Database,
+  mailboxId: string,
+  messageIdHeader: string,
+  subject: string,
+): Promise<Set<string> | null> {
+  const row = await db.prepare(
+    `SELECT to_addresses, cc_addresses, subject FROM messages
+     WHERE mailbox_id = ? AND folder = 'sent' AND direction = 'outbound'
+       AND id NOT LIKE 'mirror-sent-%'
+       AND julianday(received_at) >= julianday('now') - ?
+       AND message_id_header = ?
+     LIMIT 1`,
+  ).bind(mailboxId, OWN_SEND_WINDOW_DAYS, messageIdHeader).first<{ to_addresses: string; cc_addresses: string; subject: string }>();
+  if (!row || row.subject !== subject) return null;
+  const out = new Set<string>();
+  for (const column of [row.to_addresses, row.cc_addresses]) {
+    try {
+      const list = JSON.parse(column) as unknown;
+      if (Array.isArray(list)) for (const item of list) if (typeof item === 'string') out.add(item.trim().toLowerCase());
+    } catch {
+      // A malformed column proves nothing for its recipients.
+      continue;
+    }
+  }
+  return out.size ? out : null;
+}
+
+/**
+ * Exchange's own verdict on the original, when it recorded one: an explicit
+ * DMARC or composite-authentication failure means the From was not proven,
+ * whatever else matches.
+ */
+export function ownSendSpoofSignals(innerHeaders: readonly Header[] | undefined): boolean {
+  return headerValues(innerHeaders, 'authentication-results')
+    .some((value) => /\b(?:dmarc|compauth)\s*=\s*fail\b/i.test(value));
+}
 async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (const slice of chunks(ids, IN_CHUNK)) {
@@ -253,9 +314,9 @@ async function existingIds(db: D1Database, ids: readonly string[]): Promise<Set<
 }
 
 /**
- * A Sent copy is filed only for mail a cmail user really sent through
+ * A Sent copy is filed only for mail a Stanchion user really sent through
  * Exchange, and only when M365_JOURNAL_MIRROR_SENT is "true" (off by
- * default): the envelope sender is a cmail mailbox, Exchange knew the
+ * default): the envelope sender is a Stanchion mailbox, Exchange knew the
  * addressing (To/Cc/Bcc lines, which it writes for authenticated
  * submissions; internet mail gets "Recipient:" lines), the sender is the
  * original's From or Sender, and the original carries
@@ -285,11 +346,31 @@ export function sentCopyAllowed(input: {
   return true;
 }
 
+/**
+ * For Focused Inbox: the original was submitted by an authenticated user of
+ * this tenant (X-MS-Exchange-CrossTenant-AuthAs "Internal" and this tenant's
+ * id on every instance, at least one of each, and a well-formed header
+ * block), the same proof sentCopyAllowed uses. Anything else, including all
+ * internet mail, is treated as unauthenticated.
+ */
+export function mirroredSenderAuthenticated(input: {
+  tenantId: string | null | undefined;
+  innerHeaders: readonly Header[] | undefined;
+  innerHeaderBlockOk: boolean;
+}): boolean {
+  if (!input.tenantId || !input.innerHeaderBlockOk) return false;
+  const authAs = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-authas').map((value) => value.trim().toLowerCase());
+  if (!authAs.length || authAs.some((value) => value !== 'internal')) return false;
+  const tenants = headerValues(input.innerHeaders, 'x-ms-exchange-crosstenant-id').map((value) => value.trim().toLowerCase());
+  return tenants.length > 0 && tenants.every((value) => value === input.tenantId);
+}
+
 async function processReport(
   message: ForwardableEmailMessage,
   env: JournalEnv,
   tools: InboundTools,
   now: number,
+  notify?: JournalDeps['notify'],
 ): Promise<Rejected | Processed> {
   const check = exchangeMirrorConfig(env);
   if (!check.configured) return { kind: 'rejected', reason: 'not_configured' };
@@ -363,32 +444,28 @@ async function processReport(
   const describe = { messageIdHeader, headerFrom, subject, size };
 
   // The same content limits as the normal inbound path.
-  const preparedBody = tools.prepareInboundBody(inner.html, inner.text, tools.getDecodedBodyLimit(env));
-  if (!preparedBody.ok) return { ...skipAll('body_limit', size), ...describe };
-  const attachments = (inner.attachments ?? []) as ParsedAttachment[];
-  if (attachments.length > tools.getAttachmentLimit(env)) return { ...skipAll('attachment_count', size), ...describe };
-  const prepared = attachments.map((attachment) => ({
-    filename: tools.sanitizeFilename(attachment.filename),
-    contentType: tools.sanitizeContentType(attachment.mimeType),
-    contentId: tools.normalizeContentId(attachment.contentId),
-    disposition: attachment.disposition === 'inline' || attachment.related ? 'inline' as const : 'attachment' as const,
-    content: attachment.content,
-    size: typeof attachment.content === 'string' ? ENCODER.encode(attachment.content).byteLength : attachment.content.byteLength,
-  }));
-  const totalBytes = prepared.reduce((total, attachment) => total + attachment.size, 0);
-  if (!Number.isSafeInteger(totalBytes) || totalBytes > Math.min(tools.maxTotalAttachmentBytes, inboundLimit)) {
-    return { ...skipAll('attachment_bytes', size), ...describe };
-  }
-  if (prepared.some((attachment) => tools.blockedExtensions.has(tools.extractExtension(attachment.filename)))) {
-    return { ...skipAll('blocked_attachment', size), ...describe };
-  }
+  const content = prepareMirrorContent(inner, env, tools, inboundLimit);
+  if (!content.ok) return { ...skipAll(content.reason, size), ...describe };
 
   // Map recipients (and the sender, for a Sent copy) to active mailboxes by
   // primary address or imported alias. Unknown addresses are only counted.
-  const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : [])])];
+  const lookups = [...new Set([...envelope.recipients.map((item) => item.address), ...(envelope.sender ? [envelope.sender] : []), ...(headerFrom ? [headerFrom] : [])])];
   const aliasState = await aliasImportState(env.DB, now).catch(() => 'stale' as const);
   const mailboxes = await resolveMailboxes(env.DB, lookups, aliasState === 'fresh');
-  const targets: Target[] = [];
+  // Once the sync has read this tenant's domains successfully (docs/multi-domain.md),
+  // only the organisation's domains are filed: a mailbox on a domain that is
+  // not (or no longer) one of them is counted, not filed. Before that, or if
+  // the list cannot be read, filing goes on by address exactly as before.
+  const domains = await orgDomains(env, env.DB).then(
+    (result) => (result.discovered ? new Set(result.domains) : null),
+    () => {
+      console.error('Exchange mirror: organisation domains could not be read; filing by address only');
+      return null;
+    },
+  );
+  const onOrgDomain = (address: string) => !domains || domains.has(domainOf(address));
+  let offDomain = 0;
+  const targets: MirrorTarget[] = [];
   const seenInbound = new Set<string>();
   for (const recipient of envelope.recipients) {
     const mailboxId = mailboxes.get(recipient.address);
@@ -396,12 +473,17 @@ async function processReport(
       counts.unmatched += 1;
       continue;
     }
+    if (!onOrgDomain(recipient.address)) {
+      counts.unmatched += 1;
+      offDomain += 1;
+      continue;
+    }
     if (seenInbound.has(mailboxId)) continue;
     seenInbound.add(mailboxId);
     targets.push({ mailboxId, address: recipient.address, role: 'inbound' });
   }
   const innerSender = tools.inboundFromParticipant(inner.sender as ParsedMailbox | undefined, '', firstHeader(inner.headers as Header[], 'sender')).address || null;
-  const senderMailbox = envelope.sender ? mailboxes.get(envelope.sender) : undefined;
+  const senderMailbox = envelope.sender && onOrgDomain(envelope.sender) ? mailboxes.get(envelope.sender) : undefined;
   if (senderMailbox && sentCopyAllowed({
     config,
     envelope,
@@ -413,32 +495,187 @@ async function processReport(
     targets.push({ mailboxId: senderMailbox, address: envelope.sender as string, role: 'sent' });
   }
 
-  // Shared, per-message facts.
+  const bccParticipants = normalizeParticipants(envelope.recipients.filter((item) => item.field === 'bcc').map((item) => ({ address: item.address, name: '' })));
+  const filing = await fileMirrorCopies(env, tools, {
+    inner,
+    raw: original.raw,
+    size,
+    messageIdHeader,
+    headerFrom,
+    fromName: parsedFrom.name,
+    subject,
+    content: content.content,
+  }, {
+    targets,
+    bccForSent: bccParticipants,
+    fromMailbox: headerFrom ? mailboxes.get(headerFrom) : undefined,
+    tenantId: config.tenantId,
+    budget: budget(env),
+    reservedSubrequests: 20 + Math.ceil(lookups.length / IN_CHUNK) * 2,
+    notify,
+  }, counts);
+  // Unmatched recipients while the alias import is on but stale: say why.
+  const notice = offDomain > 0 ? 'unmatched_domain' : aliasState === 'stale' && counts.unmatched > 0 ? 'aliases_stale' : '';
+  return { kind: 'processed', counts, skipReason: filing.skipReason, notice, incomplete: filing.incomplete, messageIdHeader, headerFrom, subject, size };
+}
+
+/** An attachment after the inbound path's checks, ready to store. */
+export interface MirrorAttachment {
+  filename: string;
+  contentType: string;
+  contentId: string | null;
+  disposition: 'inline' | 'attachment';
+  content: ArrayBuffer | Uint8Array | string;
+  size: number;
+}
+
+export interface MirrorContent {
+  bodyHtml: string;
+  attachments: MirrorAttachment[];
+}
+
+/**
+ * The normal inbound path's content limits for one original: decoded body,
+ * attachment count and bytes, blocked types. A failure names the reason the
+ * copy is skipped (EXCHANGE_MIRROR_REASON_TEXT).
+ */
+export function prepareMirrorContent(
+  inner: Pick<Email, 'html' | 'text' | 'attachments'>,
+  env: JournalEnv,
+  tools: InboundTools,
+  inboundLimit: number,
+): { ok: true; content: MirrorContent } | { ok: false; reason: string } {
+  const preparedBody = tools.prepareInboundBody(inner.html, inner.text, tools.getDecodedBodyLimit(env));
+  if (!preparedBody.ok) return { ok: false, reason: 'body_limit' };
+  const attachments = (inner.attachments ?? []) as ParsedAttachment[];
+  if (attachments.length > tools.getAttachmentLimit(env)) return { ok: false, reason: 'attachment_count' };
+  const prepared = attachments.map((attachment): MirrorAttachment => ({
+    filename: tools.sanitizeFilename(attachment.filename),
+    contentType: tools.sanitizeContentType(attachment.mimeType),
+    contentId: tools.normalizeContentId(attachment.contentId),
+    disposition: attachment.disposition === 'inline' || attachment.related ? 'inline' : 'attachment',
+    content: attachment.content,
+    size: typeof attachment.content === 'string' ? ENCODER.encode(attachment.content).byteLength : attachment.content.byteLength,
+  }));
+  const totalBytes = prepared.reduce((total, attachment) => total + attachment.size, 0);
+  if (!Number.isSafeInteger(totalBytes) || totalBytes > Math.min(tools.maxTotalAttachmentBytes, inboundLimit)) {
+    return { ok: false, reason: 'attachment_bytes' };
+  }
+  if (prepared.some((attachment) => tools.blockedExtensions.has(tools.extractExtension(attachment.filename)))) {
+    return { ok: false, reason: 'blocked_attachment' };
+  }
+  return { ok: true, content: { bodyHtml: preparedBody.html, attachments: prepared } };
+}
+
+/** One original message, parsed and checked, ready to file into mailboxes. */
+export interface MirrorOriginal {
+  inner: Email;
+  /** The original's raw bytes (for the header-block check). */
+  raw: Uint8Array;
+  size: number;
+  messageIdHeader: string;
+  headerFrom: string;
+  fromName: string;
+  subject: string;
+  content: MirrorContent;
+  /**
+   * When the message arrived, as SQLite UTC 'YYYY-MM-DD HH:MM:SS' (the Graph
+   * source's receivedDateTime). Absent: now, as for a journal report, which
+   * arrives as the message is delivered.
+   */
+  receivedAt?: string;
+}
+
+export interface MirrorFilingOptions {
+  targets: readonly MirrorTarget[];
+  /** Bcc recipients, shown only on a Sent copy. */
+  bccForSent: MessageParticipant[];
+  /** The Stanchion mailbox of the original's From, if any (colleague mail sent from this instance). */
+  fromMailbox: string | undefined;
+  tenantId: string | null;
+  /** Subrequests this original may use in all. */
+  budget: number;
+  /** Subrequests the caller already used or keeps for itself. */
+  reservedSubrequests: number;
+  notify?: JournalDeps['notify'];
+  /** File Inbox-bound copies into Archive instead (the Graph source's Exchange Archive folder). */
+  archive?: boolean;
+}
+
+export interface MirrorFilingResult {
+  /** First reason a copy was not filed, or ''. */
+  skipReason: string;
+  /** A copy failed for a reason a later retry may fix. */
+  incomplete: boolean;
+}
+
+/**
+ * Files one original into each target mailbox exactly once (Inbox copies
+ * keyed like the normal inbound path, Sent copies by sentCopyId), with the
+ * same content handling, quota and placement rules, and no rule, forward,
+ * reply or notification (except proven colleague mail, see
+ * recordedSendRecipients). Shared by the journal and the Graph source, so a
+ * message that arrives by both is filed once. Adds to `counts` (filed,
+ * sentFiled, duplicates, skipped).
+ */
+export async function fileMirrorCopies(
+  env: JournalEnv,
+  tools: InboundTools,
+  original: MirrorOriginal,
+  options: MirrorFilingOptions,
+  counts: ExchangeMirrorCounts,
+): Promise<MirrorFilingResult> {
+  const { inner, messageIdHeader, headerFrom, subject, size } = original;
+  const { attachments: prepared, bodyHtml } = original.content;
+  const targets = options.targets;
+  const notify = options.notify;
   const toParticipants = tools.flattenParsedParticipants(inner.to as ParsedMailbox[] | undefined);
   const ccParticipants = tools.flattenParsedParticipants(inner.cc as ParsedMailbox[] | undefined);
   const replyToParticipants = tools.flattenParsedParticipants(inner.replyTo as ParsedMailbox[] | undefined);
-  const bccParticipants = normalizeParticipants(envelope.recipients.filter((item) => item.field === 'bcc').map((item) => ({ address: item.address, name: '' })));
+  const bccParticipants = options.bccForSent;
   const inReplyTo = tools.normalizeMessageIdHeader(firstHeader(inner.headers as Header[], 'in-reply-to'));
   const referencesHeader = tools.normalizeReferencesHeader(firstHeader(inner.headers as Header[], 'references'));
   const importance = parseMessageImportance(inner.headers as Header[]);
   const threadId = referencesHeader?.split(' ')[0] || inReplyTo || messageIdHeader;
-  const snippet = tools.extractInboundSnippet(inner.text, preparedBody.html);
+  const snippet = tools.extractInboundSnippet(inner.text, bodyHtml);
   const hasAttachments = prepared.some((attachment) => attachment.disposition === 'attachment') ? 1 : 0;
-  const placement = decideInboundPlacement({ spamScore: null, threshold: null, senderRule: await tools.lookupSenderRule(env.DB, headerFrom) });
+  const decided = decideInboundPlacement({ spamScore: null, threshold: null, senderRule: await tools.lookupSenderRule(env.DB, headerFrom), senderAuthenticated: true });
+  // A copy the person had already archived in Exchange goes to Archive,
+  // unless an organisation block rule sends it to Spam.
+  const placement = options.archive && decided.folder === 'inbox' ? { ...decided, folder: 'archive' as const } : decided;
+  // Focused Inbox (docs/focused-inbox.md): read the switch once per report;
+  // when it is on, each Inbox copy costs one more lookup (counted below).
+  const focusOn = placement.folder === 'inbox' && await focusedInboxOrgEnabled(env.DB);
+  const innerHeaders = inner.headers as Header[];
+  const innerSenderAuthenticated = focusOn && mirroredSenderAuthenticated({
+    tenantId: options.tenantId,
+    innerHeaders,
+    innerHeaderBlockOk: headerBlockWellFormed(original.raw),
+  });
+  // Colleague mail this instance sent through Exchange: proven for the
+  // recipients the send recorded (unread, notified, a colleague for Focused).
+  const fromMailbox = options.fromMailbox;
+  const sentHere = fromMailbox && !ownSendSpoofSignals(innerHeaders)
+    ? await recordedSendRecipients(env.DB, fromMailbox, messageIdHeader, subject).catch(() => {
+      console.error('Exchange mirror: recorded sends could not be read; filing as a normal mirrored copy');
+      return null;
+    })
+    : null;
+  const sentHereFor = (target: MirrorTarget) => target.role === 'inbound' && Boolean(sentHere?.has(target.address));
 
   // Ids and duplicates, then the subrequest budget.
   const ids = await Promise.all(targets.map((target) => target.role === 'inbound'
     ? tools.stableInboundId(target.mailboxId, messageIdHeader)
     : sentCopyId(target.mailboxId, messageIdHeader)));
   const already = ids.length ? await existingIds(env.DB, ids) : new Set<string>();
-  const pending: Array<{ target: Target; id: string }> = [];
+  const pending: Array<{ target: MirrorTarget; id: string }> = [];
   targets.forEach((target, index) => {
     const id = ids[index] as string;
     if (already.has(id)) counts.duplicates += 1;
     else pending.push({ target, id });
   });
-  const perCopy = 4 + prepared.length;
-  const allowed = Math.max(0, Math.floor((budget(env) - 20 - Math.ceil(lookups.length / IN_CHUNK) * 2 - Math.ceil(ids.length / IN_CHUNK)) / perCopy));
+  const perCopy = 4 + prepared.length + (focusOn ? 1 : 0);
+  const allowed = Math.max(0, Math.floor((options.budget - options.reservedSubrequests - Math.ceil(ids.length / IN_CHUNK)) / perCopy));
   let skipReason = '';
   if (pending.length > allowed) {
     counts.skipped += pending.length - allowed;
@@ -449,7 +686,7 @@ async function processReport(
   const quotaBytes = mailboxStorageQuotaBytes(env);
   let incomplete = false;
 
-  async function fileOne(item: { target: Target; id: string }): Promise<'filed' | 'duplicate' | 'quota' | 'guard_unavailable' | 'store_failed'> {
+  async function fileOne(item: { target: MirrorTarget; id: string }): Promise<'filed' | 'duplicate' | 'quota' | 'guard_unavailable' | 'store_failed'> {
     const { target, id } = item;
     const reservation = await reserveMirrorStorage(env.DB, { mailboxId: target.mailboxId, deliveryKey: id, messageBytes: size, quotaBytes });
     if (reservation.status === 'duplicate') return 'duplicate';
@@ -470,7 +707,7 @@ async function processReport(
       }
     };
     try {
-      await env.STORAGE.put(bodyKey, preparedBody.ok ? preparedBody.html : '');
+      await env.STORAGE.put(bodyKey, bodyHtml);
       for (const attachment of stored) await env.STORAGE.put(attachment.key, attachment.content);
     } catch {
       await tools.deleteR2Objects(env.STORAGE, keys);
@@ -479,17 +716,23 @@ async function processReport(
     }
 
     const sent = target.role === 'sent';
+    const ownSend = sentHereFor(target);
+    // Only an Inbox copy is sorted; null stores nothing (switch off for the
+    // mailbox, or the lookup failed) and the copy is filed as before.
+    const focus = !sent && focusOn
+      ? await decideFocusAtDelivery(env.DB, { mailboxId: target.mailboxId, sender: headerFrom, mailDomain: env.MAIL_DOMAIN, tenantId: env.M365_TENANT_ID, headers: innerHeaders, senderAuthenticated: innerSenderAuthenticated || ownSend })
+      : null;
     const to = toParticipants.length ? toParticipants : [{ address: target.address, name: '' }];
     const insert = env.DB.prepare(
       `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, from_name, to_addresses, cc_addresses, reply_to_addresses, bcc_addresses, to_participants, cc_participants, reply_to_participants, bcc_participants, subject, snippet, body_r2_key, has_attachments, size_bytes, folder, is_read, is_starred, importance, in_reply_to, references_header, thread_id, spam_score, sender_first_contact, quarantine_reason, received_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, NULL, 0, ?, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, 0, ?, COALESCE(?, datetime('now')), datetime('now'))`,
     ).bind(
       id,
       target.mailboxId,
       messageIdHeader,
       sent ? 'outbound' : 'inbound',
       headerFrom,
-      parsedFrom.name,
+      original.fromName,
       JSON.stringify(to.map((entry) => entry.address)),
       JSON.stringify(ccParticipants.map((entry) => entry.address)),
       JSON.stringify(replyToParticipants.map((entry) => entry.address)),
@@ -505,18 +748,22 @@ async function processReport(
       hasAttachments,
       size,
       sent ? 'sent' : placement.folder,
+      // Mirrored copies are filed as read; Stanchion's own colleague mail is new mail.
+      ownSend && placement.folder === 'inbox' ? 0 : 1,
       importance,
       inReplyTo,
       referencesHeader,
       threadId,
       sent ? null : placement.reason,
+      original.receivedAt ?? null,
     );
     const attachmentInserts = stored.map((attachment) => env.DB.prepare(
       `INSERT INTO attachments (id, message_id, filename, content_type, size_bytes, r2_key, content_id, disposition)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(attachment.id, id, attachment.filename, attachment.contentType, attachment.size, attachment.key, attachment.contentId, attachment.disposition));
     try {
-      await env.DB.batch([insert, ...attachmentInserts]);
+      await env.DB.batch([insert, ...(focus ? [focusUpdateStatement(env.DB, id, focus)] : []), ...attachmentInserts]);
+      if (ownSend && placement.folder === 'inbox') notify?.(target.mailboxId, id);
       return 'filed';
     } catch {
       // A concurrent delivery of the same message (another report, or the
@@ -556,9 +803,7 @@ async function processReport(
       }
     });
   }
-  // Unmatched recipients while the alias import is on but stale: say why.
-  const notice = aliasState === 'stale' && counts.unmatched > 0 ? 'aliases_stale' : '';
-  return { kind: 'processed', counts, skipReason, notice, incomplete, messageIdHeader, headerFrom, subject, size };
+  return { skipReason, incomplete };
 }
 
 async function audit(db: D1Database, eventType: string, detail: string): Promise<void> {
@@ -627,7 +872,7 @@ export async function handleJournalDelivery(
 
   const now = (deps.now ?? Date.now)();
   const envelopeFrom = (message.from || '').trim().toLowerCase();
-  const outcome = await processReport(message, env, tools, now);
+  const outcome = await processReport(message, env, tools, now, deps.notify);
 
   if (outcome.kind === 'rejected') {
     message.setReject(JOURNAL_REJECT_RESPONSE);

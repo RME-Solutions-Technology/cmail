@@ -25,7 +25,7 @@
   }
 </script>
 
-<svelte:head><title>Usage policy · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Usage policy · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="policy-page" aria-labelledby="policy-heading">
   <header class="page-heading">

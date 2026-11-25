@@ -1,3 +1,13 @@
+---
+title: "Dependency upgrade review — 22 September 2026"
+summary: "Dependency upgrade review of 22 September 2026: toolchain, major-version migrations and compatibility."
+applies_to: both
+audience: [developer, reviewer]
+switch: none
+last_reviewed: 2026-11-16
+related: [development.md]
+---
+
 # Dependency upgrade review — 22 September 2026
 
 This release updates direct dependencies to the latest stable versions found
@@ -65,7 +75,7 @@ SvelteKit's cookie/devalue serialization and Cloudflare tooling's Undici
 remain on their patched upstream-compatible major lines. The narrowly scoped
 legacy nanoid security override remains narrow. In particular, cookie 2,
 devalue 6, Undici 8, and nanoid 6 are not globally substituted for dependencies
-whose consumers have not migrated. These are not direct cmail dependencies.
+whose consumers have not migrated. These are not direct Stanchion dependencies.
 
 The existing Sharp 0.35.4 exact override remains (also the latest stable
 release at review time); the PNG/AVIF and Miniflare Images runtime checks

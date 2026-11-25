@@ -1,10 +1,10 @@
 // Click-time link checks against the local phishing-domain list (see
 // packages/shared/src/link-blocklist.ts). A link is only ever redirected
-// without a warning when cmail itself signed it; an unsigned /link URL always
+// without a warning when Stanchion itself signed it; an unsigned /link URL always
 // shows the interstitial, so /link can never be used as an open redirect.
 import { Buffer } from 'node:buffer';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { LINK_BLOCKLIST_MAX_AGE_MS, LINK_BLOCKLIST_META_KEY, hostCandidates, isIpLiteral, shardKey, shardLists, shardOf } from '@cmail/shared/link-blocklist';
+import { LINK_BLOCKLIST_MAX_AGE_MS, LINK_BLOCKLIST_META_KEY, hostCandidates, isIpLiteral, shardKey, shardLists, shardOf } from '@stanchion/shared/link-blocklist';
 
 const SIGNATURE_CHARS = 22;
 const MAX_CANDIDATES = 10;

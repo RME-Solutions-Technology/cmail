@@ -5,8 +5,8 @@
 <article class="guide">
   <header>
     <p class="eyebrow">Mobile access</p>
-    <h1>Use {page.data?.appName || 'cmail'} on your device</h1>
-    <p>{page.data?.appName || 'cmail'} is an installable web app. Add it to your Home Screen for a focused view and, where enabled, new-mail notifications.</p>
+    <h1>Use {page.data?.appName || 'Stanchion'} on your device</h1>
+    <p>{page.data?.appName || 'Stanchion'} is an installable web app. Add it to your Home Screen for a focused view and, where enabled, new-mail notifications.</p>
   </header>
 
   <div class="platform-grid">
@@ -40,7 +40,7 @@
     <h2>Native mail apps and connection settings</h2>
     <div class="connection-status">
       <div><strong>Web app</strong><span>Available now</span><p>Use this site in a supported browser, or install it as above.</p></div>
-      <div><strong>Native mail clients</strong><span>Not available</span><p>No Exchange, Microsoft Graph, IMAP, POP, JMAP, or SMTP mailbox access. cmail cannot be added to Outlook, Apple Mail, Thunderbird, or another native mail client.</p></div>
+      <div><strong>Native mail clients</strong><span>Not available</span><p>No Exchange, Microsoft Graph, IMAP, POP, JMAP, or SMTP mailbox access. Stanchion cannot be added to Outlook, Apple Mail, Thunderbird, or another native mail client.</p></div>
     </div>
     <p class="connection-note">No server, port, encryption or protocol settings are available yet. If a future deployment supports a connection method, its settings will be published here by the operator.</p>
   </section>
@@ -60,7 +60,7 @@
 
   <section>
     <h2>Updates, recovery and offline use</h2>
-    <p>{page.data?.appName || 'cmail'} checks for updates when it opens, regains focus or network access, or is restored — no background polling timer. When an update is ready, finish or save your work, then close and reopen the installed app, or refresh a browser tab. cmail never reloads an open page automatically.</p>
+    <p>{page.data?.appName || 'Stanchion'} checks for updates when it opens, regains focus or network access, or is restored — no background polling timer. When an update is ready, finish or save your work, then close and reopen the installed app, or refresh a browser tab. Stanchion never reloads an open page automatically.</p>
     <ul>
       <li>Mail, search, compose and sending need a network connection; nothing is kept for offline use.</li>
       <li>If the icon was removed, return to this site and install it again. Your account and session stay active.</li>
@@ -75,7 +75,7 @@
       <div><strong>No notification control</strong><p>The operator may not have configured Web Push, the browser may not support it, or an iPhone/iPad site may not be running from its Home Screen icon.</p></div>
       <div><strong>Notifications blocked</strong><p>Allow notifications in Chrome's site settings and Android's app settings, reopen the app, and check again. Focus, Do Not Disturb, and battery controls can still delay an allowed alert.</p></div>
       <div><strong>No alert after turning on</strong><p>There is no separate test button — turning notifications on is enough. Receiving mail is the real check: send yourself a message and wait a minute. Check permissions and Do Not Disturb before treating this as a delivery issue.</p></div>
-      <div><strong>Mail unavailable offline</strong><p>Expected — cmail does not cache mail for offline use. Reconnect and refresh.</p></div>
+      <div><strong>Mail unavailable offline</strong><p>Expected — Stanchion does not cache mail for offline use. Reconnect and refresh.</p></div>
     </div>
   </section>
 

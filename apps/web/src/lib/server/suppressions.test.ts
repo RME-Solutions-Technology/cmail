@@ -67,7 +67,7 @@ describe('findBlockedRecipients', () => {
     }
   });
 
-  it('falls back to cmail bounce records without the API', async () => {
+  it('falls back to Stanchion bounce records without the API', async () => {
     const { db, bind } = fallbackDb([{ address: 'missing@example.net', complained: 0 }]);
     const fetcher = vi.fn();
     const blocked = await findBlockedRecipients(db, {}, 'desk@example.test', ['missing@example.net'], fetcher as unknown as typeof fetch);
@@ -76,7 +76,7 @@ describe('findBlockedRecipients', () => {
     expect(blocked).toEqual([{ address: 'missing@example.net', reason: 'bounced', expiresAt: null, canUnblock: false }]);
   });
 
-  it('falls back to cmail records when the lookup fails', async () => {
+  it('falls back to Stanchion records when the lookup fails', async () => {
     const { db } = fallbackDb([{ address: 'missing@example.net', complained: 1 }]);
     const failing = vi.fn(async () => new Response('', { status: 403 }));
     const [result] = await findBlockedRecipients(

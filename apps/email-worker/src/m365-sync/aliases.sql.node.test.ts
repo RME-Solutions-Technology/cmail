@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadAliasSyncState } from '@cmail/shared/exchange-mirror';
+import { loadAliasSyncState } from '@stanchion/shared/exchange-mirror';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { ALIAS_USERS_URL } from './graph';
 import { runAliasSyncTick, smtpAliases } from './aliases';
@@ -31,7 +31,7 @@ function setup(options: { aliasSwitch?: boolean; sync?: boolean; dryRun?: boolea
   person(2, 'bob');
   sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('mbx-support', ?, 'shared', 'active')`).run(`support@${DOMAIN}`);
   sqlite.prepare(`INSERT INTO m365_sync_links (object_id, kind, mailbox_id) VALUES (?, 'shared', 'mbx-support')`).run(oid(3));
-  // A cmail-only mailbox that Microsoft 365 knows nothing about.
+  // A Stanchion-only mailbox that Microsoft 365 knows nothing about.
   sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('mbx-sales', ?, 'shared', 'active')`).run(`sales@${DOMAIN}`);
 
   const env = { DB: d1, M365_TENANT_ID: TENANT_ID, M365_CLIENT_ID: CLIENT_ID, M365_CLIENT_SECRET: 'test-secret', MAIL_DOMAIN: DOMAIN };
@@ -52,6 +52,22 @@ describe('Microsoft 365 alias import', () => {
     expect(smtpAliases(['smtp:bad address@example.test', 'smtp:x@sub.example.test'], DOMAIN)).toEqual([]);
     // Graph's own example writes a space after the prefix.
     expect(smtpAliases([`SMTP: bob@${DOMAIN}`, `smtp: bob@sales.${DOMAIN}`, `smtp: Bobby@${DOMAIN}`], DOMAIN)).toEqual([`bob@${DOMAIN}`, `bobby@${DOMAIN}`]);
+  });
+
+  it('keeps smtp entries on every organisation domain once the sync has discovered them (docs/multi-domain.md)', async () => {
+    expect(smtpAliases(ALICE.proxyAddresses, new Set([DOMAIN, 'other.example']))).toEqual([`alice@${DOMAIN}`, `ally@${DOMAIN}`, 'alice@other.example']);
+    const t = setup();
+    // Unchanged without a discovered domain: other.example is ignored.
+    t.listing([ALICE, BOB, SUPPORT]);
+    await t.tick();
+    expect(t.aliases().map((row) => row.address)).not.toContain('alice@other.example');
+    // The sync discovered other.example as a verified tenant domain.
+    t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)`)
+      .run(JSON.stringify({ tenantId: TENANT_ID, domains: ['other.example'], refreshedAt: T0, attemptedAt: T0, problem: '' }));
+    t.advance(2 * HOUR);
+    t.listing([ALICE, BOB, SUPPORT]);
+    await t.tick();
+    expect(t.aliases()).toContainEqual({ address: 'alice@other.example', mailbox_id: 'mbx-alice' });
   });
 
   it('does nothing, and calls nothing, while its switch or the sync is off, or the sync is in dry run without writes', async () => {

@@ -23,7 +23,7 @@
 //   (cookie, single use), so a token obtained elsewhere cannot be replayed.
 // - Every bind is audited (auth.sync_link_bound). A refusal adds its reason to
 //   the callback's single auth.sign_in_denied row (one row per denied sign-in).
-import { M365_SYNC_SETTING_ENABLED } from '@cmail/shared/m365-sync';
+import { M365_SYNC_SETTING_ENABLED } from '@stanchion/shared/m365-sync';
 import { AccessKeyStore, base64UrlDecode, decodeJsonSegment } from './access-jwt';
 import { audit } from './db';
 import { validOidcNonce } from './auth';

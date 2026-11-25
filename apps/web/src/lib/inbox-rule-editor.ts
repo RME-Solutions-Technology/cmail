@@ -4,8 +4,8 @@ import type {
   RuleActions,
   RuleConditions,
   RuleMoveFolder,
-} from '@cmail/shared/inbox-rules';
-import type { MessageImportance } from '@cmail/shared/types';
+} from '@stanchion/shared/inbox-rules';
+import type { MessageImportance } from '@stanchion/shared/types';
 
 /**
  * The rule editor's model: Outlook-style rows ("Add a condition", "Add an
@@ -40,7 +40,7 @@ export interface EditorRow {
   choice: string;
 }
 
-/** Outlook's condition list, minus what cmail has no data for (categories, flags, sensitivity). */
+/** Outlook's condition list, minus what Stanchion has no data for (categories, flags, sensitivity). */
 export const CONDITION_OPTIONS: readonly ConditionOption[] = [
   { kind: 'from', label: 'From', input: 'addresses', placeholder: 'ann@example.com; example.org' },
   { kind: 'sentTo', label: 'Sent to', input: 'addresses', placeholder: 'team@example.com' },
@@ -61,7 +61,7 @@ export const CONDITION_OPTIONS: readonly ConditionOption[] = [
 /** Exceptions take the same tests, apart from "Apply to all messages". */
 export const EXCEPTION_OPTIONS: readonly ConditionOption[] = CONDITION_OPTIONS.filter((option) => option.kind !== 'appliesToAll');
 
-/** Outlook's actions that fit cmail's folders and message state. */
+/** Outlook's actions that fit Stanchion's folders and message state. */
 export const ACTION_OPTIONS: readonly ActionOption[] = [
   { kind: 'moveTo', label: 'Move to', input: 'folder' },
   { kind: 'markAsRead', label: 'Mark as read', input: 'none' },

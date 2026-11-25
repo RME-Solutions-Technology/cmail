@@ -2,14 +2,16 @@
 // docs/m365-mailbox-permissions.md, "Mapping" and "Safety rules". In short:
 // - Exchange rights are combined per (shared mailbox, person), direct grants
 //   and group grants together.
-// - Full Access + Send As -> cmail Full. Full Access alone -> cmail Read (or
-//   Full with M365_PERMS_FULLACCESS_IMPLIES_SEND). Send As alone has no cmail
-//   equivalent (cmail Send as includes reading) and grants nothing.
+// - Full Access + Send As -> Stanchion Full. Full Access alone -> Stanchion Read (or
+//   Full with M365_PERMS_FULLACCESS_IMPLIES_SEND). Send As alone has no Stanchion
+//   equivalent (Stanchion Send as includes reading) and grants nothing.
 // - Never more than Exchange grants.
 // - Only rows the sync wrote (ledger row + live row still carrying the sync's
 //   marker, level and no assigned_by) are ever raised, lowered or removed.
 //   Every other row is a manager's and is left as it is.
 // - Removals and downgrades only for mailboxes the snapshot fully covered.
+// - A manager account matched by address (switch on, managers.ts) is only
+//   ever given or raised access, never lowered or removed.
 import {
   M365_PERMS_BRAKE_MIN,
   M365_PERMS_REPORT_LIMIT,
@@ -17,11 +19,11 @@ import {
   type M365PermsBrake,
   type M365PermsCounts,
   type M365PermsReportItem,
-} from '@cmail/shared/m365-perms';
+} from '@stanchion/shared/m365-perms';
 import type { PermissionSnapshot } from './snapshot';
 
-export type CmailLevel = 'read' | 'send-as' | 'full';
-export const LEVEL_RANK: Record<CmailLevel, number> = { read: 1, 'send-as': 2, full: 3 };
+export type StanchionLevel = 'read' | 'send-as' | 'full';
+export const LEVEL_RANK: Record<StanchionLevel, number> = { read: 1, 'send-as': 2, full: 3 };
 
 /** Bit flags kept in the ledger: what Exchange granted when the row was written. */
 export const RIGHT_FULL_ACCESS = 1;
@@ -33,15 +35,17 @@ export interface PersonLink {
   email: string;
   /** Linked, in scope and active or pending: may receive new access. */
   eligible: boolean;
+  /** An unlinked manager account matched by address: additions and raises only. */
+  manager?: boolean;
 }
-export interface LiveAssignment { permissions: CmailLevel; assignedAt: string; assignedBy: string | null }
-export interface LedgerRow { level: CmailLevel; assignedAt: string }
+export interface LiveAssignment { permissions: StanchionLevel; assignedAt: string; assignedBy: string | null }
+export interface LedgerRow { level: StanchionLevel; assignedAt: string }
 
 export interface DiffInput {
   snapshot: PermissionSnapshot;
-  /** Entra object id -> linked cmail shared mailbox. */
+  /** Entra object id -> linked Stanchion shared mailbox. */
   sharedLinks: Map<string, SharedLink>;
-  /** Entra object id -> linked cmail person. */
+  /** Entra object id -> linked Stanchion person (and, switch on, matched manager accounts). */
   personLinks: Map<string, PersonLink>;
   /** Expanded group members (user object ids) by group object id. */
   groupMembers: Map<string, Set<string>>;
@@ -56,12 +60,19 @@ export interface DiffInput {
   /** `${mailboxId}|${userId}` -> ledger row. */
   ledger: Map<string, LedgerRow>;
   fullAccessImpliesSend: boolean;
+  /**
+   * Accounts with sync-made access, no person link and no manager match this
+   * round whose state the sync can still judge (managers not looked up this
+   * round are left out): their rows on a fully read mailbox are kept and
+   * reported, never removed.
+   */
+  unlinkedAccounts?: Map<string, { email: string; manager: boolean; activeManager: boolean }>;
 }
 
 export type DiffOp =
-  | { type: 'add'; mailboxId: string; userId: string; level: CmailLevel; rights: number; mailbox: string; user: string }
-  | { type: 'upgrade' | 'downgrade'; mailboxId: string; userId: string; from: CmailLevel; level: CmailLevel; marker: string; rights: number; mailbox: string; user: string }
-  | { type: 'remove'; mailboxId: string; userId: string; from: CmailLevel; marker: string; mailbox: string; user: string }
+  | { type: 'add'; mailboxId: string; userId: string; level: StanchionLevel; rights: number; mailbox: string; user: string }
+  | { type: 'upgrade' | 'downgrade'; mailboxId: string; userId: string; from: StanchionLevel; level: StanchionLevel; marker: string; rights: number; mailbox: string; user: string }
+  | { type: 'remove'; mailboxId: string; userId: string; from: StanchionLevel; marker: string; mailbox: string; user: string }
   /** Ledger row whose assignment is no longer the sync's: forget it (no assignment change). */
   | { type: 'release'; mailboxId: string; userId: string; mailbox: string; user: string }
   /** Exchange no longer grants a pair a manager had removed: forget that mark (no assignment change). */
@@ -79,7 +90,7 @@ export interface DiffResult {
 
 export const key = (mailboxId: string, userId: string) => `${mailboxId}|${userId}`;
 
-export function levelFor(rights: number, fullAccessImpliesSend: boolean): CmailLevel | null {
+export function levelFor(rights: number, fullAccessImpliesSend: boolean): StanchionLevel | null {
   const fa = (rights & RIGHT_FULL_ACCESS) !== 0;
   const sa = (rights & RIGHT_SEND_AS) !== 0;
   if (fa && sa) return 'full';
@@ -134,6 +145,7 @@ export function computeDiff(input: DiffInput): DiffResult {
           continue;
         }
         const k = key(link.mailboxId, person.userId);
+        if (person.manager && !wanted.has(k)) note('managerMatched');
         const entry = wanted.get(k) ?? { mailboxId: link.mailboxId, userId: person.userId, rights: 0, mailbox: link.address, user: person.email };
         entry.rights |= rights;
         wanted.set(k, entry);
@@ -155,7 +167,7 @@ export function computeDiff(input: DiffInput): DiffResult {
     const live = input.assignments.get(k);
     const ledger = input.ledger.get(k);
     if (!level) {
-      // Send As without Full Access: cmail cannot send without reading.
+      // Send As without Full Access: Stanchion cannot send without reading.
       note('notRepresentable', { action: 'not_representable', mailbox: entry.mailbox, user: entry.user, reason: 'sendas_without_read' });
       // A sync-made row stays until the snapshot covers the mailbox; then it goes like any other.
       continue;
@@ -187,7 +199,10 @@ export function computeDiff(input: DiffInput): DiffResult {
       continue;
     }
     const raise = LEVEL_RANK[level] > LEVEL_RANK[live.permissions];
-    if (raise && !persons.get(entry.userId)?.eligible) {
+    if (!raise && persons.get(entry.userId)?.manager) {
+      // A manager account's access is never lowered by the sync.
+      note('managerAccountKept', { action: 'manager_account_kept', mailbox: entry.mailbox, user: entry.user, reason: 'manager_account_not_lowered' });
+    } else if (raise && !persons.get(entry.userId)?.eligible) {
       note('trusteeNotLinked', { action: 'skipped', mailbox: entry.mailbox, user: entry.user, reason: 'account_not_active' });
     } else if (raise) {
       adds.push({ type: 'upgrade', mailboxId: entry.mailboxId, userId: entry.userId, from: live.permissions, level, marker: live.assignedAt, rights: entry.rights, mailbox: entry.mailbox, user: entry.user });
@@ -214,7 +229,27 @@ export function computeDiff(input: DiffInput): DiffResult {
     // Exchange no longer grants it (or grants only Send As). Removed only when
     // the snapshot fully covered this mailbox, and only for a person still
     // linked (a lost link is not Exchange taking access away); otherwise kept.
-    if (!mailbox?.covered || !persons.has(userId)) continue;
+    if (!mailbox?.covered) continue;
+    if (!persons.has(userId)) {
+      // No link and no manager match: the sync cannot tell whether Exchange
+      // still grants this account anything, so the row stays, but it is
+      // reported rather than kept silently.
+      const unlinked = input.unlinkedAccounts?.get(userId);
+      if (unlinked) {
+        note('unlinkedKept', {
+          action: 'unlinked_kept',
+          mailbox: mailbox.address,
+          user: unlinked.email,
+          reason: unlinked.manager ? 'manager_account_not_matched' : 'account_not_linked',
+        });
+      }
+      continue;
+    }
+    // A manager account's access is never removed by the sync.
+    if (persons.get(userId)?.manager) {
+      note('managerAccountKept', { action: 'manager_account_kept', mailbox: mailbox.address, user, reason: 'manager_account_not_removed' });
+      continue;
+    }
     lowers.push({ type: 'remove', mailboxId, userId, from: live!.permissions, marker: live!.assignedAt, mailbox: mailbox.address, user });
   }
 

@@ -19,7 +19,7 @@ function entry(preference = 'google') {
       APP_URL: 'https://mail.example.com',
       SESSION_SECRET: String(crypto.randomUUID()),
       GOOGLE_CLIENT_ID: 'google-id', GOOGLE_CLIENT_SECRET: 'google-secret',
-      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret',
+      MICROSOFT_CLIENT_ID: 'microsoft-id', MICROSOFT_CLIENT_SECRET: 'microsoft-secret', MICROSOFT_TENANT_ID: 'common',
     } },
     url: new URL('https://mail.example.com/mail'),
     request: new Request('https://mail.example.com/mail'),
@@ -63,7 +63,7 @@ describe('remembered provider mailbox entry', () => {
     await expect(mailEntry(event as never)).rejects.toMatchObject({ location: '/' });
   });
 
-  it('lets an active cmail session reach the assignment query regardless of the preference', async () => {
+  it('lets an active Stanchion session reach the assignment query regardless of the preference', async () => {
     const event = entry('microsoft');
     event.locals.user = { id: 'user-1', role: 'standard' };
     const result = await mailEntry(event as never);

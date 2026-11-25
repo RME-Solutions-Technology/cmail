@@ -12,6 +12,12 @@ export const M365_PERMS_SETTING_DRY_RUN = 'm365_perms_dry_run';
 export const M365_PERMS_SETTING_REQUESTED_AT = 'm365_perms_requested_at';
 /** Round id a manager approved after the removal brake held it. */
 export const M365_PERMS_SETTING_APPROVED_ROUND = 'm365_perms_approved_round';
+/**
+ * "true" lets the sync also give access to an unlinked manager account whose
+ * address equals the Exchange trustee's primary SMTP address (add and raise
+ * only). Absent or anything else = off.
+ */
+export const M365_PERMS_SETTING_INCLUDE_MANAGERS = 'm365_perms_include_managers';
 
 export interface M365PermsSwitch {
   /** Off by default: the cron does nothing until a manager turns it on. */
@@ -22,6 +28,8 @@ export interface M365PermsSwitch {
   requestedAt: string;
   /** Id of a held round a manager approved, or ''. */
   approvedRound: string;
+  /** Off by default: manager accounts are matched only when a manager turns this on. */
+  includeManagers: boolean;
 }
 
 function isIsoTime(value: string): boolean {
@@ -36,13 +44,14 @@ export function parseM365PermsSwitch(rows: Array<{ key: string; value: string }>
     dryRun: map.get(M365_PERMS_SETTING_DRY_RUN) !== 'false',
     requestedAt: isIsoTime(requested) ? requested : '',
     approvedRound: (map.get(M365_PERMS_SETTING_APPROVED_ROUND) ?? '').slice(0, 64),
+    includeManagers: map.get(M365_PERMS_SETTING_INCLUDE_MANAGERS) === 'true',
   };
 }
 
 export async function loadM365PermsSwitch(db: D1Database): Promise<M365PermsSwitch> {
   const { results } = await db.prepare(
-    'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?)',
-  ).bind(M365_PERMS_SETTING_ENABLED, M365_PERMS_SETTING_DRY_RUN, M365_PERMS_SETTING_REQUESTED_AT, M365_PERMS_SETTING_APPROVED_ROUND)
+    'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?, ?)',
+  ).bind(M365_PERMS_SETTING_ENABLED, M365_PERMS_SETTING_DRY_RUN, M365_PERMS_SETTING_REQUESTED_AT, M365_PERMS_SETTING_APPROVED_ROUND, M365_PERMS_SETTING_INCLUDE_MANAGERS)
     .all<{ key: string; value: string }>();
   return parseM365PermsSwitch(results ?? []);
 }
@@ -64,7 +73,7 @@ export interface M365PermsEnv {
   M365_PERMS_INTERVAL_HOURS?: string | number;
   /** Removal brake: hold removals and downgrades above this percent of sync-made grants. Default 20. */
   M365_PERMS_MAX_REMOVE_PERCENT?: string | number;
-  /** "true" maps Full Access without Send As to cmail Full (default "false": Read). */
+  /** "true" maps Full Access without Send As to Stanchion Full (default "false": Read). */
   M365_PERMS_FULLACCESS_IMPLIES_SEND?: string | boolean;
   /** Durable Object namespace that owns the collector container. */
   M365_PERMS_COLLECTOR?: DurableObjectNamespace;
@@ -142,10 +151,21 @@ export const M365_PERMS_COUNT_KEYS = [
   'removed',
   /** Exchange grants a manager-made assignment already covers or that a manager set differently: left as is. */
   'managerKept',
-  /** Grants with no cmail equivalent (Send As alone). */
+  /** Grants with no Stanchion equivalent (Send As alone). */
   'notRepresentable',
-  /** Trustees that are not a linked, active cmail person. */
+  /** Trustees that are not a linked, active Stanchion person. */
   'trusteeNotLinked',
+  /** Exchange grants (shared mailbox, person) resolved to an unlinked manager account by address (switch on). */
+  'managerMatched',
+  /** A matched manager account's sync-made access that Exchange lowered or took away: never lowered or removed. */
+  'managerAccountKept',
+  /**
+   * Sync-made access of an account with no link and no manager match this
+   * round (a manager match that is gone, a lost link) on a fully read
+   * mailbox: kept, because the sync can no longer tell whether Exchange still
+   * grants it. Remove it in Admin > Mailboxes if it is not wanted.
+   */
+  'unlinkedKept',
   /** Shared mailboxes in the snapshot that the Microsoft 365 sync has not linked yet. */
   'mailboxNotLinked',
   /** Linked shared mailboxes this snapshot did not cover (fully): their removals wait. */
@@ -160,9 +180,9 @@ export type M365PermsCounts = Record<M365PermsCountKey, number>;
 export interface M365PermsReportItem {
   /** add, upgrade, downgrade, remove, manager_kept, not_representable, ... */
   action: string;
-  /** Shared mailbox address in cmail, lower case, or ''. */
+  /** Shared mailbox address in Stanchion, lower case, or ''. */
   mailbox: string;
-  /** cmail account address, lower case, or ''. */
+  /** Stanchion account address, lower case, or ''. */
   user: string;
   /** Short machine reason. */
   reason: string;
@@ -223,6 +243,23 @@ export interface M365PermsRound {
   batches: Array<{ runId: string; startAfter: string }>;
   /** When the batch now running was started (its own timeout). */
   batchStartedAt: string;
+  /**
+   * Unlinked manager accounts matched to an Entra user this round (switch
+   * on), resolved once before the diff. Absent = not resolved yet.
+   */
+  managerMatches?: M365PermsManagerMatch[];
+  /** Stanchion account ids of the managers looked up this round (matched or not). */
+  managerLookedAt?: string[];
+}
+
+/** One manager account matched to the Entra user whose primary SMTP address equals its address. */
+export interface M365PermsManagerMatch {
+  /** Entra user object id, lower case. */
+  objectId: string;
+  /** Stanchion account id of the manager. */
+  userId: string;
+  /** The manager's address when matched, lower case; checked again before every use. */
+  email: string;
 }
 
 export interface M365PermsSnapshotSummary {
@@ -259,6 +296,11 @@ export interface M365PermsState {
   /** Last round start, to space runs by the interval even when they fail. */
   lastStartedAt: string | null;
   handledRequestAt: string;
+  /**
+   * Manager matching: the last manager account id looked up. With more
+   * unlinked managers than one round looks up, the next round starts after it.
+   */
+  managerCursor?: string;
   round: M365PermsRound | null;
   lastRound: M365PermsFinishedRound | null;
 }
@@ -288,7 +330,11 @@ export function parseM365PermsState(raw: string | null | undefined): M365PermsSt
   try {
     const parsed = JSON.parse(raw) as Partial<M365PermsState>;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return emptyM365PermsState();
-    return { ...emptyM365PermsState(), ...parsed };
+    const state = { ...emptyM365PermsState(), ...parsed };
+    // Counts saved before a count key existed read as 0, never NaN.
+    if (state.round?.counts) state.round.counts = { ...emptyM365PermsCounts(), ...state.round.counts };
+    if (state.lastRound?.counts) state.lastRound.counts = { ...emptyM365PermsCounts(), ...state.lastRound.counts };
+    return state;
   } catch {
     return emptyM365PermsState();
   }

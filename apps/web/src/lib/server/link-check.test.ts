@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LINK_BLOCKLIST_META_KEY, buildShards, parseDomainList, shardKey } from '@cmail/shared/link-blocklist';
+import { LINK_BLOCKLIST_META_KEY, buildShards, parseDomainList, shardKey } from '@stanchion/shared/link-blocklist';
 import { checkLinkHost, linkSignature, verifyLinkSignature } from './link-check';
 import { sanitizeEmailHtmlWithLinkGuard } from './sanitize-email';
 

@@ -1,6 +1,16 @@
+---
+title: "Calendar"
+summary: "How to accept, decline, create and cancel meeting invitations in Stanchion."
+applies_to: both
+audience: [user]
+switch: none
+last_reviewed: 2026-11-16
+related: [user-guide.md]
+---
+
 # Calendar
 
-cmail can send and receive meeting invitations by email, using the same `.ics` calendar format most mail clients understand. There's no separate calendar to sign into — invitations arrive as mail, and responses go out the same way.
+Stanchion can send and receive meeting invitations by email, using the same `.ics` calendar format most mail clients understand. There's no separate calendar to sign into — invitations arrive as mail, and responses go out the same way.
 
 ## Invitations you receive
 
@@ -13,7 +23,7 @@ If you're invited, three buttons let you reply: **Accept**, **Tentative**, or **
 
 You can change your response later by opening the message again and choosing a different button, as long as the meeting hasn't been cancelled.
 
-An invitation forwarded from outside cmail, or one that's since been superseded by a newer update, still shows the calendar card with what it contains — but read-only, without response buttons, since it's no longer the current version of that meeting.
+An invitation forwarded from outside Stanchion, or one that's since been superseded by a newer update, still shows the calendar card with what it contains — but read-only, without response buttons, since it's no longer the current version of that meeting.
 
 ## Your calendar
 
@@ -36,10 +46,10 @@ If the invitation email can't be sent, the meeting is still saved — you'll see
 
 ## Cancelling a meeting
 
-Only the organiser sees **Cancel meeting**, on the calendar page. Cancelling marks the meeting cancelled for everyone who can see it and emails every attendee a cancellation notice. It can't be undone from cmail — create a new meeting if you need to reschedule.
+Only the organiser sees **Cancel meeting**, on the calendar page. Cancelling marks the meeting cancelled for everyone who can see it and emails every attendee a cancellation notice. It can't be undone from Stanchion — create a new meeting if you need to reschedule.
 
 ## What's not included yet
 
-- **Repeating meetings** show a "Repeats" note next to the time when the invitation carries a recurrence rule, but cmail displays that one occurrence only — it doesn't expand the series into individual future dates, and New meeting can't create a repeating series.
+- **Repeating meetings** show a "Repeats" note next to the time when the invitation carries a recurrence rule, but Stanchion displays that one occurrence only — it doesn't expand the series into individual future dates, and New meeting can't create a repeating series.
 - **Free/busy lookup** — there's no way to see whether an attendee is already busy before you send an invitation.
-- **External calendar sync** — cmail doesn't publish to or subscribe from Google Calendar, Outlook, or similar. Invitations work by email either way, so most calendar apps will still pick them up and let the recipient respond from there.
+- **External calendar sync** — Stanchion doesn't publish to or subscribe from Google Calendar, Outlook, or similar. Invitations work by email either way, so most calendar apps will still pick them up and let the recipient respond from there.

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { createFixture, type Fixture } from './mcp/testing/harness';
 import { SoftAuthenticator } from './testing/soft-authenticator';
 import {
@@ -151,7 +151,8 @@ describe('registration', () => {
     expect(row.user_handle).not.toContain('alice');
     expect(count(`SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'auth.passkey_registered' AND target = 'user-alice'`)).toBe(1);
     expect(count('SELECT COUNT(*) AS n FROM passkey_challenges')).toBe(0);
-  });
+    // Creating the first software authenticator generates an RSA key; on a loaded machine that can pass the 5 s default.
+  }, 30_000);
 
   it('reuses the account user handle for a second passkey and lists both', async () => {
     const first = await SoftAuthenticator.create();
@@ -568,7 +569,15 @@ async function invokeHooks(
     locals: { user: null as User | null, sessionId: null as string | null, passkeySession: false as boolean | undefined },
     platform: { env: { ...env, ...extraEnv }, context: { waitUntil: vi.fn() }, caches: {} },
   };
-  const response: Response = await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => resolveResponse() });
+  // The hooks run a 1% random maintenance sweep that deletes revoked and expired sessions. Pin it off so a
+  // revoked row is still there to count (this made the suite fail about 1 run in 100).
+  const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  let response: Response;
+  try {
+    response = await (handle as never as (input: unknown) => Promise<Response>)({ event, resolve: async () => resolveResponse() });
+  } finally {
+    random.mockRestore();
+  }
   return { response, locals: event.locals };
 }
 

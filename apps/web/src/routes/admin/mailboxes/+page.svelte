@@ -178,9 +178,23 @@
                     spellcheck="false"
                     required
                   />
-                  <span aria-hidden="true">@{data.mailDomain}</span>
+                  {#if data.mailDomains.length > 1}
+                    <select name="domain" aria-label="Mailbox domain">
+                      {#each data.mailDomains as domain (domain)}
+                        <option value={domain} selected={domain === data.mailDomain}>@{domain}</option>
+                      {/each}
+                    </select>
+                  {:else}
+                    <span aria-hidden="true">@{data.mailDomain}</span>
+                  {/if}
                 </div>
-                <small id="new-mailbox-hint">Ends in @{data.mailDomain}. Letters, numbers, dots, underscores, and hyphens allowed.</small>
+                <small id="new-mailbox-hint">
+                  {#if data.mailDomains.length > 1}
+                    Choose one of your organisation's domains. Letters, numbers, dots, underscores, and hyphens allowed. Mail can be sent only from @{data.mailDomain} for now; a mailbox on another domain can receive and file mail but not send.
+                  {:else}
+                    Ends in @{data.mailDomain}. Letters, numbers, dots, underscores, and hyphens allowed.
+                  {/if}
+                </small>
               </div>
               <div class="field">
                 <label for="initial-delegate">Initial delegate <span>(optional)</span></label>
@@ -627,6 +641,7 @@
   .suffix-control input { min-width: 0; border-radius: var(--radius) 0 0 var(--radius); }
   .suffix-control span { display: inline-flex; align-items: center; padding: 0 2px 0 6px; border-bottom: 1px solid var(--border-input); color: var(--text-muted); font-size: 13px; white-space: nowrap; }
   .suffix-control:focus-within span { border-bottom-color: var(--primary); box-shadow: 0 1px 0 var(--primary); }
+  .suffix-control select { width: auto; max-width: 55%; border-radius: 0 var(--radius) var(--radius) 0; font-size: 13px; }
   .create-actions { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding-top: 2px; }
   .create-actions span { color: var(--text-muted); font-size: 12px; }
   .inline-warning { padding: 10px 14px; border: 0; border-left: 3px solid var(--warning); background: var(--warning-soft); color: var(--text); font-size: 13px; }

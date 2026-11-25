@@ -9,7 +9,7 @@
  * default; the function never throws. The only case it refuses outright is
  * input that is not recognisably an iCalendar document at all.
  *
- * `buildIcs` produces the REQUEST/REPLY/CANCEL payloads cmail sends: folded
+ * `buildIcs` produces the REQUEST/REPLY/CANCEL payloads Stanchion sends: folded
  * at 75 octets per RFC 5545 §3.1, with TEXT values escaped per §3.3.11.
  */
 

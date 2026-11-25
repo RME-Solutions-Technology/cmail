@@ -1,30 +1,40 @@
+---
+title: "Downstream and private implementations"
+summary: "How to keep a private fork separate from public Stanchion while tracking upstream."
+applies_to: both
+audience: [developer, operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [upgrading.md]
+---
+
 # Downstream and private implementations
 
-Use the public cmail repository as the reusable product, and keep organisation-specific work in a separate private repository. GitHub repository visibility is all-or-nothing: a branch in a public repository is public too. Never put a proprietary implementation on a "private branch" of public `cmail`.
+Use the public Stanchion repository as the reusable product, and keep organisation-specific work in a separate private repository. GitHub repository visibility is all-or-nothing: a branch in a public repository is public too. Never put a proprietary implementation on a "private branch" of public `Stanchion`.
 
 ## Choose a downstream model
 
-Use a **private downstream repository** when you need to change application code. Start from cmail, keep the public repository as a read-only `upstream` remote, and use your private repository as `origin`:
+Use a **private downstream repository** when you need to change application code. Start from Stanchion, keep the public repository as a read-only `upstream` remote, and use your private repository as `origin`:
 
 ```sh
-git clone https://github.com/RME-Solutions-Technology/cmail.git cmail-private
-cd cmail-private
+git clone https://github.com/RME-Solutions-Technology/stanchion.git stanchion-private
+cd stanchion-private
 git remote rename origin upstream
-git remote add origin git@github.com:YOUR-ORG/cmail-private.git
+git remote add origin git@github.com:YOUR-ORG/stanchion-private.git
 git remote set-url --push upstream no_push
 git push -u origin main
 ```
 
-Create `YOUR-ORG/cmail-private` as a new private repository — not a standard GitHub fork of the public one — before the last command above. If your enterprise offers isolated private forks, verify that policy before relying on it. The invalid `upstream` push URL is a local guard against publishing a private commit by accident; fetching still uses the public URL.
+Create `YOUR-ORG/stanchion-private` as a new private repository — not a standard GitHub fork of the public one — before the last command above. If your enterprise offers isolated private forks, verify that policy before relying on it. The invalid `upstream` push URL is a local guard against publishing a private commit by accident; fetching still uses the public URL.
 
-Use a **thin private overlay** when the application itself doesn't need to diverge. The private repository pins a cmail tag or commit and holds only:
+Use a **thin private overlay** when the application itself doesn't need to diverge. The private repository pins a Stanchion tag or commit and holds only:
 
 - infrastructure-as-code and deployment automation;
 - organisation-owned brand assets and configuration-rendering scripts;
 - the names of secrets CI expects, never their values; and
 - a small, reviewed patch series if configuration isn't enough.
 
-An overlay pipeline checks out the pinned public revision, applies its assets or patches, generates deployment configuration from cmail's examples, validates the combined tree, and deploys it. Prefer ordinary upstream contributions for generally useful changes — it keeps the private layer small and upgrades predictable.
+An overlay pipeline checks out the pinned public revision, applies its assets or patches, generates deployment configuration from Stanchion's examples, validates the combined tree, and deploys it. Prefer ordinary upstream contributions for generally useful changes — it keeps the private layer small and upgrades predictable.
 
 ## Bring in upstream releases
 
@@ -55,7 +65,7 @@ The normal customisation surface is configuration:
 | Region | `LOCALE`, `TIME_ZONE` |
 | Google sign-in | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
 | Microsoft sign-in | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_TENANT_ID` |
-| Email one-time-code sign-in | `EMAIL_OTP_ENABLED`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `OTP_SESSION_TTL_HOURS` |
+| Email one-time-code sign-in (off unless `EMAIL_OTP_ENABLED="true"`) | `EMAIL_OTP_ENABLED`, `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `OTP_SESSION_TTL_HOURS` |
 | Cloudflare Access bridge (optional) | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_AUTO_PROVISION` |
 | Temporary first-manager bootstrap | `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_TOKEN` |
 | External delivery | `OUTBOUND_PROVIDER`; Cloudflare production uses the Worker's `EMAIL` send binding plus Pages' `EMAIL_SERVICE` service binding; the optional REST fallback needs `CLOUDFLARE_ACCOUNT_ID` plus `CLOUDFLARE_EMAIL_API_TOKEN`; Postmark needs `POSTMARK_API_KEY` |
@@ -65,28 +75,28 @@ If the downstream publishes `landing/`, review every upstream GitHub URL and clo
 
 Google and Microsoft sign-in controls appear only when that provider's configuration and the shared session prerequisites are all valid. Keep `APP_URL` at deployment level — it defines OAuth callbacks and enrolment links. Managers can change supported organisation settings in the app; those D1 values override the environment defaults for that deployment.
 
-Use an independent OAuth registration for each environment. cmail requests `openid email profile`, calls UserInfo with the access token, and binds users by provider plus immutable `sub`. A pending user enrols only through a hashed, single-use manager invitation plus a matching UserInfo email (Google with `email_verified=true`; Microsoft with its non-empty OIDC UserInfo `email` claim) — there is no portable setting for email-only account lookup. Don't patch around that boundary in an organisation overlay.
+Use an independent OAuth registration for each environment. Stanchion requests `openid email profile`, calls UserInfo with the access token, and binds users by provider plus immutable `sub`. A pending user enrols only through a hashed, single-use manager invitation plus a matching UserInfo email (Google with `email_verified=true`; Microsoft with its non-empty OIDC UserInfo `email` claim) — there is no portable setting for email-only account lookup. Don't patch around that boundary in an organisation overlay.
 
 ## Isolate every environment
 
-Give development, staging, and production distinct Cloudflare resources and credentials — for example, `cmail-web-staging`, `cmail-email-worker-staging`, `cmail-db-staging`, and `cmail-storage-staging`, with matching `-production` names. Never point a development process at production D1 (Cloudflare's hosted database) or R2 (Cloudflare's object storage).
+Give development, staging, and production distinct Cloudflare resources and credentials — for example, `stanchion-web-staging`, `stanchion-email-worker-staging`, `stanchion-db-staging`, and `stanchion-storage-staging`, with matching `-production` names. Never point a development process at production D1 (Cloudflare's hosted database) or R2 (Cloudflare's object storage).
 
 Generate each environment's ignored Wrangler files from the committed examples, and set its own resource names, D1 ID, public variables, and OAuth origin. Configure both applications with the same environment-specific D1 database and R2 bucket. Keep production configuration in the deployment platform or a private infrastructure repository — don't edit and commit the public examples.
 
 Store sensitive values with Cloudflare, not in Wrangler `[vars]` or source:
 
 ```sh
-pnpm exec wrangler pages secret put SESSION_SECRET --project-name cmail-web-staging
-pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name cmail-web-staging
-pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name cmail-web-staging
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name cmail-web-staging
-pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name cmail-web-staging
+pnpm exec wrangler pages secret put SESSION_SECRET --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put GOOGLE_CLIENT_SECRET --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put MICROSOFT_CLIENT_SECRET --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_EMAIL --project-name stanchion-web-staging
+pnpm exec wrangler pages secret put BOOTSTRAP_ADMIN_TOKEN --project-name stanchion-web-staging
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY --config apps/email-worker/wrangler.toml
 ```
 
 Wrangler prompts for each value. The inbound Worker needs the VAPID private key only when Web Push is enabled; it doesn't need OAuth, session, or outbound provider secrets. Delete both `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_TOKEN` immediately after the first manager signs in and is verified. Use independent bootstrap tokens, session secrets, OAuth clients, outbound credentials, and VAPID pairs so environments can't admit or authenticate one another's identities. Invitations also belong to the issuing environment's `APP_URL` — never rewrite or forward a staging invitation into production.
 
-Cloudflare Email Service uses the environment's email Worker `EMAIL` binding, reached through the Pages application's private `EMAIL_SERVICE` service binding. Use matching environment-specific Worker names, and deploy the Worker before Pages. Keep `workers_dev=false`, `preview_urls=false`, and explicit empty routes — no outbound API token is required. Only a local or non-service-binding REST fallback needs `CLOUDFLARE_ACCOUNT_ID` and a narrowly scoped `CLOUDFLARE_EMAIL_API_TOKEN` with **Email Sending: Edit**; don't add `[[send_email]]` directly to the Pages template. The native binding returns an opaque tracking ID, not the wire `Message-ID`. The REST API reference includes RFC-style `result.message_id`; cmail validates it when present, and also uses one REST `send_raw` call to keep mixed-recipient envelope/header separation. Keep provider IDs and RFC headers distinct in your downstream schema and integrations. Review Cloudflare Email preview separately in every environment, since new sending domains enable about seven days of message-content preview by default. Keep the template's isolated, non-sending `env.preview` resources — never point a downstream preview at production D1, R2, Email Routing, Worker, or secrets.
+Cloudflare Email Service uses the environment's email Worker `EMAIL` binding, reached through the Pages application's private `EMAIL_SERVICE` service binding. Use matching environment-specific Worker names, and deploy the Worker before Pages. Keep `workers_dev=false`, `preview_urls=false`, and explicit empty routes — no outbound API token is required. Only a local or non-service-binding REST fallback needs `CLOUDFLARE_ACCOUNT_ID` and a narrowly scoped `CLOUDFLARE_EMAIL_API_TOKEN` with **Email Sending: Edit**; don't add `[[send_email]]` directly to the Pages template. The native binding returns an opaque tracking ID, not the wire `Message-ID`. The REST API reference includes RFC-style `result.message_id`; Stanchion validates it when present, and also uses one REST `send_raw` call to keep mixed-recipient envelope/header separation. Keep provider IDs and RFC headers distinct in your downstream schema and integrations. Review Cloudflare Email preview separately in every environment, since new sending domains enable about seven days of message-content preview by default. Keep the template's isolated, non-sending `env.preview` resources — never point a downstream preview at production D1, R2, Email Routing, Worker, or secrets.
 
 ## Release gate
 

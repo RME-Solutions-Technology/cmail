@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import {
   BootstrapConflictError,
   bootstrapConfiguration,

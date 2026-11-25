@@ -16,7 +16,7 @@
   let toastMessage = $state('');
 
   afterNavigate(() => {
-    let message = page.state?.cmailToast;
+    let message = page.state?.stanchionToast;
     if ((!message || typeof message !== 'string') && browser) {
       try {
         message = sessionStorage.getItem('cmail:pending-navigation-toast') || '';
@@ -27,7 +27,7 @@
     }
     if (typeof message === 'string' && message) {
       const nextState = { ...page.state };
-      delete nextState.cmailToast;
+      delete nextState.stanchionToast;
       // On a full page load this runs during hydration, a moment before the
       // router is marked started (dev builds throw then); defer it.
       queueMicrotask(() => {
@@ -319,7 +319,7 @@
 
 {#if d.user?.id}
   <WelcomeGuide
-    appName={d.appName || 'cmail'}
+    appName={d.appName || 'Stanchion'}
     orgName={d.orgName || ''}
     userId={d.user.id}
     isManager={d.user.role === 'manager'}

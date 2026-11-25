@@ -9,7 +9,7 @@
 // send rate); this bridge only translates arguments into the form fields the
 // action already accepts and its result back into plain data.
 import { isActionFailure, isHttpError, isRedirect, type RequestEvent } from '@sveltejs/kit';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { actions as composeActions } from '../../../routes/mail/compose/+page.server';
 
 export interface ComposeFields {
@@ -21,7 +21,7 @@ export interface ComposeFields {
   /** Plain text authored by the agent, or a stored rich-text draft's sanitised HTML. */
   body: string;
   /**
-   * 'html' only when re-submitting a draft that cmail itself stored as rich
+   * 'html' only when re-submitting a draft that Stanchion itself stored as rich
    * text; agent-written bodies are always plain text. The compose action
    * sanitises either way.
    */

@@ -2,7 +2,7 @@
 // "Shared mailboxes"). On only with M365_DETECT_SHARED_MAILBOXES = "true".
 //
 // Exchange Online's mailbox type (Graph mailboxSettings userPurpose) is read
-// for every object whose `mail` is on MAIL_DOMAIN, including disabled and
+// for every object whose `mail` is on an organisation domain, including disabled and
 // unlicensed ones, and cached per object id in m365_sync_mailbox_purpose
 // (migration 0026):
 // - a delta round reads only objects with no cached answer;
@@ -22,9 +22,9 @@
 //   reconciliation (sync.ts), so an answer from an earlier period is never used.
 // Dry run reads Microsoft but never this table: every dry run is a full
 // reconciliation, which reads every object anyway.
-import { M365_PURPOSE_FAILURE_ALERT, type M365Round } from '@cmail/shared/m365-sync';
+import { M365_PURPOSE_FAILURE_ALERT, type M365Round } from '@stanchion/shared/m365-sync';
 import { GraphError, MAILBOX_PURPOSES, type GraphClient, type GraphUser, type MailboxPurpose, type PurposeLookup } from './graph';
-import { needsPurposeCheck } from './classify';
+import { needsPurposeCheck, type OrgDomainSet } from './classify';
 
 /** D1 allows at most 100 bound parameters per statement. */
 const IN_CHUNK = 90;
@@ -129,18 +129,19 @@ export async function resolvePurposes(options: {
   graph: GraphClient;
   round: M365Round;
   users: GraphUser[];
-  mailDomain: string;
+  /** The organisation's mail domains (orgDomains), or MAIL_DOMAIN alone. */
+  domains: OrgDomainSet;
   exclude: ReadonlySet<string>;
   /** Stop before a $batch once the Graph client has made this many requests. */
   maxRequests?: number;
 }): Promise<PurposeResolution> {
-  const { db, graph, round, users, mailDomain, exclude } = options;
+  const { db, graph, round, users, domains, exclude } = options;
   const live = round.mode === 'live';
   const delta = round.kind === 'delta';
   let ops = 0;
   const purposes = new Map<string, ResolvedPurpose>();
 
-  const candidates = [...new Set(users.filter((user) => needsPurposeCheck(user, mailDomain)).map((user) => user.id.toLowerCase()))]
+  const candidates = [...new Set(users.filter((user) => needsPurposeCheck(user, domains)).map((user) => user.id.toLowerCase()))]
     .filter((id) => !exclude.has(id));
   // Objects deleted in Microsoft 365: forget their cached type (live only).
   const removedIds = users.filter((user) => user['@removed'] && typeof user.id === 'string').map((user) => user.id.toLowerCase())

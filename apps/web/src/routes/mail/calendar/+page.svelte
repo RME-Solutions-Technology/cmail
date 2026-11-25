@@ -45,7 +45,7 @@
   const newMeetingHref = $derived(d.mailboxId ? `/mail/calendar/new?mailbox=${encodeURIComponent(d.mailboxId)}` : '/mail/calendar/new');
 </script>
 
-<svelte:head><title>Calendar · {d.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Calendar · {d.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="calendar-page nb-quiet">
   <header class="page-header">

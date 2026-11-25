@@ -1,20 +1,39 @@
+---
+title: "Email authentication and sender requirements"
+summary: "SPF, DKIM, DMARC and sender requirements to check before changing mail DNS or enabling external delivery."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [deployment.md, sending.md]
+---
+
 # Email authentication and sender requirements
 
 Last reviewed against official sources: **4 August 2026**.
 
 This guide covers the Internet standards and mailbox-provider policies that
-affect mail sent through cmail. Provider requirements change independently of
-cmail. Re-check the linked primary sources before every production launch and
+affect mail sent through Stanchion. Provider requirements change independently of
+Stanchion. Re-check the linked primary sources before every production launch and
 whenever sending volume or message purpose changes.
 
 > [!IMPORTANT]
-> cmail handles person-to-person, organisational, and transactional mail. It
+> Stanchion handles person-to-person, organisational, and transactional mail. It
 > is **not currently a bulk-marketing or campaign platform**. It has no
 > subscription/consent records, campaign preference management, RFC 8058
 > one-click unsubscribe, automated complaint/bounce suppression, deliverability
-> warm-up, or feedback-loop operations. Do not use cmail for bulk marketing
+> warm-up, or feedback-loop operations. Do not use Stanchion for bulk marketing
 > until those capabilities, provider controls, and an organisation-specific
 > compliance review are in place.
+
+**In this article**
+
+- [Standards, provider policy, and law are different](#standards-provider-policy-and-law-are-different)
+- [Current Internet standards](#current-internet-standards)
+- [Configure Cloudflare Email Service](#configure-cloudflare-email-service)
+- [Current major-provider policies](#current-major-provider-policies)
+- [Why Stanchion is not bulk-marketing-ready](#why-stanchion-is-not-bulk-marketing-ready)
+- [Production checklist](#production-checklist)
 
 ## Standards, provider policy, and law are different
 
@@ -157,13 +176,13 @@ mechanism used for one-click unsubscribe. It requires suitable
 message. It is a technical standard, not a universal requirement for every
 message — mailbox providers decide which message categories must provide it.
 
-cmail does not currently generate or process RFC 8058 one-click unsubscribe.
+Stanchion does not currently generate or process RFC 8058 one-click unsubscribe.
 That is one reason it must not be treated as bulk-marketing-ready.
 
 ## Configure Cloudflare Email Service
 
 Cloudflare Email Sending is currently a public beta available on the Workers
-Paid plan. The domain must use Cloudflare DNS. cmail's Pages runtime submits a
+Paid plan. The domain must use Cloudflare DNS. Stanchion's Pages runtime submits a
 bounded request over its private `EMAIL_SERVICE` service binding; the email
 Worker uses the native `EMAIL` send binding. The same Worker separately
 receives inbound Email Routing events. It is not exposed on `workers.dev` or a
@@ -175,7 +194,7 @@ stored separately for delivery reconciliation; it is not assumed to be the
 wire RFC `Message-ID`, which the native binding does not expose. Local or
 non-service-binding environments may configure the account-ID/API-token REST
 fallback. Cloudflare's REST API reference includes an optional
-`result.message_id`; cmail accepts it as the wire `Message-ID` only after
+`result.message_id`; Stanchion accepts it as the wire `Message-ID` only after
 strict syntax validation and otherwise records the header as unknown.
 
 When REST credentials are available, a mixed local/external message uses
@@ -189,7 +208,7 @@ semantics.
 Cloudflare's [postmaster reference](https://developers.cloudflare.com/email-service/reference/postmaster/)
 documents its outbound authentication, Sender Rewriting Scheme for forwarded
 mail, and Authenticated Received Chain handling. Those provider controls do
-not make a stale or conflicting customer DNS record correct: cmail therefore
+not make a stale or conflicting customer DNS record correct: Stanchion therefore
 cannot truthfully display a permanent "standards compliant" badge, and the
 operator must verify the live DNS and received authentication results
 described below.
@@ -234,9 +253,9 @@ the other.
    binding, and the Pages application's private `EMAIL_SERVICE` binding as
    described in [Configuration](configuration.md#cloudflare-email-service).
 6. Configure Email Routing separately and direct only approved addresses, or
-   an explicitly approved catch-all, to the cmail email Worker.
+   an explicitly approved catch-all, to the Stanchion email Worker.
 7. Start with controlled test recipients and low, steady volume. Do not
-   direct existing production mail to cmail until rollback and recovery are
+   direct existing production mail to Stanchion until rollback and recovery are
    tested.
 
 ### DNS and message verification
@@ -325,12 +344,12 @@ with `550 5.7.515`.
 
 Microsoft separately recommends valid sender and reply addresses, functional
 unsubscribe for marketing and bulk mail, consent-based sending, and list and
-bounce hygiene. These recommendations do not turn cmail into a campaign
+bounce hygiene. These recommendations do not turn Stanchion into a campaign
 system.
 
-## Why cmail is not bulk-marketing-ready
+## Why Stanchion is not bulk-marketing-ready
 
-cmail has safety limits for ordinary organisational mail, but it does not yet
+Stanchion has safety limits for ordinary organisational mail, but it does not yet
 provide the controls normally required for campaigns or subscription mail:
 
 - evidence of opt-in, consent source, purpose, and withdrawal;
@@ -342,7 +361,7 @@ provide the controls normally required for campaigns or subscription mail:
 - provider postmaster integrations and automated spam-rate gates; or
 - jurisdiction-specific content, retention, and audit records.
 
-Do not work around this boundary by raising cmail's recipient or hourly
+Do not work around this boundary by raising Stanchion's recipient or hourly
 limits. A future bulk feature needs a separate threat model, data model, user
 experience, abuse controls, provider review, and legal review before release.
 
@@ -364,7 +383,7 @@ experience, abuse controls, provider review, and legal review before release.
 - [ ] Google, Yahoo, Microsoft, and any other material receiver policies are
       re-checked for the deployment's volume and message categories.
 - [ ] An accountable owner has confirmed that the deployment will not be used
-      for bulk marketing with cmail's current feature set.
+      for bulk marketing with Stanchion's current feature set.
 - [ ] Legal and privacy owners have approved the intended recipients,
       purpose, sender identity, content, records, and unsubscribe process.
 

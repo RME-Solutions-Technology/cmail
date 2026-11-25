@@ -5,9 +5,10 @@ import { normalizeEmail } from './validation';
 import {
   messageImportanceHeaders,
   normalizeMessageImportance,
-} from '@cmail/shared/message-importance';
-import { sanitizeParticipantName } from '@cmail/shared/message-participants';
-import type { MessageImportance } from '@cmail/shared/types';
+} from '@stanchion/shared/message-importance';
+import { sanitizeParticipantName } from '@stanchion/shared/message-participants';
+import type { MessageImportance } from '@stanchion/shared/types';
+import { orgDomains, sendingDomainRefusal } from '@stanchion/shared/org-domains';
 import { createMimeMessage, Mailbox } from 'mimetext/browser';
 
 export interface OutboundAttachment {
@@ -35,6 +36,12 @@ export interface OutboundEmail {
   /** Stable RFC Message-ID requested from transports that support overriding it. */
   messageIdHeader?: string;
   attachments?: OutboundAttachment[];
+  /**
+   * Mail Stanchion itself sends from the configured system address (sign-in
+   * codes, invitations, notices), not from a person's mailbox: exempt from
+   * the multi-domain phase-1 From check, so system mail never stops.
+   */
+  system?: true;
 }
 
 export interface OutboundResult {
@@ -190,8 +197,33 @@ export function supportsSeparatedEnvelope(env: Record<string, unknown>): boolean
     && validSecret(envString(env, 'CLOUDFLARE_EMAIL_API_TOKEN'));
 }
 
+function d1Of(env: Record<string, unknown>): D1Database | null {
+  const db = env.DB;
+  return db && typeof db === 'object' && typeof (db as { prepare?: unknown }).prepare === 'function' ? db as D1Database : null;
+}
+
+/**
+ * Multi-domain phase 1 (docs/multi-domain.md), for every path that sends
+ * through a provider (compose, calendar invitations and replies, system mail):
+ * once the organisation's domains have been discovered, the From must be on
+ * MAIL_DOMAIN. Before discovery (or with no database) nothing changes. A
+ * failed read refuses the send rather than guessing.
+ */
+export async function outboundFromRefusal(from: string, env: Record<string, unknown>): Promise<string | null> {
+  const db = d1Of(env);
+  if (!db) return null;
+  try {
+    return sendingDomainRefusal(from, await orgDomains(env, db));
+  } catch (caught) {
+    console.error('Organisation domains could not be read for a send', caught instanceof Error ? caught.name : 'UnknownError');
+    return 'Delivery settings are temporarily unavailable. Try again shortly.';
+  }
+}
+
 export async function sendEmail(email: OutboundEmail, env: Record<string, unknown>): Promise<OutboundResult> {
   const provider = detectProvider(env);
+  const refused = email.system ? null : await outboundFromRefusal(email.from, env);
+  if (refused) return { success: false, provider, error: refused };
 
   switch (provider) {
     case 'cloudflare':

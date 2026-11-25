@@ -1,5 +1,5 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit/hooks';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { assertStrongSessionSecret, publicRuntimeConfig, sessionTtlMs } from '#lib/server/config.js';
 import { SESSION_COOKIE, clearSessionCookie, getSessionTokenFromCookie, hashToken, shouldRenewSession, verifySessionToken } from '#lib/server/session.js';
 import { mcpMaintenanceStatements } from '#lib/server/mcp/maintenance.js';
@@ -309,6 +309,8 @@ export const handle: Handle = async ({ event, resolve }) => {
         env.DB.prepare(`DELETE FROM send_idempotency WHERE created_at < datetime('now', '-7 days')`).run(),
         // Own catch: the table exists only once migration 0025 is applied.
         env.DB.prepare(`DELETE FROM passkey_challenges WHERE expires_at < unixepoch('now')`).run().catch(() => undefined),
+        // Own catch: the table exists only once migration 0034 is applied.
+        env.DB.prepare(`DELETE FROM passkey_pairings WHERE expires_at < unixepoch('now') - 86400`).run().catch(() => undefined),
         ...mcpMaintenanceStatements(env.DB).map((statement) => statement.run()),
       ]).then(() => undefined).catch(() => undefined),
     );

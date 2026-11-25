@@ -352,7 +352,7 @@
       const destination = new URL(String(target), window.location.origin);
       const destinationPath = `${destination.pathname}${destination.search}`;
       const canUseHistoryBack = preferHistoryBack
-        && page.state?.cmailComposeReturn === destinationPath;
+        && page.state?.stanchionComposeReturn === destinationPath;
       if (canUseHistoryBack) {
         if (message) {
           try { sessionStorage.setItem('cmail:pending-navigation-toast', message); } catch { /* toast is optional */ }
@@ -375,7 +375,7 @@
       }
       await goto(target, {
         replaceState: replaceCurrent,
-        ...(message ? { state: { cmailToast: message } } : {}),
+        ...(message ? { state: { stanchionToast: message } } : {}),
       });
     } finally {
       navigationInProgress = false;
@@ -954,10 +954,10 @@
         </ul>
       {/if}
       <p class="att-note">
-        Max 25 files / 20 MB. Files stay in this tab until sent and aren't included in draft saves — cmail warns before you leave. Downloads are forced but not malware-scanned.
+        Max 25 files / 20 MB. Files stay in this tab until sent and aren't included in draft saves — Stanchion warns before you leave. Downloads are forced but not malware-scanned.
         {#if d.outboundProvider === 'cloudflare'} Cloudflare delivery has a 5 MiB limit for the whole encoded message.{/if}
         {#if d.outboundProvider === 'postmark'} Postmark delivery has a 10 MB message limit.{/if}
-        {#if d.outboundProvider === 'none'} External delivery isn't set up; attachments can still go to internal cmail mailboxes.{/if}
+        {#if d.outboundProvider === 'none'} External delivery isn't set up; attachments can still go to internal Stanchion mailboxes.{/if}
       </p>
     </div>
 

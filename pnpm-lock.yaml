@@ -54,11 +54,11 @@ importers:
 
   apps/email-worker:
     dependencies:
-      '@cmail/shared':
+      '@stanchion/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       postal-mime:
-        specifier: ^4.2.1
+        specifier: 4.2.1
         version: 4.2.1
     devDependencies:
       '@cloudflare/workers-types':
@@ -82,12 +82,12 @@ importers:
 
   apps/web:
     dependencies:
-      '@cmail/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@simplewebauthn/server':
         specifier: 14.1.0
         version: 14.1.0
+      '@stanchion/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@tiptap/core':
         specifier: 3.33.1
         version: 3.33.1(@tiptap/pm@3.33.1)
@@ -104,8 +104,11 @@ importers:
         specifier: 3.33.1
         version: 3.33.1
       mimetext:
-        specifier: ^3.0.28
+        specifier: 3.0.28
         version: 3.0.28
+      qrcode-generator:
+        specifier: 2.0.4
+        version: 2.0.4
       rehype-parse:
         specifier: 9.0.1
         version: 9.0.1
@@ -2021,6 +2024,9 @@ packages:
   qified@0.10.1:
     resolution: {integrity: sha512-+Owyggi9IxT1ePKGafcI87ubSmxol6smwJ+RAHDQlx9+9cPwFWDiKFFCPuWhr9ignlGpZ9vDQLw67N4dcTVFEA==}
     engines: {node: '>=20'}
+
+  qrcode-generator@2.0.4:
+    resolution: {integrity: sha512-mZSiP6RnbHl4xL2Ap5HfkjLnmxfKcPWpWe/c+5XxCuetEenqmNFf1FH/ftXPCtFG5/TDobjsjz6sSNL0Sr8Z9g==}
 
   readdirp@4.1.2:
     resolution: {integrity: sha512-GDhwkLfywWL2s6vEjyhri+eXmfH6j1L7JE27WhqLeYzoh/A3DBaYGEj2H/HFZCn/kMfim73FXxEJTw06WtxQwg==}
@@ -4064,6 +4070,8 @@ snapshots:
   qified@0.10.1:
     dependencies:
       hookified: 2.2.0
+
+  qrcode-generator@2.0.4: {}
 
   readdirp@4.1.2: {}
 

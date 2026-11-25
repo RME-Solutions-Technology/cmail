@@ -22,8 +22,7 @@
         { href: '/admin/users', label: 'People', description: 'Accounts and access', icon: 'people' },
         { href: '/admin/orgchart', label: 'Organisation', description: 'Units, roles and directory', icon: 'orgChart' },
         { href: '/admin/travel', label: 'Travel approvals', description: 'Temporary overseas sign-in', icon: 'globe', count: data.pendingTravelCount || undefined },
-        { href: '/admin/m365-sync', label: 'Microsoft 365 sync', description: 'Accounts from your tenant', icon: 'refresh' },
-        { href: '/admin/m365-mailbox-access', label: 'Shared mailbox access', description: 'Full Access and Send As from Exchange', icon: 'mailMultiple' },
+        { href: '/admin/microsoft-365', label: 'Microsoft 365', description: 'Sync, access, welcome emails and mail feed', icon: 'refresh' },
         { href: '/admin/passkeys', label: 'Passkey sign-in', description: 'Break-glass sign-in', icon: 'key' },
       ],
     },
@@ -36,7 +35,6 @@
         { href: '/admin/quarantine', label: 'Quarantine', description: 'Spam review and sender rules', icon: 'junk' },
         { href: '/admin/copy-back', label: 'Copy back to Exchange', description: 'After a standby outage', icon: 'outbound' },
         { href: '/admin/standby', label: 'Standby test', description: 'Standby address and daily test', icon: 'clock' },
-        { href: '/admin/exchange-mirror', label: 'Exchange mirror', description: 'Live copy from Exchange journaling', icon: 'refresh' },
       ],
     },
     {
@@ -78,7 +76,7 @@
 </script>
 
 <svelte:head>
-  <title>{currentItem.label} · Management · {page.data?.appName || 'cmail'}</title>
+  <title>{currentItem.label} · Management · {page.data?.appName || 'Stanchion'}</title>
 </svelte:head>
 
 {#snippet crumbBar()}
@@ -93,7 +91,7 @@
 {/snippet}
 
 <AppShell
-  appName={page.data?.appName || 'cmail'}
+  appName={page.data?.appName || 'Stanchion'}
   user={data.user}
   mode="admin"
   supportEmail={page.data?.supportEmail || ''}

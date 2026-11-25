@@ -28,7 +28,7 @@
   const inactive = $derived(data.apps.filter((app) => app.status !== 'active'));
 </script>
 
-<svelte:head><title>Connected AI apps · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Connected AI apps · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="apps-page nb-quiet" aria-labelledby="apps-heading">
   <header class="page-header">

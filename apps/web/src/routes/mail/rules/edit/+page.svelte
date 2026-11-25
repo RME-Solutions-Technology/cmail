@@ -9,7 +9,7 @@
     parseRuleDefinition,
     ruleNeedsBody,
     ruleNeedsHeaders,
-  } from '@cmail/shared/inbox-rules';
+  } from '@stanchion/shared/inbox-rules';
   import {
     ACTION_OPTIONS,
     CONDITION_OPTIONS,
@@ -74,7 +74,7 @@
   }
 </script>
 
-<svelte:head><title>{data.rule ? 'Edit rule' : 'New rule'} · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>{data.rule ? 'Edit rule' : 'New rule'} · {data.appName || 'Stanchion'}</title></svelte:head>
 
 {#snippet conditionList(rows: EditorRow[], options: typeof CONDITION_OPTIONS, group: string)}
   {#if rows.length}

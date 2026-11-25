@@ -12,12 +12,12 @@
 // - PATCH users/{id}/messages/{id} { isRead: false }      (restore unread)
 // It never deletes, moves or sends mail, and never uses upload sessions or
 // the import API (those use pre-authenticated outlook.office.com URLs).
-import { COPYBACK_MESSAGE_ID } from '@cmail/shared/copy-back';
+import { COPYBACK_MESSAGE_ID } from '@stanchion/shared/copy-back';
 import { GRAPH_ROOT, GraphClient, GraphError } from '../m365-sync/graph';
 
 /**
- * Our named MAPI property set (a fixed, public GUID that identifies cmail, not
- * a tenant). The marker value is the cmail message id, so a copy can always
+ * Our named MAPI property set (a fixed, public GUID that identifies Stanchion, not
+ * a tenant). The marker value is the Stanchion message id, so a copy can always
  * be found again, even after the user moves it to another folder.
  */
 export const COPYBACK_PROPERTY_SET = '{8d0b7a4e-3c1f-4b6e-9a52-6f1e2d4c7b90}';
@@ -68,7 +68,7 @@ export class CopyBackGraphClient extends GraphClient {
     await this.accessToken();
   }
 
-  /** Our earlier copy of this cmail message in the mailbox, or null. */
+  /** Our earlier copy of this Stanchion message in the mailbox, or null. */
   async findCopy(objectId: string, marker: string): Promise<ExchangeItem | null> {
     if (!COPYBACK_MESSAGE_ID.test(marker)) throw new GraphError('bad_response', 0);
     const filter = `singleValueExtendedProperties/Any(ep: ep/id eq ${odataString(COPYBACK_MARKER_PROPERTY)} and ep/value eq ${odataString(marker)})`;

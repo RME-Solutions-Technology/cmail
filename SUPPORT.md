@@ -1,6 +1,6 @@
 # Support
 
-cmail is a community-maintained, self-hosted project. The Apache 2.0 license includes
+Stanchion is a community-maintained, self-hosted project. The Apache 2.0 license includes
 no hosted-service or guaranteed-response support.
 
 For an organisation's operational support model — internal first-line triage
@@ -13,13 +13,13 @@ community-maintainer scope described above.
 1. Check the [documentation](docs/README.md), especially
    [configuration](docs/configuration.md) and
    [deployment verification](docs/deployment.md#verification).
-2. Search [existing issues](https://github.com/RME-Solutions-Technology/cmail/issues) for the
+2. Search [existing issues](https://github.com/RME-Solutions-Technology/stanchion/issues) for the
    same symptom.
 3. Run `pnpm validate` and note the first failing command.
 4. Reduce the problem to a staging or local environment with non-sensitive test
    data.
 
-Use a bug report for a reproducible cmail defect and a feature request for a
+Use a bug report for a reproducible Stanchion defect and a feature request for a
 broadly useful product change. Include the affected commit, component,
 deployment shape, safe reproduction steps, expected result, and actual result.
 

@@ -5,7 +5,7 @@
   const settings = $derived(data.settings);
 </script>
 
-<svelte:head><title>Settings · Management · {data.appName || 'cmail'}</title></svelte:head>
+<svelte:head><title>Settings · Management · {data.appName || 'Stanchion'}</title></svelte:head>
 
 <section class="settings-page" aria-labelledby="settings-heading">
   <header class="page-heading">
@@ -56,6 +56,25 @@
           </details>
         {/if}
       {/if}
+    </section>
+  {/if}
+
+  {#if data.focusedInbox}
+    <section class="card mcp-card" aria-labelledby="focused-inbox-heading">
+      <div class="mcp-head">
+        <div>
+          <h2 id="focused-inbox-heading">Focused Inbox</h2>
+          <p class="group-intro">Split each Inbox into Focused and Other tabs, like Outlook. Newsletters, notifications and other automated mail go to Other; mail from people stays in Focused. Other is still the Inbox: nothing is hidden, moved to another folder or deleted. Each person can turn the tabs off for their own mailboxes in Mail settings.</p>
+        </div>
+        <span class="state-badge" class:on={data.focusedInbox.enabled}>{data.focusedInbox.enabled ? 'On' : 'Off'}</span>
+      </div>
+      <form method="POST" action="?/focusedInbox" class="mcp-toggle">
+        <input type="hidden" name="focused_inbox_enabled" value={data.focusedInbox.enabled ? 'false' : 'true'} />
+        <button type="submit" class="btn {data.focusedInbox.enabled ? 'btn-outline-danger' : 'btn-primary'}">
+          {data.focusedInbox.enabled ? 'Turn off Focused Inbox' : 'Turn on Focused Inbox'}
+        </button>
+        <small>Sorting uses the sender and standard mail headers only, inside Stanchion. <a class="text-link" href="https://github.com/RME-Solutions-Technology/stanchion/blob/main/docs/focused-inbox.md" rel="noopener noreferrer" target="_blank">How it decides</a></small>
+      </form>
     </section>
   {/if}
 
@@ -122,7 +141,7 @@
 
         <div class="field">
           <label for="app-name">Application name</label>
-          <input id="app-name" type="text" name="app_name" value={settings.appName} maxlength="80" placeholder="cmail" />
+          <input id="app-name" type="text" name="app_name" value={settings.appName} maxlength="80" placeholder="Stanchion" />
         </div>
 
         <div class="field deployment-value">
@@ -186,6 +205,8 @@
   .state-badge.on { background: var(--success-soft); color: var(--success); }
   .mcp-toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
   .mcp-toggle small { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+  /* Underlined: a link inside text must not rely on colour alone (WCAG 1.4.1). */
+  .text-link { text-decoration: underline; }
   .mcp-stats { margin: 0; color: var(--text-muted); font-size: 12px; }
   .mcp-log summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
   .table-wrap { margin-top: 8px; overflow-x: auto; }

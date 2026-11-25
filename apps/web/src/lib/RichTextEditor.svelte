@@ -8,7 +8,7 @@
     DEFAULT_COMPOSE_DEFAULTS,
     composeDefaultsStyle,
     type ComposeDefaults,
-  } from '@cmail/shared/compose-style';
+  } from '@stanchion/shared/compose-style';
   import { normaliseLinkInput, type RichNode } from './rich-text';
   import { cleanPastedHtml } from './paste-html';
   import {
@@ -183,7 +183,7 @@
         editor = instance;
         empty = instance.isEmpty;
         const loadPasteCleaner = () => {
-          import('@cmail/shared/compose-paste')
+          import('@stanchion/shared/compose-paste')
             .then((module) => { pasteCleaner = module.cleanComposePaste; officePaste = true; })
             .catch(() => { /* the DOM cleaner keeps working */ });
         };

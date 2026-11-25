@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { sanitizeComposeHtml } from '@cmail/shared/compose-html';
-import { cleanComposePaste } from '@cmail/shared/compose-paste';
+import { sanitizeComposeHtml } from '@stanchion/shared/compose-html';
+import { cleanComposePaste } from '@stanchion/shared/compose-paste';
 import {
   COMPOSE_FONTS,
   DEFAULT_COMPOSE_DEFAULTS,
@@ -9,8 +9,8 @@ import {
   filterComposeStyle,
   normaliseComposeDefaults,
   wrapWithComposeDefaults,
-} from '@cmail/shared/compose-style';
-import { sanitizeEmailHtml } from '@cmail/shared/sanitize-email';
+} from '@stanchion/shared/compose-style';
+import { sanitizeEmailHtml } from '@stanchion/shared/sanitize-email';
 import { prepareComposeBody, splitStoredComposeBody } from './compose-body';
 import { getComposeDefaults, parseComposeDefaultsForm, saveComposeDefaults } from './compose-preferences';
 import {

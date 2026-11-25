@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessLinkRisk, displayedHost, registrableDomain } from '@cmail/shared/link-risk';
+import { assessLinkRisk, displayedHost, registrableDomain } from '@stanchion/shared/link-risk';
 import { sanitizeEmailHtmlWithLinkGuard } from '#lib/server/sanitize-email.js';
 
 const WARN = 'https://mail.example.com/link';

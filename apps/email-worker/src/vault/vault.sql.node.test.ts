@@ -278,7 +278,7 @@ describe('vault review follow-ups', () => {
     expect(await resolveSecret(env, 'm365.sync.client_secret')).toEqual({ source: 'vault', value: SECRET, version: 1 });
   });
 
-  it('says not_installed before migration 0030', async () => {
+  it('says not_installed before migration 0035', async () => {
     const missing = { prepare: () => ({ bind: () => ({ first: async () => { throw new Error('D1_ERROR: no such table: secret_vault'); } }) }) } as unknown as D1Database;
     await expect(putSecret({ DB: missing, CMAIL_VAULT_KEY: KEY_A }, { name: 'm365.sync.client_secret', value: SECRET, actorId: MANAGER })).rejects.toMatchObject({ code: 'not_installed' });
     expect((await vaultStatus({ DB: { prepare: () => ({ all: async () => { throw new Error('D1_ERROR: no such table: secret_vault'); } }) } as unknown as D1Database, CMAIL_VAULT_KEY: KEY_A })).installed).toBe(false);

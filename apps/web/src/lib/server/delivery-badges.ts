@@ -1,4 +1,4 @@
-import type { Message } from '@cmail/shared/types';
+import type { Message } from '@stanchion/shared/types';
 import { deliveryStatus, listBadge, type DeliveryEventView, type ListBadge } from '#lib/mail/delivery-status.js';
 
 // One small Delivered / Delayed / Bounced tag per row of the Sent list. The

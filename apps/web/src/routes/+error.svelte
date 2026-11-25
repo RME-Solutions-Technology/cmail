@@ -7,7 +7,7 @@
 </script>
 
 <svelte:head>
-  <title>{notFound ? 'Page not found' : 'Something went wrong'} · {page.data?.appName || 'cmail'}</title>
+  <title>{notFound ? 'Page not found' : 'Something went wrong'} · {page.data?.appName || 'Stanchion'}</title>
 </svelte:head>
 
 <main id="main-content" class="error-page" tabindex="-1">

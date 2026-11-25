@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-  One-time tenant setup for cmail's shared mailbox access sync (read-only
+  One-time tenant setup for Stanchion's shared mailbox access sync (read-only
   toward Exchange): Entra app with Exchange.ManageAsApp, a certificate, a
   read-only custom Exchange role in its own role group, the go/no-go check,
   and the certificate stored as email Worker secrets. -Rollback undoes it.
@@ -78,7 +78,7 @@
   app and the local certificate. Worker secrets are left (harmless with the
   feature off; delete them with wrangler secret delete if you want).
 .PARAMETER RepoRoot
-  The cmail checkout that has Wrangler installed. Defaults to this repository.
+  The Stanchion checkout that has Wrangler installed. Defaults to this repository.
 
 .EXAMPLE
   pwsh -File scripts/onboarding/perms-setup.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -Organization example.onmicrosoft.com -WranglerConfig apps/email-worker/wrangler.toml -WhatIf
@@ -250,7 +250,7 @@ if ($PSCmdlet.ShouldProcess('Exchange Online', "custom role '$RoleName' ($($read
       throw "NO-GO: the role must hold exactly the six read cmdlets (missing: $($missing -join ', '); extra: $($extra -join ', ')). Fix by hand (docs/m365-mailbox-permissions.md step 3) or run -Rollback."
     }
     if (-not (Get-ExoOrNull { Get-RoleGroup -Identity $RoleGroupName -ErrorAction Stop })) {
-      New-RoleGroup -Name $RoleGroupName -Roles $RoleName -Description 'Read-only: Full Access and Send As on shared mailboxes for cmail' -ErrorAction Stop | Out-Null
+      New-RoleGroup -Name $RoleGroupName -Roles $RoleName -Description 'Read-only: Full Access and Send As on shared mailboxes for Stanchion' -ErrorAction Stop | Out-Null
     }
     if (-not (Get-ExoOrNull { Get-ServicePrincipal -Identity $appId -ErrorAction Stop })) {
       New-ServicePrincipal -AppId $appId -ObjectId $spObjectId -DisplayName $AppName -ErrorAction Stop | Out-Null

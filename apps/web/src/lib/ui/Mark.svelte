@@ -1,5 +1,5 @@
 <!--
-  Mark — the cmail app symbol.
+  Mark — the Stanchion app symbol.
 
   A Fluent-proportioned rounded square carrying an open envelope drawn in one
   continuous stroke, with a cyan status dot breaking the top-right corner.
@@ -19,7 +19,7 @@
   height={size}
   viewBox="0 0 64 64"
   role="img"
-  aria-label="cmail"
+  aria-label="Stanchion"
   focusable="false"
   style="display: block;"
 >

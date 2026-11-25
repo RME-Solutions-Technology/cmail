@@ -1,20 +1,42 @@
+---
+title: "Passkey break-glass sign-in"
+summary: "How to sign in with a passkey when Microsoft or Cloudflare Access is down."
+applies_to: both
+audience: [manager, operator, user]
+switch: "Admin > Passkey sign-in"
+last_reviewed: 2026-11-16
+related: [staff-sign-in.md, onboarding-microsoft-365.md]
+---
+
 # Passkey break-glass sign-in
 
-**Status:** built, off by default, not yet tested against a real tenant, a
-live Cloudflare Access application or real phones and security keys. The
-tests drive the server with generated credentials (a software authenticator),
-not with a browser.
+**Status:** built, off by default, in use on one live instance since
+November 2026, where adding a passkey and passkey-only sign-in are verified.
+The automated tests drive the server with generated credentials (a software
+authenticator), not with a browser.
 
-Passkeys let people sign in to cmail when the normal sign-in route is down.
+Passkeys let people sign in to Stanchion when the normal sign-in route is down.
 While Microsoft (or Google, an email code or the Cloudflare Access bridge)
 works, a signed-in person adds one or more passkeys. If that route later
 fails, they open `/auth/passkey` and sign in with a passkey alone. Nothing
 from Microsoft, Entra ID or Cloudflare Access takes part in that sign-in.
 
 This is layer 2 of "what if Entra itself is down". Layer 1 is long sessions:
-anyone who used cmail recently stays signed in through an outage
+anyone who used Stanchion recently stays signed in through an outage
 (`SESSION_TTL_HOURS` and the Access application session). Passkeys cover the
 people whose sessions have lapsed.
+
+**In this article**
+
+- [How it works](#how-it-works)
+- [Threat model](#threat-model)
+- [Cloudflare Access](#cloudflare-access)
+- [How to set up passkeys](#how-to-set-up-passkeys)
+- [Recovery](#recovery)
+- [Audit events](#audit-events)
+- [Code](#code)
+- [References](#references)
+- [Not yet verified](#not-yet-verified)
 
 ## How it works
 
@@ -24,14 +46,14 @@ is on):
 1. The person must be signed in the normal way, not with a passkey, and the
    session must have been opened in the last 15 minutes
    (`REGISTRATION_FRESH_MINUTES`). Otherwise the page asks them to sign out
-   and in again. This stops an old or stolen cmail session cookie from
+   and in again. This stops an old or stolen Stanchion session cookie from
    planting a passkey that would outlive it. **Limit under Access:** with the
-   Access bridge on, signing out and back in can mint a fresh cmail session
+   Access bridge on, signing out and back in can mint a fresh Stanchion session
    silently from a still-valid Access session, without a new Entra sign-in.
    So behind Access the 15-minute rule proves a live Access session, not a
    fresh password or MFA prompt. The notices to the person and the managers,
    and the newest-passkeys list in Admin, are the backstop.
-2. cmail creates a WebAuthn registration challenge, stores it in D1 tied to
+2. Stanchion creates a WebAuthn registration challenge, stores it in D1 tied to
    that account and session, and asks the browser for a **discoverable**
    credential (`residentKey: required`) with **user verification required**
    (fingerprint, face or PIN) and attestation `none`.
@@ -55,12 +77,12 @@ an email or account id. An account's later passkeys reuse it.
    credentials, so the request says nothing about who is signing in.
 2. The browser shows the device's passkey picker. The response goes to
    `POST /auth/passkey/verify`.
-3. cmail deletes the challenge as it reads it (single use, even if the rest
+3. Stanchion deletes the challenge as it reads it (single use, even if the rest
    fails), finds the credential by id, checks that the authenticator returned
    the user handle stored with it, and verifies the signature, origin, RP ID,
    user presence and user verification.
 4. The signature is verified first. The library's own counter check runs
-   before its signature check, so cmail switches it off (it passes a stored
+   before its signature check, so Stanchion switches it off (it passes a stored
    counter of 0, which never rejects) and compares the counter itself once the
    signature is known to be valid: it must go up, unless the authenticator
    always reports 0 (synced passkeys do). A forged response can never raise
@@ -113,11 +135,68 @@ happens, and earlier when the person signs out, when the passkey is removed
 (by them or a manager), when the account is paused or offboarded, and when a
 manager turns the feature off.
 
+## Add a phone
+
+On Mail > Settings > Passkeys, **Add a phone** shows a QR code. Scan it with the
+phone camera and the phone creates its own passkey for the same account. Nothing
+is typed and nobody signs in on the phone. Do it before you need it: if the
+normal sign-in is down, a passkey you already have (for example on your PC)
+signs you in at `/auth/passkey`, and you can add more phones from there.
+
+Needs migration `0034_passkey_pairings.sql` (one new table, additive). Until it
+is applied the card is hidden. It is also hidden while passkey sign-in is off.
+
+1. You press **Add a phone** (an ordinary session, never a passkey session,
+   opened in the last 5 minutes: adding a passkey needs a session under 15
+   minutes old, and the offer lasts 10, so an approved offer cannot go stale
+   before the phone finishes). The server
+   makes a random 256-bit token, stores only its SHA-256 hash with your account
+   and session, and shows `https://<host>/auth/passkey/pair#<token>` as an
+   inline SVG QR code, the same link as text with Copy, and a 10 minute
+   countdown. The token is in the URL fragment, so no server log or referrer
+   ever holds it. A person has one open offer (a database rule): starting a new
+   one cancels the old one, and that is audited.
+2. The phone opens the page (no sign-in needed). Its script reads the fragment,
+   removes it from the address bar and posts it. One conditional update moves
+   the offer from `offered` to `joined` and returns a second random secret that
+   only that phone holds. The server records a friendly label from the user
+   agent (for example "iPhone (Safari)") and the country Cloudflare saw. Both
+   are for you to read and are never trusted. The phone shows a two-digit
+   number.
+3. The page you are signed in on (polling every 2 seconds, announced to screen
+   readers, with focus moved to the prompt) says "iPhone (Safari) (connecting
+   from Australia) wants to join" with three numbers and **Deny**. You approve
+   by picking the number shown on the phone. This step stops someone who
+   photographed the QR code from adding their own phone. Three wrong picks end
+   the offer. Only the session that made the offer can approve or deny.
+4. After approval the phone gets registration options (the same options and
+   checks as adding a passkey: discoverable credential, user verification
+   required, origin and RP ID exactly `APP_URL`) and presses **Create passkey**.
+   The challenge is stored on the offer and verify must present that same one.
+   The server claims the offer (`approved` to `consumed`), verifies and stores
+   the passkey, and sends the usual "Passkey added" notices. A failed attempt
+   puts the offer back to `approved` while it lasts.
+
+Every state change is one conditional `UPDATE`, so two simultaneous requests
+cannot both win. The token is single use and valid 10 minutes; the creator's
+session must still be live at every step; the options and verify steps need the
+phone's own secret as well as the token. Rate limits: offers per person per
+hour, joins per address, failed token or secret guesses per address (IPv6 per
+/64), polls per address and per person. Every refusal on the phone side gives
+the same answer, and a request with no connecting address is refused instead
+of sharing one bucket. The page shows the phone as added only once the passkey
+really exists. The phone page retries network errors and rate limits with a
+growing delay. Without JavaScript the card says so and points to adding the
+passkey on the phone itself.
+
+Audit events: `auth.passkey_pair_started`, `_joined`, `_approved`, `_denied`,
+`_expired`. The passkey itself is audited as `auth.passkey_registered`.
+
 ## Threat model
 
 | Threat | What stops it |
 |---|---|
-| Phishing site relays the ceremony | WebAuthn binds the response to the origin and RP ID; cmail accepts only `APP_URL`'s exact origin and hostname. The `*.pages.dev` address gets 404. |
+| Phishing site relays the ceremony | WebAuthn binds the response to the origin and RP ID; Stanchion accepts only `APP_URL`'s exact origin and hostname. The `*.pages.dev` address gets 404. |
 | Replayed response | Challenges are server-side, single use (deleted when read) and expire after 5 minutes. |
 | Cloned hardware key | Signature counter must increase; a rollback is refused, audited and emailed to managers. |
 | Stolen phone or key | User verification is required (biometric or PIN). A manager removes the person's passkeys in Admin, which also ends their passkey sessions. |
@@ -136,9 +215,9 @@ malicious browser extension on it. That is true of every sign-in method.
 
 ## Cloudflare Access
 
-With the [Access bridge](staff-sign-in.md#cloudflare-access-bridge) on, cmail
+With the [Access bridge](staff-sign-in.md#cloudflare-access-bridge) on, Stanchion
 fails closed: a request without a valid Access token gets no session, even
-with a valid cmail cookie. Passkey sessions are the one exception, by design:
+with a valid Stanchion cookie. Passkey sessions are the one exception, by design:
 
 - A **passkey session** (marked by `sessions.passkey_credential_id`) is used
   without an Access token, and also when the bridge is misconfigured. It is
@@ -172,11 +251,11 @@ so a separate application for this path with a Bypass policy works
 1. Cloudflare dashboard > **Zero Trust** > **Access controls** >
    **Applications** > **Create new application** > **Self-hosted and
    private**.
-2. **Add public hostname**: the cmail subdomain and domain (for example
+2. **Add public hostname**: the Stanchion subdomain and domain (for example
    `mail` + `example.com`), path `auth/passkey`. Add a second public hostname
    with the same subdomain and domain and path `auth/passkey/*`, so the
    sub-paths match whichever way the path is read.
-3. Name it, for example "cmail passkey sign-in".
+3. Name it, for example "Stanchion passkey sign-in".
 4. **Access policies** > create a policy: action **Bypass**, include
    **Everyone**. Optionally add a **Require** rule on country to narrow it.
 5. Save. Check: in a private window, `https://mail.example.com/auth/passkey`
@@ -188,7 +267,7 @@ The page is built to need nothing outside `/auth/passkey`: its only script is
 font or logo (those stay behind Access). Its own Content-Security-Policy
 allows same-origin script and connections only.
 
-Bypass turns off Access enforcement and logging for that path. cmail's own
+Bypass turns off Access enforcement and logging for that path. Stanchion's own
 checks (rate limits, single-use challenges, origin and RP ID) protect it.
 
 ### During an outage: opening the mail pages
@@ -196,7 +275,7 @@ checks (rate limits, single-use challenges, origin and RP ID) protect it.
 Excluding `/auth/passkey` lets people sign in, but `/mail` and the rest of the
 site are still behind Access. If Entra ID is down, Access cannot sign anyone
 in, so a passkey user would sign in and then be stopped at the Access login on
-`/mail`. Cloudflare Access cannot see cmail's cookie, so it cannot tell a
+`/mail`. Cloudflare Access cannot see Stanchion's cookie, so it cannot tell a
 passkey session apart at the edge.
 
 So break-glass has one deliberate step by a person, taken only when Entra
@@ -206,24 +285,24 @@ sign-in is actually failing:
    dashboard login must not depend on Entra ID** (use Cloudflare's own login
    with two-factor authentication, not SSO through Entra). Check this before
    you need it.
-2. In the main cmail Access application, add a policy: action **Bypass**,
+2. In the main Stanchion Access application, add a policy: action **Bypass**,
    include **Everyone** (optionally require a country), and move it to the
    top. Save.
 3. Tell people to sign in at `https://mail.example.com/auth/passkey`.
-4. While the gate is open, cmail still fails closed for everything except
+4. While the gate is open, Stanchion still fails closed for everything except
    passkey sessions: ordinary and Access-bridge sessions need a valid Access
    token, and the passkey page is the only working sign-in. If Access sends
-   no token on bypassed requests (cmail does not rely on it either way),
+   no token on bypassed requests (Stanchion does not rely on it either way),
    people who still have an Access session but no passkey are signed out
    until the gate closes.
 5. When Entra ID works again, delete the Bypass policy from the main
    application.
 
 **What the outage Bypass also exposes.** While the main application bypasses
-Access, every path reaches cmail without Access, not only the mail pages:
+Access, every path reaches Stanchion without Access, not only the mail pages:
 
 - AI app (MCP) paths: `/mcp`, `/oauth/*` and `/.well-known/*`. They still need
-  cmail's own OAuth bearer tokens, but they lose Access in front of them.
+  Stanchion's own OAuth bearer tokens, but they lose Access in front of them.
 - `/bootstrap`, which is refused once a manager exists, but is better not
   reachable at all.
 - `/enroll/*` invitation links, which still need a valid single-use
@@ -232,7 +311,7 @@ Access, every path reaches cmail without Access, not only the mail pages:
 To keep those behind Access during the Bypass, create one more self-hosted
 Access application now, before any outage, covering exactly those paths
 (`mcp`, `mcp/*`, `oauth/*`, `.well-known/*`, `bootstrap`, `enroll/*` on the
-cmail hostname) with your normal Allow policy, or a **Block** policy if you
+Stanchion hostname) with your normal Allow policy, or a **Block** policy if you
 do not use them. Access picks the most specific application path, so this
 application keeps applying while the main one bypasses. Also leave AI app
 connections off in Admin > Settings unless you need them, and remove
@@ -242,7 +321,7 @@ Prepare it: write the policy as a reusable policy in advance and practise
 adding and removing it, so the step takes a minute. Opening the gate is the
 last resort; layer 1 (long sessions) covers most outages without it.
 
-## Set up
+## How to set up passkeys
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#7-passkeys), step 7.
 
@@ -293,6 +372,7 @@ kept for when it is turned on again.
 |---|---|
 | `auth.passkey_registered` | A passkey was added (with its name) |
 | `auth.passkey_register_failed` | A registration response failed verification |
+| `auth.passkey_pair_started` / `_joined` / `_approved` / `_denied` / `_expired` | The steps of Add a phone (see above) |
 | `auth.passkey_removed` | A person removed a passkey, or a manager removed all of someone's |
 | `auth.sign_in` | "Signed in via passkey ..." for every passkey sign-in, with the session id |
 | `auth.passkey_manager_sign_in` | A manager signed in with a passkey (managers are emailed) |
@@ -311,6 +391,10 @@ kept for when it is turned on again.
 - `apps/web/src/routes/auth/passkey/`: the page, `client.js`, `options` and
   `verify`.
 - `apps/web/src/routes/api/passkeys/register/`: registration endpoints.
+- `apps/web/src/lib/server/passkey-pairing.ts`, `passkey-pair-page.ts` and
+  `apps/web/src/routes/auth/passkey/pair/`: Add a phone, phone side.
+  `apps/web/src/routes/mail/passkeys/pair/`: Add a phone, signed-in side.
+  `apps/web/src/lib/qr.ts`: the QR code (MIT `qrcode-generator` 2.0.4, pinned).
 - `apps/web/src/routes/mail/passkeys/`: Mail > Settings > Passkeys.
 - `apps/web/src/routes/admin/passkeys/`: Admin > Passkey sign-in.
 - `apps/web/src/hooks.server.ts`: passkey sessions and the Access bridge.
@@ -329,9 +413,12 @@ kept for when it is turned on again.
   and [Application paths](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/).
 - Cloudflare, [D1 foreign keys](https://developers.cloudflare.com/d1/sql-api/foreign-keys/):
   enforced by default, which the `ON DELETE CASCADE` on passkey sessions
-  relies on (cmail also revokes those sessions itself).
+  relies on (Stanchion also revokes those sessions itself).
 
 ## Not yet verified
+
+Verified on one live instance (November 2026): adding a passkey and
+passkey-only sign-in, on Cloudflare Pages. Still open:
 
 - Real devices: iPhone, Android, Windows Hello, macOS and a FIDO2 security
   key, in Safari, Chrome, Edge and Firefox.

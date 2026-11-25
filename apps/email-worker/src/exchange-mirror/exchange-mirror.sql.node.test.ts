@@ -3,6 +3,7 @@ import worker, { RECIPIENT_UNAVAILABLE_SMTP_RESPONSE } from '../index';
 import { migratedDatabase } from '../testing/sqlite-d1';
 import { GUARDS_OFF } from '../testing/delivery';
 import { JOURNAL_REJECT_RESPONSE } from './ingest';
+import { FOCUS_LOOKUP_SQL } from '@stanchion/shared/focused-inbox';
 import { AUTHSERV, DOMAIN, JOURNAL, NDR, NDR_DOMAIN, OTHER_TENANT, TENANT, defaultEnvelope, innerMessage, journalReport } from './fixtures';
 
 // The Exchange mirror against every real migration (node:sqlite), driving
@@ -127,6 +128,82 @@ describe('Exchange mirror: filing', () => {
     t.assertNothingSent();
   });
 
+  it('files Stanchion\'s own colleague mail (a recorded send) unread with a notification, only for the recorded recipients', async () => {
+    const t = setup();
+    // alice's Sent copy of the send, as Stanchion stored it (the provider reported the Message-ID).
+    const sentCopy = (id: string, subject: string, receivedAt = "datetime('now', '-1 hour')") => t.sqlite.prepare(
+      `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, to_addresses, cc_addresses, subject, folder, received_at)
+       VALUES (?, 'mbx-alice', '<plan-1@example.test>', 'outbound', 'alice@example.test', '["bob@example.test"]', '[]', ?, 'sent', ${receivedAt})`,
+    ).run(id, subject);
+    sentCopy('sent-1', 'Quarterly plan');    // Internet mail to Exchange (no internal-submission headers), as from the provider.
+    await t.deliver(journalReport({
+      inner: innerMessage({ internal: false, to: 'bob@example.test, carol@example.test' }),
+      envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test', 'Recipient: carol@example.test'],
+    }));
+    const read = Object.fromEntries(t.messages().filter((row) => row.direction === 'inbound').map((row) => [row.mailbox_id, row.is_read]));
+    expect(read).toEqual({ 'mbx-bob': 0, 'mbx-carol': 1 });
+    expect(t.waitUntil).toHaveBeenCalledTimes(1);
+    t.assertNothingSent();
+  });
+
+  it('does not prove a copy whose subject, age or authentication does not fit the recorded send', async () => {
+    const cases: Array<{ subject: string; receivedAt: string; headers?: Record<string, string> }> = [
+      { subject: 'Something else', receivedAt: "datetime('now', '-1 hour')" },
+      { subject: 'Quarterly plan', receivedAt: "datetime('now', '-3 days')" },
+      { subject: 'Quarterly plan', receivedAt: "datetime('now', '-1 hour')", headers: { 'Authentication-Results': 'spf=pass smtp.mailfrom=example.test; dmarc=fail action=none header.from=example.test; compauth=fail reason=000' } },
+    ];
+    for (const item of cases) {
+      const t = setup();
+      t.sqlite.prepare(
+        `INSERT INTO messages (id, mailbox_id, message_id_header, direction, from_address, to_addresses, cc_addresses, subject, folder, received_at)
+         VALUES ('sent-1', 'mbx-alice', '<plan-1@example.test>', 'outbound', 'alice@example.test', '["bob@example.test"]', '[]', ?, 'sent', ${item.receivedAt})`,
+      ).run(item.subject);
+      await t.deliver(journalReport({
+        inner: innerMessage({ internal: false, headers: item.headers }),
+        envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test'],
+      }));
+      expect(t.messages().filter((row) => row.direction === 'inbound').map((row) => row.is_read)).toEqual([1]);
+      expect(t.waitUntil).not.toHaveBeenCalled();
+    }
+  });
+  it('treats a copy as ordinary mirrored mail when the Message-ID matches no recorded send', async () => {
+    const t = setup();
+    await t.deliver(journalReport({
+      inner: innerMessage({ internal: false }),
+      envelope: [...defaultEnvelope().slice(0, 3), 'Recipient: bob@example.test'],
+    }));
+    expect(t.messages().filter((row) => row.direction === 'inbound').map((row) => row.is_read)).toEqual([1]);
+    expect(t.waitUntil).not.toHaveBeenCalled();
+  });
+
+  it('files by address exactly as before until other domains are discovered, then only on organisation domains', async () => {
+    // docs/multi-domain.md. desk@example.org exists; example.org is an
+    // organisation domain only once the sync has discovered it.
+    const report = (n: number) => journalReport({
+      envelope: ['Sender: alice@example.test', 'Subject: Hello', `Message-Id: <multi-${n}@example.test>`, 'To: desk@example.org', 'To: carol@example.test'],
+      inner: innerMessage({ messageId: `<multi-${n}@example.test>` }),
+    });
+    const discover = (domains: string[]) => t.sqlite.prepare(`INSERT INTO org_settings (key, value) VALUES ('m365_verified_domains', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(JSON.stringify({ tenantId: TENANT, domains, refreshedAt: 1, attemptedAt: 1, problem: '' }));
+    const inboundFor = (n: number) => t.messages()
+      .filter((row) => row.direction === 'inbound' && row.message_id_header === `<multi-${n}@example.test>`)
+      .map((row) => row.mailbox_id);
+    const t = setup();
+    t.sqlite.prepare(`INSERT INTO mailboxes (id, address, type, status) VALUES ('mbx-desk', 'desk@example.org', 'shared', 'active')`).run();
+
+    await t.deliver(report(1));
+    expect(inboundFor(1)).toEqual(['mbx-carol', 'mbx-desk']);
+
+    discover(['example.net']);
+    await t.deliver(report(2));
+    expect(inboundFor(2)).toEqual(['mbx-carol']);
+    expect(t.days()[0]).toMatchObject({ unmatched: 1, last_problem: 'unmatched_domain' });
+
+    discover(['example.org']);
+    await t.deliver(report(3));
+    expect(inboundFor(3)).toEqual(['mbx-carol', 'mbx-desk']);
+    t.assertNothingSent();
+  });
   it('files to fresh imported aliases only, never to an alias of a disabled mailbox', async () => {
     const report = () => journalReport({ envelope: [...defaultEnvelope().slice(0, 3), 'To: Robert@example.test', 'To: ollie@example.test', 'To: carol@example.test'] });
     const withAliases = (options: { importOn: boolean; lastOkAgeMs: number | null }) => {
@@ -196,7 +273,7 @@ describe('Exchange mirror: filing', () => {
 });
 
 describe('Exchange mirror: Sent copies', () => {
-  it('files a Sent copy, with Bcc, for a cmail user who sent through Exchange', async () => {
+  it('files a Sent copy, with Bcc, for a Stanchion user who sent through Exchange', async () => {
     const t = setup();
     await t.deliver(journalReport({
       inner: innerMessage(),
@@ -476,12 +553,14 @@ describe('Exchange mirror: hourly inbound guard', () => {
     expect(t.messages().filter((row) => row.mailbox_id === 'mbx-bob')).toHaveLength(3);
     const kinds = t.sqlite.prepare(`SELECT DISTINCT reservation_type FROM mailbox_reservations`).all();
     expect(kinds).toEqual([{ reservation_type: 'storage' }]);
-    // The normal path still has its allowance of one, and enforces it.
+    // The normal path still has its allowance of one; beyond it, mail is held in Junk, never bounced.
     const first = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n1@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
     expect(first.message.setReject).not.toHaveBeenCalled();
     const second = await t.deliver(innerMessage({ from: 'pat@partner.example', messageId: '<n2@partner.example>' }), { to: `bob@${DOMAIN}`, from: 'pat@partner.example' });
-    expect(second.message.setReject).toHaveBeenCalled();
-    expect(t.messages().filter((row) => row.mailbox_id === 'mbx-bob')).toHaveLength(4);
+    expect(second.message.setReject).not.toHaveBeenCalled();
+    const bobRows = t.messages().filter((row) => row.mailbox_id === 'mbx-bob');
+    expect(bobRows).toHaveLength(5);
+    expect(bobRows.filter((row) => row.folder === 'spam')).toHaveLength(1);
   });
 });
 
@@ -584,6 +663,11 @@ describe('Exchange mirror: off means unchanged', () => {
     expect(configuredOn.seen).toEqual(plain.seen);
     expect(configuredOn.writes).toEqual(plain.writes);
     expect(plain.writes.length).toBeGreaterThan(0);
-    expect(plain.seen.some((entry) => /org_settings|exchange_mirror|mailbox_aliases/.test(entry.sql))).toBe(false);
+    // The one org_settings read on the normal path is Focused Inbox's own
+    // switch (docs/focused-inbox.md), identical in both runs; nothing reads
+    // a mirror setting.
+    const focusLookup = FOCUS_LOOKUP_SQL.replace(/\s+/g, ' ').trim();
+    expect(plain.seen.some((entry) => entry.sql !== focusLookup
+      && /org_settings|exchange_mirror|mailbox_aliases/.test(entry.sql))).toBe(false);
   });
 });

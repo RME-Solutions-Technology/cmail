@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planRecipientDelivery } from './recipient-delivery';
+import { exchangeHostedDomains, locallyDeliverable, planRecipientDelivery } from './recipient-delivery';
 
 describe('recipient delivery planning', () => {
   it('keeps purely internal delivery on the direct local path', () => {
@@ -139,6 +139,97 @@ describe('recipient delivery planning', () => {
         providerRecipients: ['alice@example.com', 'bob@example.net'],
         localRecipients: [],
       });
+    });
+  });
+});
+
+function switchDb(settings: Record<string, string> | Error) {
+  const binds: unknown[][] = [];
+  const db = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => {
+        binds.push([sql, ...args]);
+        return {
+          all: async () => {
+            if (settings instanceof Error) throw settings;
+            return { results: Object.entries(settings).filter(([key]) => args.includes(key)).map(([key, value]) => ({ key, value })) };
+          },
+        };
+      },
+    }),
+  } as unknown as D1Database;
+  return { db, binds };
+}
+
+const BOTH_ON = { exchange_mirror_enabled: 'true', exchange_mirror_colleague_send: 'true' };
+
+describe('Exchange-hosted recipients (mirror and "Send colleague mail through Exchange" on)', () => {
+  it('reads no domain as Exchange-hosted unless both switches are on (exactly today otherwise)', async () => {
+    for (const settings of <Array<Record<string, string>>>[
+      {},
+      { exchange_mirror_enabled: 'true' },
+      { exchange_mirror_colleague_send: 'true' },
+      { exchange_mirror_enabled: 'true', exchange_mirror_colleague_send: 'false' },
+      { exchange_mirror_enabled: 'false', exchange_mirror_colleague_send: 'true' },
+    ]) {
+      expect([...await exchangeHostedDomains(switchDb(settings).db, ['example.com'])]).toEqual([]);
+    }
+  });
+
+  it('reads every organisation domain as Exchange-hosted while both switches are on', async () => {
+    const { db, binds } = switchDb(BOTH_ON);
+    expect([...await exchangeHostedDomains(db, ['example.com'])]).toEqual(['example.com']);
+    expect([...await exchangeHostedDomains(db, ['example.com', 'example.org'])]).toEqual(['example.com', 'example.org']);
+    expect(binds[0]?.slice(1)).toEqual(['exchange_mirror_enabled', 'exchange_mirror_colleague_send']);
+  });
+
+  it('never reads the switches without a mail domain', async () => {
+    const { db, binds } = switchDb(BOTH_ON);
+    expect([...await exchangeHostedDomains(db, [])]).toEqual([]);
+    expect(binds).toEqual([]);
+  });
+
+  it('passes a switch read failure to the caller (the send fails closed, never delivers locally by guess)', async () => {
+    await expect(exchangeHostedDomains(switchDb(new Error('D1 down')).db, ['example.com'])).rejects.toThrow('D1 down');
+  });
+  const rows = [
+    { address: 'alice@example.com', id: 'm1' },
+    { address: 'Carol@Example.com', id: 'm2' },
+    { address: 'desk@example.org', id: 'm3' },
+  ];
+
+  it('keeps every mailbox local when no domain is Exchange-hosted (mirror off: unchanged)', () => {
+    expect(locallyDeliverable(rows, new Set())).toEqual(rows);
+  });
+
+  it('drops mailboxes on an Exchange-hosted domain, case-insensitively, and keeps the rest', () => {
+    expect(locallyDeliverable(rows, new Set(['example.com']))).toEqual([{ address: 'desk@example.org', id: 'm3' }]);
+  });
+
+  it('sends Exchange-hosted Stanchion mailboxes through the provider, keeping the visible headers', () => {
+    const local = new Set(locallyDeliverable(rows, new Set(['example.com'])).map((row) => row.address));
+    expect(planRecipientDelivery(
+      ['alice@example.com'],
+      ['desk@example.org'],
+      [],
+      local,
+    )).toEqual({
+      externalRecipients: ['alice@example.com'],
+      providerTo: ['alice@example.com'],
+      providerCc: ['desk@example.org'],
+      providerRecipients: ['alice@example.com'],
+      localRecipients: ['desk@example.org'],
+    });
+  });
+
+  it('turns an all-internal send into a provider send when every recipient lives in Exchange', () => {
+    const local = new Set(locallyDeliverable(rows.slice(0, 1), new Set(['example.com'])).map((row) => row.address));
+    expect(planRecipientDelivery(['alice@example.com'], [], [], local)).toEqual({
+      externalRecipients: ['alice@example.com'],
+      providerTo: ['alice@example.com'],
+      providerCc: [],
+      providerRecipients: ['alice@example.com'],
+      localRecipients: [],
     });
   });
 });

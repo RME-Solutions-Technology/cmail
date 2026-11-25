@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '@cmail/shared/types';
+import type { User } from '@stanchion/shared/types';
 import { PROVIDER_PREFERENCE_COOKIE } from '#lib/server/provider-preference.js';
 
 const mocks = vi.hoisted(() => ({
@@ -44,6 +44,7 @@ vi.mock('#lib/server/bootstrap.js', () => ({
 vi.mock('#lib/server/session.js', () => ({
   buildSessionCookie: vi.fn(() => 'cmail_session=signed; Path=/; HttpOnly'),
   createSessionToken: mocks.createSessionToken,
+  sqlDateTime: (moment: Date) => moment.toISOString().slice(0, 19).replace('T', ' '),
 }));
 vi.mock('#lib/server/config.js', () => ({
   assertStrongSessionSecret: vi.fn(),

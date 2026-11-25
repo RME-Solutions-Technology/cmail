@@ -1,5 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { adminLoaderFailure } from '#lib/server/admin-loader-error.js';
+import { audit } from '#lib/server/db.js';
+import { hashToken } from '#lib/server/session.js';
 
 /**
  * Unified investigation view: message trace and the audit log in one timeline.
@@ -15,6 +17,7 @@ import { adminLoaderFailure } from '#lib/server/admin-loader-error.js';
  */
 
 const PAGE_SIZES = [25, 50, 100, 200];
+const COUNT_CAP = 10000;
 const SOURCES = ['all', 'trace', 'audit'] as const;
 const DIRECTIONS = ['inbound', 'outbound'] as const;
 const STATUSES = ['delivered', 'sent', 'bounced', 'rejected', 'quarantined', 'deferred'] as const;
@@ -81,11 +84,12 @@ function isoDate(value: string | null): string {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
 }
 
-export const load: PageServerLoad = async ({ platform, url }) => {
+export const load: PageServerLoad = async ({ platform, url, locals }) => {
   const env = platform?.env;
   const empty = {
     events: [] as UnifiedEvent[],
     total: 0,
+    totalCapped: false,
     summary: { trace: 0, audit: 0, failures: 0, quarantined: 0 },
     eventTypes: [] as string[],
     filters: {
@@ -110,6 +114,18 @@ export const load: PageServerLoad = async ({ platform, url }) => {
   const pageSize = PAGE_SIZES.includes(Number(url.searchParams.get('pageSize')))
     ? Number(url.searchParams.get('pageSize'))
     : 50;
+
+  // Message trace shows who writes to whom and about what, so every search is on the record
+  // (contractor review S14): the filters, and a short hash of the text typed, never the text.
+  if (locals?.user && (q || source !== 'all' || direction || status || event || outcome !== 'all' || from || to)) {
+    const qHash = q ? (await hashToken(q)).slice(0, 12) : '';
+    await audit(env.DB, {
+      event_type: 'admin.investigate_search',
+      actor_id: locals.user.id,
+      actor_role: locals.user.role,
+      detail: `source=${source} direction=${direction} status=${status} event=${event} outcome=${outcome} from=${from} to=${to} q=${qHash}`,
+    });
+  }
 
   const where: string[] = [];
   const binds: (string | number)[] = [];
@@ -156,7 +172,8 @@ export const load: PageServerLoad = async ({ platform, url }) => {
 
   const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const scoped = `WITH unified AS (${UNIFIED}) SELECT * FROM unified ${filter}`;
-  const counted = `WITH unified AS (${UNIFIED}) SELECT COUNT(*) AS total FROM unified ${filter}`;
+  // Counting stops at COUNT_CAP + 1 rows so a broad filter never scans the whole history (review C6).
+  const counted = `WITH unified AS (${UNIFIED}) SELECT COUNT(*) AS total FROM (SELECT 1 FROM unified ${filter} LIMIT ${COUNT_CAP + 1})`;
 
   try {
     const [rows, totalRow, summaryRow, types] = await Promise.all([
@@ -179,7 +196,8 @@ export const load: PageServerLoad = async ({ platform, url }) => {
 
     return {
       events: rows.results || [],
-      total: totalRow?.total ?? 0,
+      total: Math.min(totalRow?.total ?? 0, COUNT_CAP),
+      totalCapped: (totalRow?.total ?? 0) > COUNT_CAP,
       summary: {
         trace: summaryRow?.trace ?? 0,
         audit: summaryRow?.audit ?? 0,

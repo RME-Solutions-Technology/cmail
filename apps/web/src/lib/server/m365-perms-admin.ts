@@ -7,13 +7,14 @@ import {
   M365_PERMS_SETTING_APPROVED_ROUND,
   M365_PERMS_SETTING_DRY_RUN,
   M365_PERMS_SETTING_ENABLED,
+  M365_PERMS_SETTING_INCLUDE_MANAGERS,
   M365_PERMS_SETTING_REQUESTED_AT,
   loadM365PermsState,
   loadM365PermsSwitch,
   m365PermsStatusView,
   type M365PermsStatusView,
   type M365PermsSwitch,
-} from '@cmail/shared/m365-perms';
+} from '@stanchion/shared/m365-perms';
 import { audit } from './db';
 
 export type M365PermsConfigStatus =
@@ -88,8 +89,8 @@ async function putSetting(db: D1Database, key: string, value: string, managerId:
   ).bind(key, value, managerId).run();
 }
 
-export type M365PermsAdminAction = 'enable' | 'disable' | 'dry_run_on' | 'dry_run_off' | 'sync_now' | 'approve_round';
-const ACTIONS: readonly string[] = ['enable', 'disable', 'dry_run_on', 'dry_run_off', 'sync_now', 'approve_round'];
+export type M365PermsAdminAction = 'enable' | 'disable' | 'dry_run_on' | 'dry_run_off' | 'sync_now' | 'approve_round' | 'managers_on' | 'managers_off';
+const ACTIONS: readonly string[] = ['enable', 'disable', 'dry_run_on', 'dry_run_off', 'sync_now', 'approve_round', 'managers_on', 'managers_off'];
 
 export function parseM365PermsAdminAction(value: unknown): M365PermsAdminAction | null {
   return typeof value === 'string' && ACTIONS.includes(value) ? value as M365PermsAdminAction : null;
@@ -161,6 +162,19 @@ export async function applyM365PermsAdminAction(
     return { ok: true, message: on
       ? 'Dry run is on: runs only report what they would change.'
       : 'Dry run is off: the next run applies changes.' };
+  }
+  if (action === 'managers_on' || action === 'managers_off') {
+    const on = action === 'managers_on';
+    await putSetting(db, M365_PERMS_SETTING_INCLUDE_MANAGERS, on ? 'true' : 'false', manager.id);
+    await audit(db, {
+      event_type: 'org.m365_perms_include_managers',
+      actor_id: manager.id,
+      actor_role: 'manager',
+      detail: `Shared mailbox access for manager accounts turned ${on ? 'on' : 'off'}`,
+    });
+    return { ok: true, message: on
+      ? 'Manager accounts are included from the next run: a manager whose address equals their Microsoft 365 primary address gets the access Exchange grants them (added or raised only, never lowered or removed).'
+      : 'Manager accounts are no longer matched. Access already given to them stays as it is.' };
   }
   const toggle = await loadM365PermsSwitch(db);
   if (!toggle.enabled) return { ok: false, status: 409, error: 'Turn shared mailbox access on first' };

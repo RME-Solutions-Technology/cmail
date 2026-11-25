@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Initial manager setup · {data.appName || 'cmail'}</title>
+  <title>Initial manager setup · {data.appName || 'Stanchion'}</title>
   <meta name="referrer" content="strict-origin" />
 </svelte:head>
 

@@ -1,9 +1,29 @@
+---
+title: "Upgrading and keeping your settings"
+summary: "Where each setting lives, what an upgrade changes, and how to upgrade a copy or a fork."
+applies_to: both
+audience: [operator]
+switch: none
+last_reviewed: 2026-11-16
+related: [operations.md, downstream-implementations.md]
+---
+
 # Upgrading and keeping your settings
 
 This page explains where each kind of instance setting lives, what an upgrade
 from upstream changes, and how to upgrade a plain copy or a fork without losing
-anything. The detailed runbook is in [Running cmail: upgrade](operations.md#upgrade);
+anything. The detailed runbook is in [Running Stanchion: upgrade](operations.md#upgrade);
 this page explains the why and the checks around it.
+
+**In this article**
+
+- [Where your settings live](#where-your-settings-live)
+- [What an upgrade changes](#what-an-upgrade-changes)
+- [Upgrading a plain copy](#upgrading-a-plain-copy)
+- [After pulling: check for new settings](#after-pulling-check-for-new-settings)
+- [Upgrading a fork](#upgrading-a-fork)
+- [Several instances](#several-instances)
+- [Rolling back](#rolling-back)
 
 ## Where your settings live
 
@@ -43,7 +63,7 @@ Use this when your checkout tracks upstream directly and has no code changes.
 1. Read the [changelog](../CHANGELOG.md) since your version. Note any new
    migration, binding, cron or secret.
 2. Record the current Pages deployment and Worker versions, and take a backup
-   point (see [Running cmail](operations.md#upgrade)).
+   point (see [Running Stanchion](operations.md#upgrade)).
 3. Pull and check:
 
    ```sh
@@ -96,7 +116,7 @@ as a queue consumer, by eye. New secrets are listed in the changelog and in the
 Use this when you keep your own changes in a private repository.
 
 1. Keep upstream as a second remote:
-   `git remote add upstream https://github.com/Rob142857/cmail.git`.
+   `git remote add upstream https://github.com/RME-Solutions-Technology/stanchion.git`.
 2. Fetch and bring your changes on top:
    `git fetch upstream && git rebase upstream/main` (or merge, if your team
    prefers).
@@ -120,6 +140,6 @@ configuration directory.
 ## Rolling back
 
 Code rolls back with Cloudflare's deployment history (see
-[Running cmail: roll back](operations.md#roll-back)). Migrations can't be
+[Running Stanchion: roll back](operations.md#roll-back)). Migrations can't be
 undone: to undo a migration, restore D1 from Time Travel or a backup taken
 before it. That's why you take a backup point before `pnpm db:migrate`.

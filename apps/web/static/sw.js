@@ -1,4 +1,4 @@
-// cmail service worker — minimal and network-only. Deployment lifecycle checks
+// Stanchion service worker — minimal and network-only. Deployment lifecycle checks
 // discover new versions without caching mailbox or application responses.
 
 const VERSION = 'cmail-2026-08-20-1';
@@ -81,7 +81,7 @@ self.addEventListener('message', (event) => {
 self.addEventListener('push', (event) => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
-  const title = typeof payload.title === 'string' ? payload.title.slice(0, 60) : 'cmail';
+  const title = typeof payload.title === 'string' ? payload.title.slice(0, 60) : 'Stanchion';
   const body = typeof payload.body === 'string' ? payload.body.slice(0, 120) : 'A new message arrived.';
   const url = typeof payload.url === 'string' && /^\/mail(?:[/?]|$)/.test(payload.url) ? payload.url : '/mail';
   const tag = typeof payload.tag === 'string' && /^cmail:[A-Za-z0-9_-]{1,128}:[A-Za-z0-9_-]{1,128}$/.test(payload.tag)

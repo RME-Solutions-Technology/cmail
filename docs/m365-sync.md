@@ -1,12 +1,25 @@
+---
+title: "Microsoft 365 mailbox sync"
+summary: "How to keep Stanchion accounts and shared mailboxes in step with a Microsoft 365 tenant, read only."
+applies_to: standby
+audience: [operator, manager]
+switch: "Admin > Microsoft 365 > Directory sync"
+last_reviewed: 2026-11-16
+related: [m365-welcome-emails.md, staff-sign-in.md, credentials.md, onboarding-microsoft-365.md]
+---
+
 # Microsoft 365 mailbox sync
+
+**Status:** running on one Microsoft 365 tenant since
+November 2026 (dry run first, then live).
 
 Optional and off by default. When a manager turns it on, the email Worker
 reads the organisation's Microsoft 365 (Entra ID) users on a schedule and keeps
-cmail in step: new licensed users get a pending account and a personal
+Stanchion in step: new licensed users get a pending account and a personal
 mailbox, and people who are disabled, unlicensed or removed are paused. It
 only ever **reads** from Microsoft, and it never deletes mail or mailboxes.
 
-This is the directory half of using cmail as a standby for Exchange Online:
+This is the directory half of using Stanchion as a standby for Exchange Online:
 the people who would need the standby already have accounts when it is
 needed. Sign-in itself is separate (Google, Microsoft, an email code, or the
 [Cloudflare Access bridge](staff-sign-in.md#cloudflare-access-bridge), which
@@ -19,7 +32,7 @@ person how to sign in.
 - Code: `apps/email-worker/src/m365-sync/` (Graph client, rules, apply,
   scheduled driver), `packages/shared/src/m365-sync.ts` (switch, config check,
   status types), `apps/web/src/lib/server/m365-sync-admin.ts` and
-  `apps/web/src/routes/admin/m365-sync/` (the Admin page).
+  `apps/web/src/routes/admin/microsoft-365/` (the Admin page).
 - Data: migration `0022_m365_sync.sql` (`m365_sync_links`,
   `m365_sync_state`); migration `0026_m365_mailbox_purpose.sql`
   (`m365_sync_mailbox_purpose`, the mailbox type cache, used only by
@@ -28,11 +41,27 @@ person how to sign in.
 - Tests: `apps/email-worker/src/m365-sync/*.test.ts` and
   `apps/web/src/lib/server/m365-sync-admin.test.ts`.
 
+**In this article**
+
+- [How it works](#how-it-works)
+- [Sync points, and why these ones](#sync-points-and-why-these-ones)
+- [Which accounts are synced](#which-accounts-are-synced)
+- [What the sync changes in Stanchion](#what-the-sync-changes-in-stanchion)
+- [First sign-in](#first-sign-in)
+- [Mass-pause brake](#mass-pause-brake)
+- [The switch (Admin > Microsoft 365 > Directory sync)](#the-switch-admin--microsoft-365--directory-sync)
+- [Troubleshoot the sync](#troubleshoot-the-sync)
+- [How to set up the Entra app (least privilege)](#how-to-set-up-the-entra-app-least-privilege)
+- [Configuration](#configuration)
+- [Runbook](#runbook)
+- [How to test](#how-to-test)
+- [Limits](#limits)
+
 ## How it works
 
 ```mermaid
 flowchart LR
-  admin["Admin > Microsoft 365 sync<br/>(manager switch)"] -->|org_settings| d1[(D1)]
+  admin["Admin > Microsoft 365 > Directory sync<br/>(manager switch)"] -->|org_settings| d1[(D1)]
   cron["Email Worker cron<br/>*/15 * * * *"] --> sw{"Switch on?"}
   sw -->|no| stop["Return. No Graph call, no write"]
   sw -->|yes| graph["Microsoft Graph v1.0<br/>users/delta, $batch checkMemberGroups,<br/>$batch mailboxSettings/userPurpose (optional)"]
@@ -76,10 +105,12 @@ Not used, on purpose:
 
 ## Which accounts are synced
 
-An Entra object becomes a cmail **person** when all of these hold:
+An Entra object becomes a Stanchion **person** when all of these hold:
 
 1. it is not deleted (no `@removed`);
-2. its primary SMTP address (`mail`) is on `MAIL_DOMAIN` and is an address
+2. its primary SMTP address (`mail`) is on one of the organisation's mail
+   domains (`MAIL_DOMAIN`, plus the tenant's verified domains once the sync
+   can read them: [Multiple mail domains](multi-domain.md)) and is an address
    Admin could create (letters, digits, `.`, `_`, `-`);
 3. `userType` is `Member` (guests are left out);
 4. `accountEnabled` is `true`;
@@ -138,7 +169,7 @@ are two ways to tell it, and they can be used together:
    (below) and migration `0026`.
 
 Either way the object is treated as shared whatever its licence or sign-in
-state, and both take the same path in cmail. The sync:
+state, and both take the same path in Stanchion. The sync:
 
 - creates the shared mailbox if no mailbox has that address, or links an
   existing shared mailbox with that address (`m365_sync.shared_adopted`). An
@@ -249,9 +280,9 @@ can then decide what to do with it.
 Without either option, shared mailboxes are not synced at all. Create them
 in Admin as before.
 
-## What the sync changes in cmail
+## What the sync changes in Stanchion
 
-| Microsoft 365 | cmail (live mode) |
+| Microsoft 365 | Stanchion (live mode) |
 |---|---|
 | New in-scope person, address free | Creates a **pending** standard account, a personal mailbox at that address and the owner's Full assignment, in one batch with `user.provisioned` and `mailbox.created` audit rows |
 | New in-scope person, a standard account with that address exists (pending or active) | **Adopts** it: links it, no new account (`m365_sync.user_adopted`) |
@@ -293,13 +324,13 @@ Rules that always hold:
 ## First sign-in
 
 While the sync is **on**, a person it created (or adopted) signs in for the
-first time with **Sign in with Microsoft** on cmail's own sign-in page, with
+first time with **Sign in with Microsoft** on Stanchion's own sign-in page, with
 no invitation. Code: `apps/web/src/lib/server/m365-sync-signin.ts`, called
 from the Microsoft OIDC callback only when no identity is bound to the
 signed-in subject and there is no invitation or bootstrap proof.
 
 The decision rests only on the **ID token** returned by the token endpoint,
-verified by cmail, never on UserInfo, the email or the UPN:
+verified by Stanchion, never on UserInfo, the email or the UPN:
 
 1. Signature: RS256 with a key from the configured tenant's published keys
    (`https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys?appid=<client id>`;
@@ -389,7 +420,7 @@ While a round is held, no other round runs. A held round is dropped after 7
 days. In dry run the brake never holds; the report says the round would have
 been held.
 
-## The switch (Admin > Microsoft 365 sync)
+## The switch (Admin > Microsoft 365 > Directory sync)
 
 Managers only. Three controls, each audited:
 
@@ -412,7 +443,7 @@ configured"). If the web app cannot ask the Worker (no `EMAIL_SERVICE`
 binding), the switch still works, and the Worker records `not_configured`
 itself on its next run without changing anything.
 
-## Failure modes
+## Troubleshoot the sync
 
 | What happens | What the sync does | Shown as |
 |---|---|---|
@@ -438,7 +469,7 @@ itself on its next run without changing anything.
 Logs carry outcome codes and counts only: no addresses, names, tokens or
 response bodies.
 
-## Entra app setup (least privilege)
+## How to set up the Entra app (least privilege)
 
 Onboarding a Microsoft 365 organisation end to end? See [the onboarding guide](onboarding-microsoft-365.md#5-microsoft-365-sync), step 5, with `scripts/onboarding/new-sync-app.ps1`.
 
@@ -459,6 +490,10 @@ those roles).
    **`MailboxSettings.Read`** (application), the least privileged
    permission for reading `userPurpose`
    ([get mailboxSettings permissions](https://learn.microsoft.com/en-us/graph/api/user-get-mailboxsettings#permissions)).
+   For [multiple mail domains](multi-domain.md), also add **`Domain.Read.All`**
+   (application), the least privileged permission for listing the tenant's
+   domains ([list domains permissions](https://learn.microsoft.com/en-us/graph/api/domain-list#permissions)).
+   Without it the sync covers `MAIL_DOMAIN` only, as before, and Admin says so.
    Nothing else: no mail, no `Directory.*`, no write permission.
 3. **Grant admin consent** for the tenant, and check that each permission
    shows "Granted".
@@ -472,9 +507,9 @@ those roles).
    without it ([checkMemberGroups](https://learn.microsoft.com/en-us/graph/api/directoryobject-checkmembergroups)).
 
 The app can read every user's profile in the tenant. It cannot read mail,
-cannot change anything in Entra, and cmail never sends it a write. With
+cannot change anything in Entra, and Stanchion never sends it a write. With
 `MailboxSettings.Read` it can also read every mailbox's settings (time zone,
-working hours, automatic-reply text and mailbox type), though cmail only
+working hours, automatic-reply text and mailbox type), though Stanchion only
 ever asks for the mailbox type. Exchange's
 [RBAC for Applications](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)
 can grant `Application MailboxSettings.Read` to a scope of mailboxes instead
@@ -513,7 +548,7 @@ settings. Public Microsoft cloud only (`graph.microsoft.com`,
    database).
 2. Create the Entra app (above). Set the vars and the secret, add the cron,
    and deploy the email Worker, then the web app.
-3. Open Admin > Microsoft 365 sync. It should not say "not configured".
+3. Open Admin > Microsoft 365 > Directory sync. It should not say "not configured".
 4. Turn the sync on with **dry run on**. Within 15 minutes the report shows
    what would be created, adopted, paused and in conflict.
 5. Fix conflicts at the source (Microsoft 365 or Admin), press Sync now, and
@@ -573,9 +608,9 @@ secret and vars and delete the Entra app; the two tables can stay.
 Locally, single files only (the full suite runs in CI):
 
 ```sh
-pnpm --filter @cmail/email-worker exec vitest run src/m365-sync
-pnpm --filter @cmail/web exec vitest run src/lib/server/m365-sync-admin.test.ts
-pnpm --filter @cmail/email-worker check
+pnpm --filter @stanchion/email-worker exec vitest run src/m365-sync
+pnpm --filter @stanchion/web exec vitest run src/lib/server/m365-sync-admin.test.ts
+pnpm --filter @stanchion/email-worker check
 ```
 
 `shared-detection.sql.node.test.ts` covers shared mailbox detection: off by
@@ -621,10 +656,12 @@ prove a live tenant's behaviour.
 - A mailbox converted in Exchange (user to shared or back) is picked up at
   the daily reconciliation or on Sync now: the conversion itself is not in
   the users delta, and a cached type stands until then.
-- Shared mailbox detection is built and tested against a fake Graph only; it
-  has not yet been run against a real tenant. Start it in dry run.
+- Shared mailbox detection has run on one real tenant (dry run, then live,
+  November 2026). Start it in dry run on each new tenant.
 - Mail aliases (`proxyAddresses`) are not synced; only the primary address.
 - Mailbox delegation and Send As are not synced.
-- One mail domain (`MAIL_DOMAIN`). Users on other domains in the tenant are
-  out of scope.
+- Mail domains: `MAIL_DOMAIN` plus the tenant's verified domains, read with
+  `Domain.Read.All` at most once a day (or on Sync now). Without that
+  permission, users on other domains in the tenant are out of scope, as
+  before. See [Multiple mail domains](multi-domain.md).
 - The sync needs Workers Paid: Workers Free allows only 50 external subrequests per invocation, which a run with group checks can pass.

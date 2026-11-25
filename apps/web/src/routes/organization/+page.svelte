@@ -11,7 +11,7 @@
 </script>
 
 <svelte:head>
-  <title>Organisation directory · {data.appName || 'cmail'}</title>
+  <title>Organisation directory · {data.appName || 'Stanchion'}</title>
   <meta name="description" content={`Public position directory for ${data.orgName || 'this organisation'}.`} />
 </svelte:head>
 

@@ -24,7 +24,7 @@
 import {
   M365_SYNC_SETTING_DRY_RUN,
   M365_SYNC_SETTING_ENABLED,
-} from '@cmail/shared/m365-sync';
+} from '@stanchion/shared/m365-sync';
 import {
   M365_WELCOME_DEFAULT_PER_HOUR,
   M365_WELCOME_LIST_LIMIT,
@@ -37,14 +37,19 @@ import {
   M365_WELCOME_SETTING_SINCE,
   PASSKEY_SIGNIN_SETTING,
   WELCOME_ELIGIBLE_SQL,
+  WELCOME_SIGNIN_NAME_NO_UPN_SQL,
+  WELCOME_SIGNIN_NAME_SQL,
+  WELCOME_STANDBY_SETTINGS,
   WELCOME_WAITING_SQL,
+  hasUpnColumn,
   parseM365WelcomeState,
   parseM365WelcomeSwitch,
   parseWelcomeProfile,
   renderWelcomeEmail,
+  standbyIsOn,
   welcomeProfileProblems,
   type M365WelcomeState,
-} from '@cmail/shared/m365-welcome';
+} from '@stanchion/shared/m365-welcome';
 
 export interface WelcomeWorkerEnv {
   DB: D1Database;
@@ -113,6 +118,7 @@ interface DueRow {
   attempts: number;
   email: string;
   display_name: string;
+  sign_in_name: string;
 }
 
 export async function runWelcomeTick(env: WelcomeWorkerEnv, deps: WelcomeDeps = {}): Promise<WelcomeTickResult> {
@@ -120,10 +126,10 @@ export async function runWelcomeTick(env: WelcomeWorkerEnv, deps: WelcomeDeps = 
   const now = (deps.now ?? Date.now)();
 
   const { results } = await db.prepare(
-    'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?)',
+    'SELECT key, value FROM org_settings WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).bind(
     M365_WELCOME_SETTING_ENABLED, M365_WELCOME_SETTING_SINCE, M365_WELCOME_SETTING_NOTE, M365_WELCOME_SETTING_PROFILE,
-    M365_SYNC_SETTING_ENABLED, M365_SYNC_SETTING_DRY_RUN, PASSKEY_SIGNIN_SETTING,
+    M365_SYNC_SETTING_ENABLED, M365_SYNC_SETTING_DRY_RUN, PASSKEY_SIGNIN_SETTING, ...WELCOME_STANDBY_SETTINGS,
   ).all<{ key: string; value: string }>();
   const rows = results ?? [];
   const toggle = parseM365WelcomeSwitch(rows);
@@ -209,13 +215,18 @@ export async function runWelcomeTick(env: WelcomeWorkerEnv, deps: WelcomeDeps = 
     let limited = budget <= 0;
 
     if (!limited) {
+      // Before migration 0032 there is no UPN: name the account address.
+      const signInName = await hasUpnColumn(db) ? WELCOME_SIGNIN_NAME_SQL : WELCOME_SIGNIN_NAME_NO_UPN_SQL;
       const due = await db.prepare(
-        `SELECT w.user_id, w.attempts, u.email, u.display_name
+        `SELECT w.user_id, w.attempts, u.email, u.display_name,
+                ${signInName} AS sign_in_name
          FROM m365_welcome_emails w JOIN users u ON u.id = w.user_id
+         LEFT JOIN m365_sync_links l ON l.user_id = u.id
          WHERE w.status = 'queued' AND w.next_attempt_at <= ?
          ORDER BY w.next_attempt_at, w.user_id LIMIT ?`,
       ).bind(now, budget).all<DueRow>();
       const passkeys = settings.get(PASSKEY_SIGNIN_SETTING) === 'true';
+      const standby = standbyIsOn(settings);
 
       for (const row of due.results ?? []) {
         // Still eligible? (signed in, paused, left Microsoft 365, became shared)
@@ -238,7 +249,7 @@ export async function runWelcomeTick(env: WelcomeWorkerEnv, deps: WelcomeDeps = 
         ).bind(now, row.user_id, now).run();
         if (claim.meta.changes !== 1) continue;
 
-        const email = renderWelcomeEmail({ profile, passkeys, note: toggle.note, displayName: row.display_name ?? '', address: row.email });
+        const email = renderWelcomeEmail({ profile, passkeys, note: toggle.note, displayName: row.display_name ?? '', address: row.email, signInName: row.sign_in_name, standby });
         const attempt = row.attempts + 1;
         state.attempts.push(now);
         // Counted before the send, and saved at once (lease kept), so a run

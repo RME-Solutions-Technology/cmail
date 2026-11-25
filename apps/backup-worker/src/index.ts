@@ -1,4 +1,4 @@
-// cmail backup Worker: scheduled only. It has no fetch handler, so nothing is
+// Stanchion backup Worker: scheduled only. It has no fetch handler, so nothing is
 // reachable over HTTP; it runs on its cron trigger and logs counts only.
 import { runBackup, type BackupEnv } from './backup';
 
@@ -10,7 +10,7 @@ export default {
     console.log('cmail backup run', summary);
     if (summary.copyFailures > 0 || summary.databaseError || summary.paused) {
       // Throwing marks the run as failed, so it shows in Cron history; the next run retries.
-      throw new Error(`cmail backup: ${summary.copyFailures} copy failures, database ${summary.databaseError ?? 'ok'}, ${summary.paused ? `paused (${summary.paused})` : 'not paused'}`);
+      throw new Error(`Stanchion backup: ${summary.copyFailures} copy failures, database ${summary.databaseError ?? 'ok'}, ${summary.paused ? `paused (${summary.paused})` : 'not paused'}`);
     }
   },
 };

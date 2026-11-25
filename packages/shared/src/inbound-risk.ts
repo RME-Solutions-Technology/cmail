@@ -4,9 +4,11 @@
  * Cloudflare Email Routing already refuses mail that fails both SPF and DKIM,
  * violates the sender's DMARC policy, or arrives from an IP on a realtime
  * block list. What reaches the Worker has therefore cleared the coarse gate.
- * What it does *not* carry is an `Authentication-Results` header — Email
- * Routing does not stamp one on Worker deliveries (cloudflare/workerd#6740) —
- * so per-message SPF/DKIM/DMARC verdicts cannot be recorded from here.
+ * Older notes said Email Routing stamps no `Authentication-Results` header
+ * on Worker deliveries (cloudflare/workerd#6740). Live instances now trust one
+ * stamped with the boundary's own id (`INBOUND_AUTHSERV_ID`, `mx.cloudflare.net`)
+ * and record SPF/DKIM/DMARC from it; a second record claiming that id is a
+ * forgery and voids every verdict (index.ts `parsedAuthenticationFacts`).
  *
  * A spam score does come through, on `X-CF-SpamH-Score`. Cloudflare does not
  * document its scale, so this module records the score unconditionally but
@@ -126,12 +128,21 @@ export interface InboundPlacementInput {
   threshold: number | null;
   /** From {@link pickSenderRule}; null when no organisation rule matched. */
   senderRule: SenderRuleAction | null;
+  /**
+   * True only when the trusted boundary recorded a DMARC pass for the header
+   * From. An allow rule trusts the From address, so without this anyone could
+   * type an allowed address and skip the spam check (contractor review S4).
+   * A block rule applies either way.
+   */
+  senderAuthenticated: boolean;
 }
 
 export interface InboundPlacementResult {
   folder: 'inbox' | 'spam';
   /** Recorded in messages.quarantine_reason. Null when delivered normally. */
   reason: string | null;
+  /** True when an allow rule matched but was not applied because the sender was not authenticated. */
+  allowIgnored?: boolean;
 }
 
 /**
@@ -148,9 +159,27 @@ export interface InboundPlacementResult {
  */
 export function decideInboundPlacement(input: InboundPlacementInput): InboundPlacementResult {
   if (input.senderRule === 'block') return { folder: 'spam', reason: 'blocked-sender' };
-  if (input.senderRule === 'allow') return { folder: 'inbox', reason: null };
+  const allowIgnored = input.senderRule === 'allow' && !input.senderAuthenticated;
+  if (input.senderRule === 'allow' && input.senderAuthenticated) return { folder: 'inbox', reason: null };
   if (input.threshold !== null && input.spamScore !== null && input.spamScore >= input.threshold) {
-    return { folder: 'spam', reason: `spam-score:${input.spamScore}` };
+    return { folder: 'spam', reason: `spam-score:${input.spamScore}`, ...(allowIgnored ? { allowIgnored } : {}) };
   }
-  return { folder: 'inbox', reason: null };
+  return { folder: 'inbox', reason: null, ...(allowIgnored ? { allowIgnored } : {}) };
+}
+
+/**
+ * Applies a rate-limit hold to a placement. A message the inbound guard held
+ * (an hourly limit tripped) goes to Junk with reason `rate-limit`, so nothing
+ * is bounced and nothing is lost. The exception: a correspondent this mailbox
+ * already knows, whose DMARC result is a pass recorded by the trusted
+ * boundary, keeps the normal placement, so a flood of made-up senders cannot
+ * push real conversations out of the Inbox. An existing Junk decision wins.
+ */
+export function applyRateHold(
+  placement: InboundPlacementResult,
+  input: { held: boolean; senderAuthenticated: boolean; firstContact: boolean },
+): InboundPlacementResult {
+  if (!input.held || placement.folder === 'spam') return placement;
+  if (input.senderAuthenticated && !input.firstContact) return placement;
+  return { folder: 'spam', reason: 'rate-limit' };
 }

@@ -1,3 +1,4 @@
+import { loadOrgDomainsCache, orgDomainsFrom, usableOrgDomainsCache } from '@stanchion/shared/org-domains';
 import { normalizeDomain } from './validation';
 
 export interface PublicDirectoryEntry {
@@ -28,11 +29,14 @@ export async function isPublicDirectoryEnabled(db: D1Database | undefined): Prom
 export async function loadPublicDirectory(
   db: D1Database | undefined,
   rawMailDomain: unknown,
+  tenantId?: unknown,
 ): Promise<PublicDirectoryResult> {
   const mailDomain = normalizeDomain(rawMailDomain);
   if (!db || !mailDomain || !await isPublicDirectoryEnabled(db)) return EMPTY_RESULT;
 
   try {
+    // Work emails on any of the organisation's domains (docs/multi-domain.md).
+    const domains = orgDomainsFrom(mailDomain, usableOrgDomainsCache(await loadOrgDomainsCache(db), tenantId)).domains;
     // Deliberately select only the approved public projection. Login addresses,
     // user IDs, unit names, hierarchy, and internal position metadata never
     // cross this boundary. Active account and mailbox eligibility are checked
@@ -48,7 +52,7 @@ export async function loadPublicDirectory(
        INNER JOIN users u ON u.id = p.user_id AND u.status = 'active'
        WHERE p.visibility = 'public'
          AND trim(p.work_email) <> ''
-         AND lower(substr(p.work_email, instr(p.work_email, '@') + 1)) = ?
+         AND lower(substr(p.work_email, instr(p.work_email, '@') + 1)) IN (SELECT value FROM json_each(?))
          AND trim(p.occupant_display_name) <> ''
          AND EXISTS (
            SELECT 1
@@ -59,9 +63,11 @@ export async function loadPublicDirectory(
              AND m.address = p.work_email COLLATE NOCASE
          )
        ORDER BY p.sort_order, positionTitle, occupantDisplayName, p.id`,
-    ).bind(mailDomain).all<PublicDirectoryEntry>();
+    ).bind(JSON.stringify(domains)).all<PublicDirectoryEntry>();
     return { enabled: true, entries: result.results || [] };
-  } catch {
+  } catch (caught) {
+    // The public page shows an empty directory rather than an error.
+    console.error('Public directory could not be read', caught instanceof Error ? caught.name : 'UnknownError');
     return EMPTY_RESULT;
   }
 }
