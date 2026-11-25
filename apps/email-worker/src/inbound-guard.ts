@@ -29,6 +29,8 @@ export interface InboundReservationInput {
   senderAddress: string;
   deliveryKey: string;
   messageBytes: number;
+  /** The mailbox type ('shared' gets a higher default message limit). */
+  mailboxType?: string;
 }
 
 export type InboundReservationResult =
@@ -43,6 +45,9 @@ export const INBOUND_GUARD_DEFAULTS: Readonly<InboundGuardConfiguration> = Objec
   senderMessagesPerHour: 30,
   mailboxStorageBytes: DEFAULT_MAILBOX_STORAGE_QUOTA_BYTES,
 });
+
+/** Default hourly message limit for a shared mailbox (a team inbox gets more mail than a person); an explicit setting still wins. */
+export const SHARED_MAILBOX_MESSAGES_PER_HOUR = 600;
 
 export const INBOUND_GUARD_HARD_MAX: Readonly<InboundGuardConfiguration> = Object.freeze({
   mailboxMessagesPerHour: 10_000,
@@ -90,11 +95,11 @@ function parseBoundedLimit(value: unknown, fallback: number, hardMax: number): n
   return Math.min(integer, hardMax);
 }
 
-export function inboundGuardConfiguration(env: Partial<InboundGuardEnv>): InboundGuardConfiguration {
+export function inboundGuardConfiguration(env: Partial<InboundGuardEnv>, mailboxType?: string): InboundGuardConfiguration {
   return {
     mailboxMessagesPerHour: parseBoundedLimit(
       env.INBOUND_MAILBOX_MESSAGES_PER_HOUR,
-      INBOUND_GUARD_DEFAULTS.mailboxMessagesPerHour,
+      mailboxType === 'shared' ? SHARED_MAILBOX_MESSAGES_PER_HOUR : INBOUND_GUARD_DEFAULTS.mailboxMessagesPerHour,
       INBOUND_GUARD_HARD_MAX.mailboxMessagesPerHour,
     ),
     mailboxBytesPerHour: parseBoundedLimit(
@@ -205,7 +210,7 @@ export async function reserveInboundDelivery(
     return { status: 'unavailable', reservationId: null };
   }
 
-  const configuration = inboundGuardConfiguration(env);
+  const configuration = inboundGuardConfiguration(env, input.mailboxType);
   if (guardDisabled(configuration)) {
     return { status: 'accepted', reservationId: null };
   }
@@ -294,7 +299,7 @@ export async function reserveInboundDeliveryHolding(
   const first = await reserveInboundDelivery(env, input);
   if (first.status === 'accepted' || first.status === 'duplicate') return first;
 
-  const configuration = inboundGuardConfiguration(env);
+  const configuration = inboundGuardConfiguration(env, input.mailboxType);
   const keyBroken = first.status === 'unavailable'
     && configuration.senderMessagesPerHour > 0
     && decodeSenderHashKey(env.INBOUND_SENDER_HASH_KEY) === null;
@@ -321,4 +326,92 @@ export async function reserveInboundDeliveryHolding(
   }
   if (held.status === 'duplicate') return held;
   return held.status === 'rejected' ? { status: 'rejected', reservationId: null } : { status: 'unavailable', reservationId: null };
+}
+
+export type InboundSenderRekeyResult = 'ok' | 'over' | 'skipped';
+
+/**
+ * Moves one accepted reservation from the envelope-sender key to the key of
+ * the From address, once the message is parsed and the trusted boundary has
+ * recorded a DMARC pass (S2 follow-up). The envelope sender is chosen by the
+ * sender and can change on every message (bounce-style rotating addresses), so
+ * it cannot hold a per-sender limit on its own; an authenticated From address
+ * cannot be rotated that cheaply. The first key stays the safe default: this
+ * runs only after a DMARC pass, and any problem (no key, no limit, no From, a
+ * database error) leaves the row on its envelope key, never unlimited.
+ * A replayed, validly signed message from a real sender can push that sender's
+ * address over the limit; only first-contact mail is then held (applyRateHold
+ * lets an authenticated known correspondent through).
+ * A retried delivery makes a second reservation and counts twice, like any
+ * other attempt in the ledger.
+ * It is an address, not a domain, so one big provider (gmail.com) is never
+ * one bucket. `over` means this message is past the per-sender hourly limit;
+ * the caller holds it in Junk like any other rate limit, never bounces it.
+ */
+export async function rekeyInboundSenderToFrom(
+  env: InboundGuardEnv,
+  input: { reservationId: string | null; mailboxId: string; fromAddress: string; dmarc: string | null; mailboxType?: string },
+): Promise<InboundSenderRekeyResult> {
+  if (!input.reservationId || input.dmarc !== 'pass') return 'skipped';
+  // Plus-addressing (a+1@, a+2@) is one sender: without this a rotating tag would give every message its own bucket.
+  const fromAddress = (input.fromAddress || '').trim().toLowerCase().replace(/\+[^@]*@/, '@');
+  if (!fromAddress || !fromAddress.includes('@')) return 'skipped';
+  const limit = inboundGuardConfiguration(env, input.mailboxType).senderMessagesPerHour;
+  if (limit <= 0) return 'skipped';
+  try {
+    const hash = await hashInboundSender(input.mailboxId, `from:${fromAddress}`, env.INBOUND_SENDER_HASH_KEY);
+    if (!hash) return 'skipped';
+    await env.DB.prepare(
+      `UPDATE mailbox_reservations SET sender_hash = ?
+       WHERE id = ? AND mailbox_id = ? AND reservation_type = 'inbound'`,
+    ).bind(hash, input.reservationId, input.mailboxId).run();
+    const counted = await env.DB.prepare(
+      `SELECT COUNT(*) AS total FROM mailbox_reservations
+       WHERE mailbox_id = ? AND reservation_type = 'inbound' AND sender_hash = ?
+         AND created_epoch > unixepoch() - 3600`,
+    ).bind(input.mailboxId, hash).first<{ total: number }>();
+    const total = Number(counted?.total ?? 0);
+    if (total > limit) {
+      // A held message must not keep charging its sender (the envelope path writes held rows with no
+      // sender key too), or a sender above the limit would stay held until its rate drops below it.
+      await env.DB.prepare(
+        `UPDATE mailbox_reservations SET sender_hash = '' WHERE id = ? AND mailbox_id = ? AND reservation_type = 'inbound'`,
+      ).bind(input.reservationId, input.mailboxId).run();
+      return 'over';
+    }
+    return 'ok';
+  } catch {
+    return 'skipped';
+  }
+}
+
+export const INBOUND_RATE_LIMIT_AUDIT_EVENT = 'inbound.rate_limited';
+
+/**
+ * One audit row per mailbox per hour when an inbound limit holds mail, so a
+ * manager can see it on the audit page. Existing audit_log table only; the
+ * NOT EXISTS keeps a flood from writing a row per message. Holds no sender or
+ * message detail. Never throws.
+ */
+export async function recordInboundRateLimitAudit(db: D1Database, mailboxId: string, why: string): Promise<boolean> {
+  try {
+    const result = await db.prepare(
+      `INSERT INTO audit_log (event_id, timestamp, actor_role, event_type, target, detail)
+       SELECT ?, datetime('now'), 'system', ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM audit_log
+         WHERE event_type = ? AND target = ? AND timestamp > datetime('now', '-1 hour')
+       )`,
+    ).bind(
+      crypto.randomUUID(),
+      INBOUND_RATE_LIMIT_AUDIT_EVENT,
+      mailboxId,
+      `An inbound mail limit was reached (${why}); matching mail is filed to Junk instead of bounced`.slice(0, 200),
+      INBOUND_RATE_LIMIT_AUDIT_EVENT,
+      mailboxId,
+    ).run();
+    return Number(result.meta?.changes || 0) > 0;
+  } catch {
+    return false;
+  }
 }
