@@ -60,6 +60,11 @@ and *standby* are defined in the [Glossary](glossary.md).
 - [Staff sign-in](staff-sign-in.md): staff-portal links, the Cloudflare Access bridge, Microsoft sign-in for synced people.
 - [Passkey break-glass sign-in](passkeys.md): sign in when Microsoft or Access is down.
 
+For the encrypted store that keeps setup-wizard secrets in D1 under one
+Worker key (`CMAIL_VAULT_KEY`, held by the organisation, env secrets still
+win), see [Secret vault](secret-vault.md), including key custody, rotation
+and restores.
+
 ## Microsoft 365 standby
 
 All off by default, each with its own Admin switch. Order and setup:

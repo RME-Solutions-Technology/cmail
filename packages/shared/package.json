@@ -29,10 +29,11 @@
     "./graph-import": "./src/graph-import.ts",
     "./m365-welcome": "./src/m365-welcome.ts",
     "./focused-inbox": "./src/focused-inbox.ts",
-    "./org-domains": "./src/org-domains.ts"
+    "./org-domains": "./src/org-domains.ts",
+    "./secret-vault": "./src/secret-vault.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --types @cloudflare/workers-types --strict --skipLibCheck src/types.ts src/push.ts src/sanitize-email.ts src/compose-html.ts src/compose-style.ts src/compose-paste.ts src/link-risk.ts src/link-blocklist.ts src/inbound-risk.ts src/mailbox-storage.ts src/message-importance.ts src/message-participants.ts src/ics.ts src/contacts.ts src/inbox-rules.ts src/m365-sync.ts src/m365-perms.ts src/account-lockout.ts src/copy-back.ts src/standby.ts src/exchange-mirror.ts src/graph-mirror.ts src/graph-import.ts src/m365-welcome.ts src/focused-inbox.ts src/org-domains.ts",
+    "check": "tsc --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --types @cloudflare/workers-types --strict --skipLibCheck src/types.ts src/push.ts src/sanitize-email.ts src/compose-html.ts src/compose-style.ts src/compose-paste.ts src/link-risk.ts src/link-blocklist.ts src/inbound-risk.ts src/mailbox-storage.ts src/message-importance.ts src/message-participants.ts src/ics.ts src/contacts.ts src/inbox-rules.ts src/m365-sync.ts src/m365-perms.ts src/account-lockout.ts src/copy-back.ts src/standby.ts src/exchange-mirror.ts src/graph-mirror.ts src/graph-import.ts src/m365-welcome.ts src/focused-inbox.ts src/org-domains.ts src/secret-vault.ts",
     "lint": "pnpm check",
     "test": "node --test"
   },

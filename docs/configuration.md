@@ -361,6 +361,7 @@ Before any D1 lookup, the optional native Cloudflare Rate Limiting bindings in `
 | `INBOUND_SENDER_MESSAGES_PER_HOUR` | 30 | 10,000 | Accepted attempts from one envelope sender to one mailbox in the preceding rolling hour |
 | `MAILBOX_STORAGE_QUOTA_BYTES` | 1 GiB | 1 TiB | Shared approximate retained-message bytes allowed for one mailbox |
 | `INBOUND_SENDER_HASH_KEY` | none | exactly 32 bytes | Required Worker secret, encoded as unpadded base64url, while sender limiting is enabled |
+| `CMAIL_VAULT_KEY` | none | exactly 32 bytes | Optional email Worker secret (base64 or base64url) for the [secret vault](secret-vault.md); set `CMAIL_VAULT_KEY_PREVIOUS` only while rotating |
 | `SPAM_QUARANTINE_SCORE` | unset | — | Spam score at or above which a message is filed to Spam instead of Inbox; unset or non-numeric means never quarantine on score alone |
 | `RETENTION_JOBS_ENABLED` | `false` | — | Set to `true` only after reviewing retention policy |
 | `M365_TENANT_ID`, `M365_CLIENT_ID` | unset | — | Optional [Microsoft 365 sync](m365-sync.md): directory (tenant) ID and application (client) ID of the read-only Entra app |
