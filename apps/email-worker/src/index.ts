@@ -69,6 +69,7 @@ import {
   reserveInboundDeliveryHolding,
   type InboundGuardEnv,
 } from './inbound-guard';
+import { mailRejectCode, recordUsage } from '@stanchion/shared/usage';
 import { runRetention, type RetentionEnv } from './retention';
 import { handleDeliveryEventBatch } from './delivery-events';
 
@@ -998,7 +999,7 @@ export const INBOUND_TOOLS: InboundTools = {
   maxSubjectChars: MAX_SUBJECT_CHARS,
 };
 
-export default {
+const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     return handleOutboundServiceRequest(request, env);
   },
@@ -1102,7 +1103,37 @@ export default {
     await handleDeliveryEventBatch(batch, env);
   },
 
+  // Usage events (docs/usage-events.md): count each inbound message by a fixed outcome word. The wrapper
+  // only observes; errors and rejects pass through unchanged.
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    const started = Date.now();
+    let rejectCode: string | null = null;
+    const originalReject = message.setReject.bind(message);
+    try {
+      message.setReject = (reason: string) => {
+        rejectCode = mailRejectCode(reason);
+        return originalReject(reason);
+      };
+    } catch {
+      // A message object that refuses the wrapper is simply counted as accepted or error.
+    }
+    try {
+      await worker.deliverEmail(message, env, ctx);
+    } catch (error) {
+      recordUsage(env, { name: 'mail.inbound', outcome: 'error', status: 500, ms: Date.now() - started, bytes: message.rawSize, count: 1 });
+      throw error;
+    }
+    recordUsage(env, {
+      name: 'mail.inbound',
+      outcome: rejectCode ?? 'accepted',
+      status: rejectCode ? 550 : 200,
+      ms: Date.now() - started,
+      bytes: message.rawSize,
+      count: 1,
+    });
+  },
+
+  async deliverEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     const recipientAddress = normalizeEnvelopeAddress(message.to);
     const senderAddress = normalizeEnvelopeAddress(message.from);
     const messageSize = message.rawSize;
@@ -1670,6 +1701,8 @@ export default {
     }
   },
 };
+
+export default worker;
 
 async function logTrace(db: D1Database, trace: TraceInput): Promise<void> {
   const validDirections: ReadonlySet<TraceDirection> = new Set(['inbound', 'outbound']);

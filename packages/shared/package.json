@@ -6,6 +6,7 @@
   "exports": {
     "./types": "./src/types.ts",
     "./push": "./src/push.ts",
+    "./usage": "./src/usage.ts",
     "./sanitize-email": "./src/sanitize-email.ts",
     "./compose-html": "./src/compose-html.ts",
     "./compose-style": "./src/compose-style.ts",
