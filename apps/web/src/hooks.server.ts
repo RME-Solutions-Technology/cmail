@@ -340,18 +340,18 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 // Usage events (docs/usage-events.md): one content-free data point per request.
 export const handle: Handle = async (input) => {
   const started = Date.now();
-  const routeTemplate = (): string => input.event.route?.id || other;
+  const routeTemplate = (): string => input.event.route?.id || 'other';
   try {
     const response = await handleRequest(input);
     recordUsage(input.event.platform?.env, {
       name: routeTemplate(),
-      outcome: response.status >= 400 ? error : ok,
+      outcome: response.status >= 400 ? 'error' : 'ok',
       status: response.status,
       ms: Date.now() - started,
     });
     return response;
   } catch (error) {
-    recordUsage(input.event.platform?.env, { name: routeTemplate(), outcome: error, status: 500, ms: Date.now() - started });
+    recordUsage(input.event.platform?.env, { name: routeTemplate(), outcome: 'error', status: 500, ms: Date.now() - started });
     throw error;
   }
 };

@@ -25,9 +25,9 @@ export function statusClass(status: number): string {
   return Number.isInteger(status) && status >= 100 && status <= 599 ? `${Math.floor(status / 100)}xx` : '0xx';
 }
 
-export function recordUsage(env: { USAGE?: UsageDataset } | undefined, event: UsageEvent): void {
+export function recordUsage(env: object | undefined, event: UsageEvent): void {
   try {
-    const dataset = env?.USAGE;
+    const dataset = (env as { USAGE?: UsageDataset } | undefined)?.USAGE;
     if (!dataset || typeof dataset.writeDataPoint !== 'function') return;
     const name = String(event.name || 'other').slice(0, 96);
     dataset.writeDataPoint({
