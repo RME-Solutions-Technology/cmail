@@ -339,13 +339,15 @@ const handleRequest: Handle = async ({ event, resolve }) => {
 
 // Usage events (docs/usage-events.md): one content-free data point per request.
 export const handle: Handle = async (input) => {
+  // Internal sub-requests (SSR fetches) would double count one page view.
+  if (input.event.isSubRequest) return handleRequest(input);
   const started = Date.now();
   const routeTemplate = (): string => input.event.route?.id || 'other';
   try {
     const response = await handleRequest(input);
     recordUsage(input.event.platform?.env, {
       name: routeTemplate(),
-      outcome: response.status >= 400 ? 'error' : 'ok',
+      outcome: response.status >= 500 ? 'error' : response.status >= 400 ? 'client' : 'ok',
       status: response.status,
       ms: Date.now() - started,
     });

@@ -29,7 +29,8 @@ export function recordUsage(env: object | undefined, event: UsageEvent): void {
   try {
     const dataset = (env as { USAGE?: UsageDataset } | undefined)?.USAGE;
     if (!dataset || typeof dataset.writeDataPoint !== 'function') return;
-    const name = String(event.name || 'other').slice(0, 96);
+    const raw = String(event.name || 'other');
+    const name = /^[A-Za-z0-9_.\/\[\]-]{1,96}$/.test(raw) ? raw : 'other';
     dataset.writeDataPoint({
       indexes: [name],
       blobs: [name, String(event.outcome || 'ok').slice(0, 48), statusClass(event.status)],
@@ -42,9 +43,9 @@ export function recordUsage(env: object | undefined, event: UsageEvent): void {
 
 /** Our own fixed inbound reject texts, mapped to fixed codes. Anything else becomes rejected_other. */
 const REJECT_CODES: Array<[string, string]> = [
+  ['Stanchion: journal report refused', 'journal_refused'],
   ['Invalid envelope address', 'invalid_address'],
   ['Message exceeds the configured size limit', 'size_limit'],
-  ['Stanchion: recipient unavailable', 'unknown_recipient'],
   ['Message metadata exceeds the configured limit', 'metadata_limit'],
   ['Message cannot be accepted at this time', 'cannot_accept'],
   ['Message could not be parsed', 'unparseable'],
@@ -56,6 +57,8 @@ const REJECT_CODES: Array<[string, string]> = [
 
 export function mailRejectCode(reason: unknown): string {
   if (typeof reason !== 'string') return 'rejected_other';
-  for (const [prefix, code] of REJECT_CODES) if (reason.startsWith(prefix)) return code;
+  for (const [text, code] of REJECT_CODES) if (reason === text) return code;
+  // The recipient-unavailable text is a prefix of a longer fixed response.
+  if (reason.startsWith('Stanchion: recipient unavailable')) return 'unknown_recipient';
   return 'rejected_other';
 }

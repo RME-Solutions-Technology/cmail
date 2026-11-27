@@ -1107,6 +1107,8 @@ const worker = {
   // only observes; errors and rejects pass through unchanged.
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     const started = Date.now();
+    let size = 0;
+    try { size = Number(message.rawSize) || 0; } catch { /* a size we cannot read counts as 0 */ }
     let rejectCode: string | null = null;
     const originalSetReject = message.setReject;
     const originalReject = originalSetReject.bind(message);
@@ -1121,7 +1123,7 @@ const worker = {
     try {
       await worker.deliverEmail(message, env, ctx);
     } catch (error) {
-      recordUsage(env, { name: 'mail.inbound', outcome: 'error', status: 500, ms: Date.now() - started, bytes: message.rawSize, count: 1 });
+      recordUsage(env, { name: 'mail.inbound', outcome: 'error', status: 500, ms: Date.now() - started, bytes: size, count: 1 });
       throw error;
     } finally {
       // Put the message object back exactly as it came.
@@ -1129,10 +1131,10 @@ const worker = {
     }
     recordUsage(env, {
       name: 'mail.inbound',
-      outcome: rejectCode ?? 'accepted',
+      outcome: rejectCode ?? 'handled',
       status: rejectCode ? 550 : 200,
       ms: Date.now() - started,
-      bytes: message.rawSize,
+      bytes: size,
       count: 1,
     });
   },

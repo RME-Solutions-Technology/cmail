@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { readFileSync } from 'node:fs';
+import { mailRejectCode } from '@stanchion/shared/usage';
 import worker from './index';
 
 type Point = { indexes?: string[]; blobs?: string[]; doubles?: number[] };
@@ -19,12 +21,22 @@ async function receive(value: unknown, env: Record<string, unknown>) {
 }
 
 describe('inbound usage events', () => {
+  it('every fixed reject text in the worker maps to its own code, never rejected_other', () => {
+    const sources = ['./index.ts', './exchange-mirror/ingest.ts'].map((p) => readFileSync(new URL(p, import.meta.url), 'utf8')).join(String.fromCharCode(10));
+    const literals = [...sources.matchAll(/setReject\('([^']+)'\)/g)].map((m) => m[1]);
+    expect(literals.length).toBeGreaterThanOrEqual(9);
+    for (const text of literals) expect(mailRejectCode(text), text).not.toBe('rejected_other');
+    expect(mailRejectCode('Stanchion: recipient unavailable; verify the address or contact the organisation')).toBe('unknown_recipient');
+  });
+
   it('counts a rejected message by a fixed code, with no address in the point', async () => {
     const points: Point[] = [];
     const m = message('not an address', 'mailbox@example.test');
     await receive(m.value, { USAGE: datasetFor(points) });
 
+    expect(m.setReject).toHaveBeenCalledTimes(1);
     expect(m.setReject).toHaveBeenCalledWith('Invalid envelope address');
+    expect(m.value.setReject).toBe(m.setReject);
     expect(points).toHaveLength(1);
     expect(points[0].blobs).toEqual(['mail.inbound', 'invalid_address', '5xx']);
     expect(points[0].doubles?.slice(1)).toEqual([321, 1]);
