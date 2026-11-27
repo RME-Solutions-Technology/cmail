@@ -12,7 +12,7 @@
   <meta property="og:title" content="Stanchion — organisational email, under your control">
   <meta property="og:description" content="Personal and shared mailboxes, sign-in with Google or Microsoft, and clear control over who can do what — all running in your own Cloudflare account.">
   <title>Stanchion — organisational email, under your control</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'%3E%3Crect width='64' height='64' rx='15' fill='%230078D4'/%3E%3Cg stroke='%23fff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 25.5v20.2a2.8 2.8 0 0 0 2.8 2.8h32.4a2.8 2.8 0 0 0 2.8-2.8V25.5'/%3E%3Cpath d='M13 25.5 30.3 38a2.9 2.9 0 0 0 3.4 0L51 25.5'/%3E%3Cpath d='M13 25.5 30.3 13a2.9 2.9 0 0 1 3.4 0L51 25.5'/%3E%3C/g%3E%3Ccircle cx='51' cy='13' r='6' fill='%2350E6FF'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f6821f'/%3E%3Crect x='4' y='6' width='24' height='14' rx='2.5' fill='%231d1f23'/%3E%3Cpath d='m6 8.5 10 7 10-7' fill='none' stroke='%23f6821f' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='4' y='23' width='24' height='3' rx='1.5' fill='%231d1f23'/%3E%3C/svg%3E">
   <style>
     /* ═══════════════════════════════════════════════════════════════
        Stanchion landing page.
@@ -515,51 +515,15 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
 
-  <!-- Brand lockup, identical to apps/web/static/logo.svg. Gradient ids are
-       suffixed so a second instance on the page cannot collide with them. -->
+  <!-- Brand lockup, same mark and name as apps/web/static/logo.svg. -->
   <svg class="sprite" aria-hidden="true" focusable="false">
-    <defs>
-      <linearGradient id="tile-lk" x1="0" y1="0" x2="0.85" y2="1">
-        <stop offset="0%" stop-color="#2B88D8"/>
-        <stop offset="55%" stop-color="#0078D4"/>
-        <stop offset="100%" stop-color="#005A9E"/>
-      </linearGradient>
-      <linearGradient id="gloss-lk" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.26"/>
-        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-      </linearGradient>
-      <!-- userSpaceOnUse: the stems are zero-width paths, and an
-           objectBoundingBox gradient on a zero-width box is degenerate —
-           those glyphs would not render at all. -->
-      <linearGradient id="ink-lk" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="169" y2="56">
-        <stop offset="0%" stop-color="#106EBE"/>
-        <stop offset="62%" stop-color="#0078D4"/>
-        <stop offset="100%" stop-color="#2B88D8"/>
-      </linearGradient>
-    </defs>
-
-    <symbol id="stanchion-lockup" viewBox="0 0 281 96" fill="none">
-      <g transform="translate(8 12) scale(1.125)">
-        <rect x="0" y="0" width="64" height="64" rx="15" fill="url(#tile-lk)"/>
-        <path d="M0 15A15 15 0 0 1 15 0h34a15 15 0 0 1 15 15v13H0z" fill="url(#gloss-lk)"/>
-        <g stroke="#FFFFFF" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M13 25.5v20.2a2.8 2.8 0 0 0 2.8 2.8h32.4a2.8 2.8 0 0 0 2.8-2.8V25.5"/>
-          <path d="M13 25.5 30.3 38a2.9 2.9 0 0 0 3.4 0L51 25.5"/>
-          <path d="M13 25.5 30.3 13a2.9 2.9 0 0 1 3.4 0L51 25.5"/>
-        </g>
-        <circle cx="51" cy="13" r="6" fill="#50E6FF"/>
-      </g>
-      <g transform="translate(104 16)">
-        <g stroke="url(#ink-lk)" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M33.65 28.53A17 17 0 1 0 33.65 49.47"/>
-          <path d="M47 56V32A10 10 0 0 1 67 32V56M67 32A10 10 0 0 1 87 32V56"/>
-          <circle cx="117.5" cy="39" r="17"/>
-          <path d="M134.5 22V56"/>
-          <path d="M150 22V56"/>
-          <path d="M165.5 8V56"/>
-        </g>
-        <circle cx="150" cy="11" r="3.75" fill="#50E6FF"/>
-      </g>
+    
+    <symbol id="stanchion-lockup" viewBox="0 0 320 96" fill="none">
+      <rect x="8" y="16" width="64" height="64" rx="16" fill="#f6821f"/>
+      <rect x="20" y="30" width="40" height="23" rx="4" fill="#1d1f23"/>
+      <path d="m23 34 17 11.5 17-11.5" fill="none" stroke="#f6821f" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="20" y="58" width="40" height="5" rx="2.5" fill="#1d1f23"/>
+      <text x="88" y="64" font-family="'Segoe UI Variable Display','Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif" font-size="46" font-weight="600" letter-spacing="-1.2" fill="currentColor">stanchion</text>
     </symbol>
 
     <!-- 20×20 grid, 1.5px stroke — the same geometry as the in-app icon set. -->
@@ -578,7 +542,7 @@
   <div class="topbar">
     <div class="wrap">
       <a class="brand" href="/" aria-label="Stanchion home">
-        <svg viewBox="0 0 281 96" role="img" aria-label="Stanchion"><use href="#stanchion-lockup"/></svg>
+        <svg viewBox="0 0 320 96" role="img" aria-label="Stanchion"><use href="#stanchion-lockup"/></svg>
       </a>
       <nav class="nav-links" aria-label="Primary">
         <a class="nav-secondary" href="#capabilities">Capabilities</a>
@@ -595,7 +559,7 @@
   <main id="main">
     <div class="wrap">
       <header class="hero">
-        <svg class="lockup" viewBox="0 0 281 96" role="img" aria-label="Stanchion"><use href="#stanchion-lockup"/></svg>
+        <svg class="lockup" viewBox="0 0 320 96" role="img" aria-label="Stanchion"><use href="#stanchion-lockup"/></svg>
         <p class="eyebrow"><span class="dot" aria-hidden="true"></span> Open source · Apache 2.0</p>
         <h1>Organisational email, <span class="accent">under your control</span>.</h1>
         <p class="lede">
@@ -863,7 +827,7 @@ pnpm validate</pre>
     <div class="wrap">
       <div class="footer-top">
         <a class="brand" href="/" aria-label="Stanchion home">
-          <svg viewBox="0 0 281 96" role="img" aria-label="Stanchion"><use href="#stanchion-lockup"/></svg>
+          <svg viewBox="0 0 320 96" role="img" aria-label="Stanchion"><use href="#stanchion-lockup"/></svg>
         </a>
         <div class="footer-links" role="navigation" aria-label="Project links">
           <a href="https://github.com/RME-Solutions-Technology/stanchion" data-insight="github_click">Source</a>

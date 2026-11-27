@@ -9,7 +9,7 @@ requires raster icons; they are rendered from `icon.svg`.
 | `icon.svg` | 32×32 grid | square mark: nav, PWA, app stores |
 | `icon-192.png` / `icon-512.png` | raster | PWA manifest, Apple touch icon |
 | `logo.svg` | 320×96 | horizontal lockup: sign-in page default (an organisation can set its own with BRAND_LOGO_URL) |
-| `og-image.svg` | 1200×630 | social card. Still the earlier blue design; redraw to match the mark |
+| `og-image.svg` | 1200×630 | social card: orange mark and name on a light ground |
 
 ## The mark
 
