@@ -17,7 +17,6 @@
    * }}
    */
   let { name = 'Stanchion', size = 28, tone = 'brand', id = 'brand' } = $props();
-
 </script>
 
 <span class="brand" style="--brand-size: {size}px">

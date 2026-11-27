@@ -166,8 +166,7 @@
   }
   .login-card > * { min-width: 0; }
   .brand-logo { display: block; width: min(240px, 100%); height: auto; max-width: 100%; margin: 0 auto 12px; object-fit: contain; }
-  h1 { margin: 0; font-size: 22px; font-weight: 600; }
-  h1 { margin-bottom: 24px; }
+  h1 { margin: 0 0 24px; font-size: 22px; font-weight: 600; }
   .providers { display: flex; min-width: 0; flex-direction: column; gap: 10px; }
   .provider-btn { flex-direction: column; justify-content: center; padding: 11px 12px; }
   .provider-btn strong { font-size: 15px; }
