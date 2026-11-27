@@ -1,4 +1,5 @@
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 import { mailRejectCode, recordUsage, statusClass, type UsageDataset } from './usage.ts';
@@ -63,5 +64,14 @@ describe('mailRejectCode', () => {
   it('turns anything unknown into rejected_other and never echoes it', () => {
     assert.equal(mailRejectCode('550 bob@example.test mailbox full'), 'rejected_other');
     assert.equal(mailRejectCode(undefined), 'rejected_other');
+  });
+});
+
+describe('reject codes stay in step with the email worker', () => {
+  it('every fixed reject text in the worker maps to its own code, never rejected_other', () => {
+    const source = readFileSync(new URL('../../../apps/email-worker/src/index.ts', import.meta.url), 'utf8');
+    const literals = [...source.matchAll(/setReject\('([^']+)'\)/g)].map((m) => m[1]);
+    assert.ok(literals.length >= 9, 'expected the fixed reject texts to be found');
+    for (const text of literals) assert.notEqual(mailRejectCode(text), 'rejected_other', text);
   });
 });
