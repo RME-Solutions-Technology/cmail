@@ -1108,7 +1108,8 @@ const worker = {
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     const started = Date.now();
     let rejectCode: string | null = null;
-    const originalReject = message.setReject.bind(message);
+    const originalSetReject = message.setReject;
+    const originalReject = originalSetReject.bind(message);
     try {
       message.setReject = (reason: string) => {
         rejectCode = mailRejectCode(reason);
@@ -1122,6 +1123,9 @@ const worker = {
     } catch (error) {
       recordUsage(env, { name: 'mail.inbound', outcome: 'error', status: 500, ms: Date.now() - started, bytes: message.rawSize, count: 1 });
       throw error;
+    } finally {
+      // Put the message object back exactly as it came.
+      try { message.setReject = originalSetReject; } catch { /* nothing to restore */ }
     }
     recordUsage(env, {
       name: 'mail.inbound',
