@@ -41,7 +41,7 @@
 
 <main id="main-content" class="login-page nb-quiet" tabindex="-1">
     <div class="login-card card">
-      <img src={data.brandLogoUrl || '/logo.svg'} alt="" class="brand-logo" width="240" height="82" />
+      <img src={data.brandLogoUrl || '/logo.svg'} alt="" class="brand-logo" width="240" height="72" />
       <h1>Connect to your {data.orgName || 'organisation'} email</h1>
       <p class="subtitle">Organisational email{data.orgName ? ` for ${data.orgName}` : ' for your organisation'}</p>
 
@@ -133,7 +133,7 @@
         {#if data.supportEmail}<a href={`mailto:${data.supportEmail}`}>Contact support</a>{/if}
       </nav>
 
-      <p class="product-credit">Powered by Stanchion · independent, Apache-2.0-licensed open-source email</p>
+      <p class="product-credit">Powered by Stanchion</p>
     </div>
 </main>
 
