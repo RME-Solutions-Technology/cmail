@@ -283,13 +283,14 @@ export const handle: Handle = async ({ event, resolve }) => {
     || isAdminRequestPath(event.url.pathname)
     || (event.url.pathname.startsWith('/api/') && event.url.pathname !== '/api/organization');
   if (env && event.locals.user && protectedPath) {
+    // One round trip (was two): the latest policy and this person's signature of it.
     const latestPolicy = await env.DB.prepare(
-      'SELECT id FROM ict_policy_versions ORDER BY published_at DESC, id DESC LIMIT 1',
-    ).first<{ id: string }>();
+      `SELECT v.id AS id, s.id AS signature_id
+         FROM (SELECT id FROM ict_policy_versions ORDER BY published_at DESC, id DESC LIMIT 1) v
+         LEFT JOIN ict_policy_signatures s ON s.policy_version_id = v.id AND s.user_id = ?`,
+    ).bind(event.locals.user.id).first<{ id: string; signature_id: string | null }>();
     if (latestPolicy) {
-      const signature = await env.DB.prepare(
-        'SELECT id FROM ict_policy_signatures WHERE user_id = ? AND policy_version_id = ?',
-      ).bind(event.locals.user.id, latestPolicy.id).first<{ id: string }>();
+      const signature = latestPolicy.signature_id;
       if (!signature) {
         const response = event.url.pathname.startsWith('/api/')
           ? Response.json({ error: 'policy_required' }, { status: 403 })

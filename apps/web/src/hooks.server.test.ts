@@ -13,6 +13,7 @@ interface InvokeOptions {
   method?: string;
   role?: 'standard' | 'manager';
   publishedPolicy?: boolean;
+  policySigned?: boolean;
   headers?: Record<string, string>;
   /** What the sessions query returns for a signed-in caller. Default: the matching row. */
   sessionRow?: 'match' | 'none' | 'other-id' | 'other-user';
@@ -86,7 +87,7 @@ async function invoke(options: InvokeOptions): Promise<{
           }
           if (query.includes('FROM users')) return options.userFound === false ? null : authenticatedUser;
           if (query.includes('FROM ict_policy_versions')) {
-            return options.publishedPolicy ? { id: 'policy-1' } : null;
+            return options.publishedPolicy ? { id: 'policy-1', signature_id: options.policySigned ? 'sig-1' : null } : null;
           }
           if (query.includes('FROM ict_policy_signatures')) return null;
           return null;
@@ -255,6 +256,17 @@ describe('central ICT policy gate', () => {
       expect(resolve).not.toHaveBeenCalled();
     },
   );
+
+  it('lets a user who signed the latest policy through', async () => {
+    const { response, resolve } = await invoke({
+      path: '/mail',
+      role: 'standard',
+      publishedPolicy: true,
+      policySigned: true,
+    });
+    expect(response.status).toBe(200);
+    expect(resolve).toHaveBeenCalledOnce();
+  });
 
   it('returns a policy-required API response instead of redirecting', async () => {
     const { response, resolve } = await invoke({
