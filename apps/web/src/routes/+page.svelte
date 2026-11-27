@@ -195,17 +195,17 @@
   .google-sign-in span { grid-column: 2; grid-row: 1; min-width: 0; overflow-wrap: anywhere; }
   .microsoft-sign-in {
     display: grid;
-    grid-template-columns: 18px 1fr;
+    grid-template-columns: 21px 1fr;
     align-items: center;
     column-gap: 12px;
-    min-height: 44px;
-    padding: 10px 12px;
+    min-height: 41px;
+    padding: 9px 12px;
     border: 1px solid #8c8c8c;
     border-radius: 4px;
     background: #ffffff;
     color: #5e5e5e;
     font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     line-height: 20px;
     text-decoration: none;
@@ -213,7 +213,7 @@
   }
   .microsoft-sign-in:hover { background: #f3f3f3; border-color: #5e5e5e; color: #5e5e5e; }
   .microsoft-sign-in:focus-visible { outline: 2px solid #5e5e5e; outline-offset: 2px; }
-  .microsoft-sign-in svg { width: 18px; height: 18px; }
+  .microsoft-sign-in svg { width: 21px; height: 21px; }
   .microsoft-sign-in span { grid-column: 2; grid-row: 1; min-width: 0; overflow-wrap: anywhere; }
   .otp-link { margin-top: 14px; font-size: 12px; text-align: center; }
   .otp-link a { color: var(--text-muted); text-decoration: underline; text-underline-offset: 2px; }
