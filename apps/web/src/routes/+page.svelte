@@ -253,7 +253,7 @@
   .login-links a { overflow-wrap: anywhere; color: var(--primary-text); }
   .product-credit { margin: 13px 0 0; padding-top: 0; border-top: 0; color: var(--text-faint); font-size: 10px; }
   @media (max-width: 420px) {
-    .login-page { padding: 12px; padding-top: 14vh; align-items: flex-start; }
+    .login-page { padding: 12px; padding-top: 24vh; align-items: flex-start; }
     .login-card { padding: 20px 16px; }
     .brand-logo { width: min(210px, 100%); }
   }
