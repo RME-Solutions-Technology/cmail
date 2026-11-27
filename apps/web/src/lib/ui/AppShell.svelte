@@ -313,7 +313,7 @@
 
   @media (max-width: 600px) {
     /* Mark only — the wordmark costs more width than it earns here. */
-    .suite-brand :global(.brand-word) { display: none; }
+    .suite-brand :global(.brand .brand-word) { display: none; }
     .suite-sep { display: none; }
   }
 </style>
