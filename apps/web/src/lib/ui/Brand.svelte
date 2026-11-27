@@ -1,38 +1,28 @@
 <!--
   Brand — the mark + name lockup.
 
-  Stanchion is whitelabel: APP_NAME is set per tenant. So the lockup renders the
-  drawn wordmark only while the name is still the legacy "cmail" (the artwork spells it);
-  any other name, including the default "Stanchion", is set
-  in the display face with the wordmark's optical tracking applied, so a
-  renamed deployment still looks designed rather than defaulted.
+  Stanchion is whitelabel: APP_NAME is set per tenant. The name is set in the
+  display face with the wordmark's optical tracking, so a renamed deployment
+  looks designed rather than defaulted.
 -->
 <script>
   import Mark from './Mark.svelte';
-  import Wordmark from './Wordmark.svelte';
 
   /**
    * @type {{
    *   name?: string,
    *   size?: number,
    *   tone?: 'brand' | 'onDark',
-   *   gradient?: boolean,
    *   id?: string,
    * }}
    */
-  let { name = 'Stanchion', size = 28, tone = 'brand', gradient = false, id = 'brand' } = $props();
-
-  const isDefault = $derived((name || '').trim().toLowerCase() === 'cmail');
+  let { name = 'Stanchion', size = 28, tone = 'brand', id = 'brand' } = $props();
 </script>
 
 <span class="brand" style="--brand-size: {size}px">
   <Mark {size} {tone} id="{id}-mk" />
   <span class="brand-word">
-    {#if isDefault}
-      <Wordmark height={Math.round(size * 0.72)} id="{id}-wm" {gradient} />
-    {:else}
-      <span class="brand-name">{name}</span>
-    {/if}
+    <span class="brand-name">{name}</span>
   </span>
 </span>
 
