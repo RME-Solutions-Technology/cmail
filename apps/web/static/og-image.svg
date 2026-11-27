@@ -1,93 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="cmail — open-source email on Cloudflare" fill="none">
-  <title>cmail — open-source email on Cloudflare</title>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0A1929"/>
-      <stop offset="50%" stop-color="#0F2744"/>
-      <stop offset="100%" stop-color="#0A1929"/>
-    </linearGradient>
-    <!-- userSpaceOnUse: zero-width stem paths make an objectBoundingBox
-         gradient degenerate, which drops those glyphs entirely. -->
-    <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="169" y2="56">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="70%" stop-color="#C7E0F4"/>
-      <stop offset="100%" stop-color="#50E6FF"/>
-    </linearGradient>
-    <linearGradient id="tile" x1="0" y1="0" x2="0.85" y2="1">
-      <stop offset="0%" stop-color="#2B88D8"/>
-      <stop offset="55%" stop-color="#0078D4"/>
-      <stop offset="100%" stop-color="#005A9E"/>
-    </linearGradient>
-    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.26"/>
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#50E6FF" stop-opacity="0.30"/>
-      <stop offset="60%" stop-color="#0078D4" stop-opacity="0.10"/>
-      <stop offset="100%" stop-color="#0078D4" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="soft" x="-25%" y="-25%" width="150%" height="150%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
-      <feOffset dx="0" dy="12" result="o"/>
-      <feComponentTransfer><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
-      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M40 0 L0 0 0 40" fill="none" stroke="#1E3A5F" stroke-width="0.5" opacity="0.3"/>
-    </pattern>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Stanchion: open-source email on Cloudflare" fill="none">
+  <title>Stanchion: open-source email on Cloudflare</title>
+  <rect width="1200" height="630" fill="#fbfaf8"/>
+  <rect x="0" y="618" width="1200" height="12" fill="#f6821f"/>
 
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  <rect width="1200" height="630" fill="url(#grid)"/>
-  <ellipse cx="330" cy="300" rx="360" ry="280" fill="url(#glow)"/>
-  <ellipse cx="900" cy="330" rx="300" ry="230" fill="url(#glow)" opacity="0.6"/>
-
-  <!-- App mark, 220×220 -->
-  <g transform="translate(112 168) scale(3.4375)" filter="url(#soft)">
-    <rect x="0" y="0" width="64" height="64" rx="15" fill="url(#tile)"/>
-    <path d="M0 15A15 15 0 0 1 15 0h34a15 15 0 0 1 15 15v13H0z" fill="url(#gloss)"/>
-    <g stroke="#FFFFFF" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M13 25.5v20.2a2.8 2.8 0 0 0 2.8 2.8h32.4a2.8 2.8 0 0 0 2.8-2.8V25.5"/>
-      <path d="M13 25.5 30.3 38a2.9 2.9 0 0 0 3.4 0L51 25.5"/>
-      <path d="M13 25.5 30.3 13a2.9 2.9 0 0 1 3.4 0L51 25.5"/>
-    </g>
-    <circle cx="51" cy="13" r="6" fill="#50E6FF"/>
+  <!-- App mark, 220x220 -->
+  <g transform="translate(112 168) scale(6.875)">
+    <rect width="32" height="32" rx="8" fill="#f6821f"/>
+    <rect x="4" y="6" width="24" height="14" rx="2.5" fill="#1d1f23"/>
+    <path d="m6 8.5 10 7 10-7" fill="none" stroke="#f6821f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="4" y="23" width="24" height="3" rx="1.5" fill="#1d1f23"/>
   </g>
 
-  <!-- Wordmark: same constructed letterforms as the app, scaled ×2.6 -->
-  <g transform="translate(396 178) scale(2.35)">
-    <g stroke="url(#ink)" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M33.65 28.53A17 17 0 1 0 33.65 49.47"/>
-      <path d="M47 56V32A10 10 0 0 1 67 32V56M67 32A10 10 0 0 1 87 32V56"/>
-      <circle cx="117.5" cy="39" r="17"/>
-      <path d="M134.5 22V56"/>
-      <path d="M150 22V56"/>
-      <path d="M165.5 8V56"/>
-    </g>
-    <circle cx="150" cy="11" r="3.75" fill="#50E6FF"/>
-  </g>
+  <text x="396" y="278" font-family="'Segoe UI Variable Display','Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif" font-size="132" font-weight="600" letter-spacing="-4" fill="#1d1f23">stanchion</text>
 
-  <g transform="translate(400 400)" font-family="'Segoe UI', system-ui, sans-serif" fill="#A6C8E5">
+  <g transform="translate(400 345)" font-family="'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif" fill="#4a4f57">
     <text x="0" y="0" font-size="27" font-weight="400" letter-spacing="2.4">OPEN&#8209;SOURCE&#160;&#160;·&#160;&#160;CLOUDFLARE&#160;NATIVE&#160;&#160;·&#160;&#160;BYO&#160;DOMAIN</text>
   </g>
 
-  <g transform="translate(400 440)" font-family="'Segoe UI', system-ui, sans-serif" font-size="20">
+  <g transform="translate(400 392)" font-family="'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif" font-size="20">
     <g>
-      <rect x="0" y="0" width="212" height="44" rx="10" fill="#0078D4" fill-opacity="0.16" stroke="#2B88D8" stroke-width="1.5"/>
-      <text x="106" y="29" text-anchor="middle" fill="#C7E0F4" font-weight="500">Google · Microsoft SSO</text>
+      <rect x="0" y="0" width="212" height="44" rx="10" fill="#f6821f" fill-opacity="0.12" stroke="#f6821f" stroke-width="1.5"/>
+      <text x="106" y="29" text-anchor="middle" fill="#1d1f23" font-weight="500">Google · Microsoft SSO</text>
     </g>
     <g transform="translate(228 0)">
-      <rect x="0" y="0" width="182" height="44" rx="10" fill="#0078D4" fill-opacity="0.16" stroke="#2B88D8" stroke-width="1.5"/>
-      <text x="91" y="29" text-anchor="middle" fill="#C7E0F4" font-weight="500">Shared mailboxes</text>
+      <rect x="0" y="0" width="182" height="44" rx="10" fill="#f6821f" fill-opacity="0.12" stroke="#f6821f" stroke-width="1.5"/>
+      <text x="91" y="29" text-anchor="middle" fill="#1d1f23" font-weight="500">Shared mailboxes</text>
     </g>
     <g transform="translate(426 0)">
-      <rect x="0" y="0" width="172" height="44" rx="10" fill="#0078D4" fill-opacity="0.16" stroke="#2B88D8" stroke-width="1.5"/>
-      <text x="86" y="29" text-anchor="middle" fill="#C7E0F4" font-weight="500">D1 · R2 · Workers</text>
+      <rect x="0" y="0" width="172" height="44" rx="10" fill="#f6821f" fill-opacity="0.12" stroke="#f6821f" stroke-width="1.5"/>
+      <text x="86" y="29" text-anchor="middle" fill="#1d1f23" font-weight="500">D1 · R2 · Workers</text>
     </g>
   </g>
 
-  <g transform="translate(60 582)" font-family="'Segoe UI', system-ui, sans-serif" font-size="18" fill="#5A8AB5">
+  <g transform="translate(60 582)" font-family="'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif" font-size="18" fill="#6a6f78">
     <text x="0" y="0">github.com/RME-Solutions-Technology/stanchion</text>
     <text x="1080" y="0" text-anchor="end">Apache 2.0 licensed</text>
   </g>
