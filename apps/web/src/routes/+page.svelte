@@ -43,7 +43,6 @@
     <div class="login-card card">
       <img src={data.brandLogoUrl || '/logo.svg'} alt="" class="brand-logo" width="240" height="72" />
       <h1>Connect to your {data.orgName || 'organisation'} email</h1>
-      <p class="subtitle">Organisational email{data.orgName ? ` for ${data.orgName}` : ' for your organisation'}</p>
 
       {#if errorCode && errorMessages[errorCode]}
         <div class="login-error" role="alert">
@@ -109,6 +108,7 @@
         </div>
       {/if}
 
+      <div class="faq-row">
       <details class="faq">
         <summary>Privacy FAQ</summary>
         <dl>
@@ -122,14 +122,20 @@
           <dd>Microsoft 365 work or school accounts always work. Outlook, Hotmail, and Live accounts work if this deployment allows personal Microsoft accounts.</dd>
         </dl>
       </details>
+      <details class="faq help">
+        <summary>Help</summary>
+        <ul>
+          <li><a href="/help/getting-started">New user guide</a></li>
+          <li><a href="/help/mobile">Mobile access guide</a></li>
+          <li><a href="/policy">Usage policy</a></li>
+        </ul>
+      </details>
+      </div>
 
       <nav class="login-links" aria-label="Public information">
-        <a href="/help/getting-started">New user guide</a>
-        <a href="/help/mobile">Mobile access guide</a>
         {#if data.publicDirectoryEnabled}<a href="/organization">Organisation directory</a>{/if}
         <a href="/privacy">Privacy</a>
         <a href="/terms">Terms</a>
-        <a href="/policy">Usage policy</a>
         {#if data.supportEmail}<a href={`mailto:${data.supportEmail}`}>Contact support</a>{/if}
       </nav>
 
@@ -161,7 +167,7 @@
   .login-card > * { min-width: 0; }
   .brand-logo { display: block; width: min(240px, 100%); height: auto; max-width: 100%; margin: 0 auto 12px; object-fit: contain; }
   h1 { margin: 0; font-size: 22px; font-weight: 600; }
-  .subtitle { color: var(--text-muted); margin-bottom: 24px; }
+  h1 { margin-bottom: 24px; }
   .providers { display: flex; min-width: 0; flex-direction: column; gap: 10px; }
   .provider-btn { flex-direction: column; justify-content: center; padding: 11px 12px; }
   .provider-btn strong { font-size: 15px; }
@@ -177,7 +183,7 @@
     border-radius: 4px;
     background: #fff;
     color: #1f1f1f;
-    font-family: 'Google Sans', Roboto, Arial, sans-serif;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
     font-size: 14px;
     font-weight: 500;
     line-height: 20px;
@@ -195,19 +201,19 @@
     column-gap: 12px;
     min-height: 44px;
     padding: 10px 12px;
-    border: 1px solid #8c8c8c;
+    border: 1px solid #747775;
     border-radius: 4px;
-    background: #ffffff;
-    color: #5e5e5e;
-    font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+    background: #fff;
+    color: #1f1f1f;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 500;
     line-height: 20px;
     text-decoration: none;
     text-align: left;
   }
-  .microsoft-sign-in:hover { background: #f3f3f3; border-color: #5e5e5e; color: #5e5e5e; }
-  .microsoft-sign-in:focus-visible { outline: 2px solid #5e5e5e; outline-offset: 2px; }
+  .microsoft-sign-in:hover { background: #f8faff; border-color: #1a73e8; color: #1f1f1f; }
+  .microsoft-sign-in:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
   .microsoft-sign-in svg { width: 18px; height: 18px; }
   .microsoft-sign-in span { grid-column: 2; grid-row: 1; min-width: 0; overflow-wrap: anywhere; }
   .otp-link { margin-top: 14px; font-size: 12px; text-align: center; }
@@ -236,6 +242,10 @@
     font-size: 13px;
     color: var(--text-muted);
   }
+  .faq-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 28px; margin-top: 24px; }
+  .faq-row .faq { margin-top: 0; }
+  .faq.help ul { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .faq.help a { color: var(--primary-text); }
   .faq summary { cursor: pointer; font-weight: 500; }
   .faq dl { margin-top: 12px; }
   .faq dt { font-weight: 500; color: var(--text); margin-top: 8px; }
@@ -244,7 +254,7 @@
   .login-links a { overflow-wrap: anywhere; color: var(--primary-text); }
   .product-credit { margin: 13px 0 0; padding-top: 0; border-top: 0; color: var(--text-faint); font-size: 10px; }
   @media (max-width: 420px) {
-    .login-page { padding: 12px; align-items: flex-start; }
+    .login-page { padding: 12px; padding-top: 14vh; align-items: flex-start; }
     .login-card { padding: 20px 16px; }
     .brand-logo { width: min(210px, 100%); }
   }

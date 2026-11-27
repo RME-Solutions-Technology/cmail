@@ -1,55 +1,30 @@
 <!--
   Mark — the Stanchion app symbol.
 
-  A Fluent-proportioned rounded square carrying an open envelope drawn in one
-  continuous stroke, with a cyan status dot breaking the top-right corner.
-  The dot is the same one that tittles the "i" in the wordmark.
-
-  `tone="onDark"` swaps the tile for a translucent plate so the mark sits
-  correctly on the brand-coloured suite header without a hard edge.
+  An orange rounded square carrying a dark envelope (body, flap line and a
+  base bar), the same mark as stanchion.app. `tone` is kept so existing
+  callers still compile: the orange tile reads on both the white page and the
+  navy suite header, so both tones draw the same mark.
 -->
 <script>
   /** @type {{ size?: number, tone?: 'brand' | 'onDark', id?: string, class?: string }} */
   let { size = 28, tone = 'brand', id = 'mk', class: klass = '' } = $props();
+  // `tone` and `id` are accepted for compatibility; the mark has no gradients.
+  void tone; void id;
 </script>
 
 <svg
   class={klass}
   width={size}
   height={size}
-  viewBox="0 0 64 64"
+  viewBox="0 0 32 32"
   role="img"
   aria-label="Stanchion"
   focusable="false"
   style="display: block;"
 >
-  <defs>
-    <linearGradient id="{id}-tile" x1="0" y1="0" x2="0.85" y2="1">
-      <stop offset="0%" stop-color="#2b88d8" />
-      <stop offset="55%" stop-color="#0078d4" />
-      <stop offset="100%" stop-color="#005a9e" />
-    </linearGradient>
-    <linearGradient id="{id}-gloss" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.26" />
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
-    </linearGradient>
-  </defs>
-
-  {#if tone === 'onDark'}
-    <rect x="0" y="0" width="64" height="64" rx="15" fill="#ffffff" fill-opacity="0.13" />
-  {:else}
-    <rect x="0" y="0" width="64" height="64" rx="15" fill="url(#{id}-tile)" />
-    <path d="M0 15A15 15 0 0 1 15 0h34a15 15 0 0 1 15 15v13H0z" fill="url(#{id}-gloss)" />
-  {/if}
-
-  <!-- envelope: body then flap, single weight, open apertures -->
-  <g fill="none" stroke="#ffffff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M13 25.5v20.2a2.8 2.8 0 0 0 2.8 2.8h32.4a2.8 2.8 0 0 0 2.8-2.8V25.5" />
-    <path d="M13 25.5 30.3 38a2.9 2.9 0 0 0 3.4 0L51 25.5" />
-    <path d="M13 25.5 30.3 13a2.9 2.9 0 0 1 3.4 0L51 25.5" />
-  </g>
-
-  <!-- status dot — the wordmark's tittle. Placed clear of the flap so it
-       never needs a knockout ring, which would seam against the plate. -->
-  <circle cx="51" cy="13" r="6" fill="#50e6ff" />
+  <rect width="32" height="32" rx="8" fill="#f6821f" />
+  <rect x="4" y="6" width="24" height="14" rx="2.5" fill="#1d1f23" />
+  <path d="m6 8.5 10 7 10-7" fill="none" stroke="#f6821f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+  <rect x="4" y="23" width="24" height="3" rx="1.5" fill="#1d1f23" />
 </svg>
