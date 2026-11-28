@@ -14,7 +14,7 @@ Keep deployments, credentials, customer information, and organisation-specific m
 
 ```sh
 git clone https://github.com/RME-Solutions-Technology/stanchion.git
-cd cmail
+cd stanchion
 corepack enable
 pnpm install --frozen-lockfile
 pnpm run setup
