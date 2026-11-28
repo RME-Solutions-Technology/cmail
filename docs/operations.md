@@ -1,16 +1,16 @@
 ---
 title: "Running Stanchion"
-summary: "How to upgrade, back up, restore, roll back, monitor and rotate secrets on a live instance."
+summary: "How to upgrade, back up, restore, roll back, monitor, handle an incident and rotate secrets on a live instance."
 applies_to: both
 audience: [operator]
 switch: none
-last_reviewed: 2026-11-16
-related: [credentials.md, upgrading.md, deployment.md]
+last_reviewed: 2026-11-28
+related: [credentials.md, upgrading.md, deployment.md, operations-checklist.md]
 ---
 
 # Running Stanchion
 
-The repeatable jobs for a live deployment, in one place: upgrading, backing up, restoring, rolling back, watching for trouble, and rotating secrets. Most procedures already live in [Deployment and verification](deployment.md); this page gives the order and links to them, and adds monitoring and secret rotation. Tick off the [Operations checklist](operations-checklist.md) as you go.
+The repeatable jobs for a live deployment, in one place: upgrading, backing up, restoring, rolling back, watching for trouble, handling an incident, and rotating secrets. Most procedures already live in [Deployment and verification](deployment.md); this page gives the order and links to them, and adds monitoring and secret rotation. Tick off the [Operations checklist](operations-checklist.md) as you go.
 
 Examples use the default resource names (`stanchion-web`, `stanchion-db`, `stanchion-storage`, `stanchion-backup`). Use your own; instances created before the rename keep their `cmail-*` names.
 
@@ -21,6 +21,7 @@ Examples use the default resource names (`stanchion-web`, `stanchion-db`, `stanc
 - [Restore](#restore)
 - [Roll back](#roll-back)
 - [Monitor](#monitor)
+- [When something is wrong](#when-something-is-wrong)
 - [Rotate secrets](#rotate-secrets)
 
 ## Upgrade
@@ -83,7 +84,7 @@ Stanchion has no built-in alerting. These are the places to look, and what shoul
 
 **Mail flow.**
 
-- **Management → Mail trace**: accepted and rejected deliveries. **Delivery recovery** lists sends stuck in `dispatching` or `ambiguous`; reconcile them as the [Operations checklist](operations-checklist.md#routine-operations) describes.
+- **Management → Mail trace**: accepted and rejected deliveries (mail refused at SMTP time leaves no record here). **Delivery recovery** lists sends stuck in `dispatching` or `ambiguous`; reconcile them as the [Operations checklist](operations-checklist.md#routine-operations) describes.
 - **Email Routing** analytics for the domain: dropped or rejected inbound mail. Rejections at SMTP time leave no Stanchion trace record.
 - **Email Worker logs**: live with `wrangler tail` or the dashboard's log stream. To keep them for later review, add `[observability]` with `enabled = true` to the email Worker's `wrangler.toml` (the template doesn't enable it; the backup Worker's does) and use Workers Logs. Watch for `Inbound native rate-limit threshold observed`, `Inbox rules were skipped`, `Failed to clean up an inbound R2 object`, `Mail trace logging failed`, and calendar or contact errors. One-off warnings are normal; a sustained run of any of them needs a look.
 - Outbound provider dashboards for bounces and complaints, and DMARC aggregate reports (see [Email authentication](email-authentication.md)).
@@ -91,6 +92,31 @@ Stanchion has no built-in alerting. These are the places to look, and what shoul
 **Growth.** D1 size and R2 object count in the dashboard, and mailbox quota denials in the trace. The backup Worker suits up to tens of thousands of mail objects.
 
 Logs hold no message content by design. Keep it that way when you add your own monitoring: don't log subjects, bodies or full addresses.
+
+## When something is wrong
+
+Before you need it, write down three names in your own runbook: **who is on call** and how to reach them, **who can approve a restore** (it rewinds data people may have read), and **who holds Cloudflare, identity-provider and DNS access**. This page can't name them for you, and it promises no response or fix times.
+
+Start from the symptom. Take the smallest action that works, and check it with the uptime checks under [Monitor](#monitor) and the [Verification](deployment.md#verification) list before you call it fixed.
+
+| Symptom | Look first | Usual cause | Smallest action |
+|---|---|---|---|
+| The site returns errors or won't load | Cloudflare's status page, then the latest Pages deployment and its logs | A bad release, or a Cloudflare incident | A release in the last hours: [roll back](#roll-back), unless it included a D1 migration (read that section first). Otherwise wait for Cloudflare and watch |
+| Nobody can sign in | The sign-in provider's status, and whether a secret was rotated recently | A secret that the provider and the instance disagree about | If the old value is still valid at the provider, put it back; otherwise create a new one. Redeploy and test one sign-in. See [Rotate secrets](#rotate-secrets) |
+| Mail isn't arriving | Email Routing rules still enabled and pointing at the email Worker, then Mail trace, then the Worker's logs | A paused or changed routing rule, a rate limit, or a Worker error | Fix the rule, or roll the Worker back after checking Pages still works with the older Worker ([Roll back](#roll-back)). Mail rejected at SMTP time leaves no Mail trace record, so check Email Routing analytics too |
+| Mail isn't sending | Delivery recovery for sends stuck in `dispatching` or `ambiguous`, then the outbound provider's dashboard | A revoked or expired provider key | Create the new key, set it, redeploy, send a test. Do not resend an `ambiguous` send until the provider shows it was not sent. Reconcile stuck sends as the [Operations checklist](operations-checklist.md#routine-operations) describes |
+| A scheduled job shows an error | The [scheduled jobs table](#monitor) for that Worker | Varies by job | Follow the "Act when" column and the linked runbook |
+| Data looks wrong after a change | Stop interactive writes and pause Email Routing first (tell people mail may be delayed while it is paused). Find the time of the change | A migration, bulk action or script | Get approval, then restore the smallest thing that fixes it ([Restore](#restore)). Record the undo bookmark |
+| You suspect a compromise or a data exposure | Contain it first through your own security process | Stolen credentials, a leaked secret, a lost device | Rotate what was exposed ([Rotate secrets](#rotate-secrets)), review who holds access, and report a suspected product weakness privately as in [SECURITY.md](../SECURITY.md) |
+
+**Running an incident**
+
+1. Name one owner for the incident and keep one status line, so nobody has to ask. For a security or privacy incident, start with [Incident response](operations-checklist.md#incident-response): preserve logs before you change anything, and agree who tells whom before step 5.
+2. Write down the first time you noticed it (UTC), who is affected, and what you have changed. Keep message content out of the record.
+3. Contain with the smallest change that works. A recent release is the most likely cause, so rolling it back is usually the first move. A second try needs a new fact, not a hunch.
+4. Check the result with the uptime checks under [Monitor](#monitor) and the [Verification](deployment.md#verification) list, and read one real piece of evidence, not only a green dashboard.
+5. Tell the people affected in plain words: what happened, what they need to do, and what happens next.
+6. Afterwards, record the cause and what you changed, and add anything this page missed to your own runbook. For sends whose outcome is unproven, also follow [Incident response](operations-checklist.md#incident-response).
 
 ## Rotate secrets
 
