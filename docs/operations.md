@@ -1,10 +1,10 @@
 ---
 title: "Running Stanchion"
-summary: "How to upgrade, back up, restore, roll back, monitor and rotate secrets on a live instance."
+summary: "How to upgrade, back up, restore, roll back, monitor, handle an incident and rotate secrets on a live instance."
 applies_to: both
 audience: [operator]
 switch: none
-last_reviewed: 2026-11-16
+last_reviewed: 2026-11-28
 related: [credentials.md, upgrading.md, deployment.md]
 ---
 
@@ -21,6 +21,7 @@ Examples use the default resource names (`stanchion-web`, `stanchion-db`, `stanc
 - [Restore](#restore)
 - [Roll back](#roll-back)
 - [Monitor](#monitor)
+- [When something is wrong](#when-something-is-wrong)
 - [Rotate secrets](#rotate-secrets)
 
 ## Upgrade
@@ -91,6 +92,31 @@ Stanchion has no built-in alerting. These are the places to look, and what shoul
 **Growth.** D1 size and R2 object count in the dashboard, and mailbox quota denials in the trace. The backup Worker suits up to tens of thousands of mail objects.
 
 Logs hold no message content by design. Keep it that way when you add your own monitoring: don't log subjects, bodies or full addresses.
+
+## When something is wrong
+
+Before you need it, write down three names in your own runbook: **who is on call** and how to reach them, **who can approve a restore** (it rewinds data people may have read), and **who holds Cloudflare, identity-provider and DNS access**. This page can't name them for you, and it promises no response or fix times.
+
+Start from the symptom. Take the smallest action that works, and check it with the [Monitor](#monitor) smoke tests before you call it fixed.
+
+| Symptom | Look first | Usual cause | Smallest action |
+|---|---|---|---|
+| The site returns errors or won't load | Cloudflare's status page, then the latest Pages deployment and its logs | A bad release, or a Cloudflare incident | A release in the last hours: [roll back](#roll-back). Otherwise wait for Cloudflare and watch |
+| Nobody can sign in | The sign-in provider's status, and whether a secret was rotated recently | A secret that the provider and the instance disagree about | Put the previous value back (you kept it), redeploy, test one sign-in. See [Rotate secrets](#rotate-secrets) |
+| Mail isn't arriving | Email Routing rules still enabled and pointing at the email Worker, then Mail trace, then the Worker's logs | A paused or changed routing rule, a rate limit, or a Worker error | Fix the rule, or roll the Worker back. Mail rejected at SMTP time leaves no Mail trace record, so check Email Routing analytics too |
+| Mail isn't sending | Delivery recovery for sends stuck in `dispatching` or `ambiguous`, then the outbound provider's dashboard | A revoked or expired provider key | Create the new key, set it, redeploy, send a test. Reconcile stuck sends as the [Operations checklist](operations-checklist.md#routine-operations) describes |
+| A scheduled job shows an error | The [scheduled jobs table](#monitor) for that Worker | Varies by job | Follow the "Act when" column and the linked runbook |
+| Data looks wrong after a change | Stop interactive writes and pause Email Routing first. Find the time of the change | A migration, bulk action or script | Get approval, then restore the smallest thing that fixes it ([Restore](#restore)). Record the undo bookmark |
+| You suspect a compromise or a data exposure | Contain it first through your own security process | Stolen credentials, a leaked secret, a lost device | Rotate what was exposed ([Rotate secrets](#rotate-secrets)), review who holds access, and report a suspected product weakness privately as in [SECURITY.md](../SECURITY.md) |
+
+**Running an incident**
+
+1. Name one owner for the incident and keep one status line, so nobody has to ask.
+2. Write down the first time you noticed it (UTC), who is affected, and what you have changed. Keep message content out of the record.
+3. Contain with the smallest change that works. A recent release is the most likely cause, so rolling it back is usually the first move. A second try needs a new fact, not a hunch.
+4. Check the result with the smoke tests under [Monitor](#monitor), and read one real piece of evidence, not only a green dashboard.
+5. Tell the people affected in plain words: what happened, what they need to do, and what happens next.
+6. Afterwards, record the cause and what you changed, and add anything this page missed to your own runbook. For a security or privacy incident, and for sends whose outcome is unproven, also follow [Incident response](operations-checklist.md#incident-response).
 
 ## Rotate secrets
 
