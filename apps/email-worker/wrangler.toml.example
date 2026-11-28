@@ -320,3 +320,9 @@ VAPID_SUBJECT = ""
 APP_NAME = "Stanchion preview"
 PUSH_ENDPOINT_HOSTS = ""
 RETENTION_JOBS_ENABLED = "false"
+
+# Optional usage events (docs/usage-events.md). Uncomment to count requests and inbound
+# mail by fixed words and numbers only. The dataset lives in YOUR Cloudflare account.
+# [[analytics_engine_datasets]]
+# binding = "USAGE"
+# dataset = "stanchion_usage"

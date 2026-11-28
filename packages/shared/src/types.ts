@@ -246,6 +246,8 @@ export interface MailTrace {
 export interface Env {
   DB: D1Database;
   STORAGE: R2Bucket;
+  /** Optional Analytics Engine dataset for usage events (docs/usage-events.md). Absent = off. */
+  USAGE?: import('./usage.ts').UsageDataset;
 
 
   MAIL_DOMAIN: string;

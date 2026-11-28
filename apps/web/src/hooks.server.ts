@@ -1,4 +1,5 @@
 import type { Handle, HandleServerError } from '@sveltejs/kit/hooks';
+import { recordUsage } from '@stanchion/shared/usage';
 import type { User } from '@stanchion/shared/types';
 import { assertStrongSessionSecret, publicRuntimeConfig, sessionTtlMs } from '#lib/server/config.js';
 import { SESSION_COOKIE, clearSessionCookie, getSessionTokenFromCookie, hashToken, shouldRenewSession, verifySessionToken } from '#lib/server/session.js';
@@ -78,7 +79,7 @@ function isAdminRequestPath(pathname: string): boolean {
   return pathname === '/admin' || pathname.startsWith('/admin/');
 }
 
-export const handle: Handle = async ({ event, resolve }) => {
+const handleRequest: Handle = async ({ event, resolve }) => {
   event.locals.user = null;
   event.locals.sessionId = null;
   event.locals.passkeySession = false;
@@ -334,6 +335,27 @@ export const handle: Handle = async ({ event, resolve }) => {
     appendVary(response.headers, 'Cookie');
   }
   return withSessionCookies(response);
+};
+
+// Usage events (docs/usage-events.md): one content-free data point per request.
+export const handle: Handle = async (input) => {
+  // Internal sub-requests (SSR fetches) would double count one page view.
+  if (input.event.isSubRequest) return handleRequest(input);
+  const started = Date.now();
+  const routeTemplate = (): string => input.event.route?.id || 'other';
+  try {
+    const response = await handleRequest(input);
+    recordUsage(input.event.platform?.env, {
+      name: routeTemplate(),
+      outcome: response.status >= 500 ? 'error' : response.status >= 400 ? 'client' : 'ok',
+      status: response.status,
+      ms: Date.now() - started,
+    });
+    return response;
+  } catch (error) {
+    recordUsage(input.event.platform?.env, { name: routeTemplate(), outcome: 'error', status: 500, ms: Date.now() - started });
+    throw error;
+  }
 };
 
 export const handleError: HandleServerError = ({ kind, error, event }) => {

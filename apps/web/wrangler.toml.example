@@ -207,3 +207,9 @@ MAILBOX_STORAGE_QUOTA_BYTES = "1073741824"
 VAPID_PUBLIC_KEY = ""
 VAPID_SUBJECT = ""
 PUSH_ENDPOINT_HOSTS = ""
+
+# Optional usage events (docs/usage-events.md). Uncomment to count requests and inbound
+# mail by fixed words and numbers only. The dataset lives in YOUR Cloudflare account.
+# [[analytics_engine_datasets]]
+# binding = "USAGE"
+# dataset = "stanchion_usage"
