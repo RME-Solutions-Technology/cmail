@@ -6,7 +6,7 @@ setup wizard. Later releases let the wizard store the keys and secrets it
 creates here, so nobody has to paste them into `wrangler secret put`.
 
 The vault is an encrypted table in D1 (`secret_vault`, migration `0035`). It
-holds values that cMail itself generates or receives during setup, for
+holds values that Stanchion itself generates or receives during setup, for
 example an Entra app's private key or the Exchange journal address. Only the
 email Worker can decrypt them. The web app can store a value or ask for
 status, but it can never read a value back.
@@ -42,7 +42,7 @@ flowchart LR
 - **Binding (AAD).** Each ciphertext is bound to its row through additional
   authenticated data: this instance's vault id, the row id, the secret name,
   the version and the purpose. A ciphertext copied into another row, renamed,
-  given another version or purpose, copied to another cMail instance (even
+  given another version or purpose, copied to another Stanchion instance (even
   one that uses the same key), or changed by one bit does not decrypt. The
   read fails closed (`decrypt_failed`) and returns nothing. The instance id
   is a random value the Worker writes once, on the first vault write, to
@@ -87,7 +87,7 @@ endpoints. Only these operations exist. Any other path or method gets 404:
 | `rewrap` | POST | Re-encrypts up to 100 rows under the current key | counts |
 
 There is no `get`, `decrypt` or `export`. A value goes in and never comes back
-out over the binding. Every write must name a cMail user id (`actorId`), and
+out over the binding. Every write must name a Stanchion user id (`actorId`), and
 the Worker checks again in D1 that it belongs to an active manager (not
 paused, not offboarded). A refused write is logged and audited as
 `vault.request_refused` with the operation and a code only. The web-side
@@ -130,7 +130,7 @@ key in your password manager **before** you give it to Wrangler:
    ```
 
 2. Open `vault-key.txt`, copy the line into a new password manager entry
-   (for example "cMail vault key, <instance>, set <date>") and save it.
+   (for example "Stanchion vault key, <instance>, set <date>") and save it.
 3. Set it as the Worker secret from the file, then delete the file:
 
    ```sh
